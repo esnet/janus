@@ -1,0 +1,13 @@
+cryptography
+flask
+flask-restplus
+flask-httpauth
+numa
+portainer-api
+psutil
+pyyaml
+requests
+six
+tinydb
+virtfs
+Werkzeug==0.16.1

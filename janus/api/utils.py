@@ -1,0 +1,366 @@
+import os
+import json
+from ipaddress import IPv4Network, IPv4Address
+
+from janus import settings
+from janus.settings import cfg
+from tinydb import TinyDB, Query
+
+
+def precommit_db():
+    DB = TinyDB(cfg.get_dbpath())
+    table = DB.table('active')
+    Id = table.insert(dict())
+    return Id
+
+def commit_db(record, rid=None, delete=False):
+    DB = TinyDB(cfg.get_dbpath())
+    Q = Query()
+    node_table = DB.table('nodes')
+    net_table = DB.table('networks')
+
+    services = record.get("services", dict())
+    for k,v in services.items():
+        for s in v:
+            node = node_table.get(Q.name == k)
+            if delete:
+                try:
+                    if s['ctrl_port']:
+                        node['allocated_ports'].remove(int(s['ctrl_port']))
+                    if s['data_vfmac']:
+                        node['allocated_vfs'].remove(s['data_vfmac'])
+                except Exception as e:
+                    pass
+            else:
+                if s['ctrl_port']:
+                    node['allocated_ports'].append(int(s['ctrl_port']))
+                if s['data_vfmac']:
+                    node['allocated_vfs'].append(s['data_vfmac'])
+            node_table.update(node, Q.name == k)
+
+            if (s['data_net']):
+                net = net_table.get(Q.name == s['data_net_name'])
+                if delete:
+                    try:
+                        net['allocated'].remove(s['data_ipv4'])
+                    except Exception as e:
+                        pass
+                else:
+                    net['allocated'].append(s['data_ipv4'])
+                net_table.update(net, Q.name == s['data_net_name'])
+
+    table = DB.table('active')
+    if delete:
+        table.remove(doc_ids=[rid])
+    elif rid:
+        table.update(record, doc_ids=[rid])
+        return {rid: record}
+    else:
+        Id = table.insert(record)
+        return {Id: record}
+
+def get_next_vf(node, dnet):
+    try:
+        docknet = node["networks"][dnet]
+        sriov = node["host"]["sriov"]
+        nsr = sriov.get(docknet["netdevice"], None)
+        avail = set([ vf["mac"] for vf in nsr["vfs"] ])
+        alloced = set(node["allocated_vfs"])
+        avail = avail - alloced
+    except:
+        raise Exception("Could not determine SRIOV VF for data net {}".format(dnet))
+    try:
+        vf = next(iter(avail))
+    except:
+        raise Exception("No more SRIOV VFs available for data net {}".format(dnet))
+    return vf
+    
+def get_next_cport(node, prof, curr=set()):
+    if not prof['ctrl_port_range']:
+        return None
+    # make a set out of the port range
+    avail = set(range(prof['ctrl_port_range'][0],
+                      prof['ctrl_port_range'][1]+1))
+    alloced = node['allocated_ports']
+    avail = avail - set(alloced) - curr
+    try:
+        port = next(iter(avail))
+    except:
+        raise Exception("No more ctrl ports available")
+    curr.add(port)
+    return str(port)
+
+def get_next_sport(node, prof, curr=set()):
+    if not prof['serv_port_range']:
+        return None
+    # make a set out of the port range
+    avail = set(range(prof['serv_port_range'][0],
+                      prof['serv_port_range'][1]+1))
+    alloced = node['allocated_ports']
+    avail = avail - set(alloced) - curr
+    try:
+        port = next(iter(avail))
+    except:
+        raise Exception("No more service ports available")
+    curr.add(port)
+    return str(port)
+
+def get_next_ipv4(net, curr=set()):
+    DB = TinyDB(cfg.get_dbpath())
+    Net = Query()
+    nets = DB.table('networks')
+    network = nets.get(Net.name == net)
+    alloced = network['allocated']
+    set_alloced = set([IPv4Address(i) for i in alloced])
+    ipnet = IPv4Network(network['subnet'][0]['Subnet'])
+    avail = set(ipnet.hosts()) - set_alloced - curr
+    try:
+        ipv4 = next(iter(avail))
+    except:
+        raise Exception("No more data net ipv4 addresses available")
+    curr.add(ipv4)
+    return str(ipv4)
+
+def get_cpuset(node, net, prof):
+    if net in node['networks']:
+        netdev = node['networks'][net].get('netdevice', None)
+        if netdev:
+            cpuset = node['host']['sriov'][netdev]['local_cpulist']
+            return cpuset
+    return None
+
+def get_numa(node, net, prof):
+    return None
+
+def get_mem(node, prof):
+    return prof['mem']
+
+def error_svc(s, e):
+    try:
+        restxt = json.loads(e.body)
+    except:
+        restxt = e.body
+    s['errors'].append({'reason': e.reason,
+                        'response': restxt})
+    s['container_id'] = None
+    if 'node' in s:
+        del s['node']
+
+def handle_image(n, img, dapi):
+    if img not in n['images']:
+        parts = img.split(':')
+        if len(parts) == 1:
+            dapi.pull_image(n['id'], parts[0], 'latest')
+        elif len(parts) > 1:
+            dapi.pull_image(n['id'], parts[0], parts[1])
+
+def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kwargs):
+    if not profile:
+        profile = settings.DEFAULT_PROFILE
+
+    DB = TinyDB(cfg.get_dbpath())
+    DB.clear_cache()
+    Node = Query()
+    table = DB.table('nodes')
+    node = table.get(Node.name == nname)
+    if not node:
+        raise Exception("Node not found: {}".format(nname))
+    
+    srec = dict()
+    prof = cfg.get_profile(profile)
+    dpr = prof['data_port_range']
+    dnet = prof['data_net']
+    mnet = prof['mgmt_net']
+    priv = prof['privileged']
+    sysd = prof['systemd']
+
+    vfmac = None
+    ipv4 = None
+    ipv6 = None
+    cport = get_next_cport(node, prof, cports)
+    sport = get_next_sport(node, prof, sports)
+    internal_port = prof['internal_port'] or cport
+
+    net_kwargs = {}
+    docker_kwargs = {
+        "HostName": nname,
+        "HostConfig": {
+            "PortBindings": dict(),
+            "NetworkMode": mnet,
+            "Mounts": list(),
+            "Devices": list(),
+            "CapAdd": list(),
+            "Ulimits": list(),
+            "Privileged": priv
+        },
+        "ExposedPorts": dict(),
+        "Env": [
+            "HOSTNAME={}".format(node['public_url']),
+            "CTRL_PORT={}".format(cport),
+            "SERV_PORT={}".format(sport),
+            "DATA_PORTS={},{}".format(dpr[0], dpr[1]),
+            "USER_NAME={}".format(kwargs.get("USER_NAME", "")),
+            "PUBLIC_KEY={}".format(kwargs.get("PUBLIC_KEY", ""))
+        ],
+        "Tty": True,
+        "StopSignal": "SIGRTMIN+3" if sysd else "SIGTERM"
+    }
+
+    if cport:
+        docker_kwargs["HostConfig"]["PortBindings"].update({
+            "{}/tcp".format(internal_port): [
+                {"HostPort": "{}".format(cport)}]
+        })
+        docker_kwargs["ExposedPorts"].update({
+            "{}/tcp".format(internal_port): {}
+        })
+
+    if sport:
+        docker_kwargs["HostConfig"]["PortBindings"].update({
+            "{}/tcp".format(sport): [
+                {"HostPort": "{}".format(sport)}]
+        })
+        docker_kwargs["ExposedPorts"].update({
+            "{}/tcp".format(sport): {}
+        })
+
+    if mnet and mnet != "host":
+        try:
+            minfo = node['networks'][mnet]
+        except:
+            raise Exception("Network not found: {}".format(mnet))
+        mnet_type = minfo['driver']
+        # Remove port mappings if control network requested is not bridge
+        if mnet_type != "bridge":
+            del docker_kwargs["HostConfig"]["PortBindings"]
+            del docker_kwargs["ExposedPorts"]
+
+    # Constrain container memory if requested
+    mem = get_mem(node, prof)
+    if mem:
+        docker_kwargs["HostConfig"].update({"Memory": mem})
+
+    for e in prof['environment']:
+        # XXX: do some sanity checking here
+        docker_kwargs['Env'].append(e)
+    
+    for v in prof['volumes']:
+        vol = cfg.get_volume(v)
+        if vol:
+            readonly = True if "ReadOnly" in vol and vol['ReadOnly'] else False
+            mnt = {'Type': vol['type'],
+                   'Source': vol.get('source', None),
+                   'Target': vol.get('target', None),
+                   'ReadOnly': readonly
+                   }
+            docker_kwargs['HostConfig']['Mounts'].append(mnt)
+            if "driver" in vol:
+                docker_kwargs['HostConfig']['VolumeDriver'] = vol['driver']
+
+    if dnet and mnet != "host":
+        try:
+            dinfo = node['networks'][dnet]
+        except:
+            raise Exception("Network not found: {}".format(dnet))
+
+        # Pin CPUs based on data net
+        cpus = get_cpuset(node, dnet, prof)
+        if cpus:
+            docker_kwargs["HostConfig"].update({"CpusetCpus": cpus})
+
+        # Set data net layer 3
+        ipv4 = get_next_ipv4(dnet, addrs)
+        ipv6 = get_next_ipv6(dnet, addrs)
+        docker_kwargs["HostConfig"].update({"NetworkMode": dnet})
+        docker_kwargs.update({"NetworkingConfig": {
+            "EndpointsConfig": {
+                dnet: {
+                    "IPAMConfig": {
+                        "IPv4Address": ipv4
+                    }
+                }
+            }
+        }
+        })
+        docker_kwargs["Env"].append("DATA_IFACE={}".format(ipv4))
+
+        # Need to specify and track sriov vfs explicitly
+        ndrv = dinfo.get("driver", None)
+        if ndrv == "sriov":
+            vfmac = get_next_vf(node, dnet)
+            #docker_kwargs['MacAddress'] = vfmac
+            #docker_kwargs['NetworkingConfig']['EndpointsConfig'][dnet]['MacAddress'] = vfmac
+            docker_kwargs['NetworkingConfig']['EndpointsConfig'][dnet]['IPAMConfig']['MacAddress'] = vfmac
+    else:
+        docker_kwargs["Env"].append("DATA_IFACE={}".format(node['public_url']))
+        if mnet and mnet != "host":
+            for p in range(dpr[0], dpr[1]+1):
+                docker_kwargs["HostConfig"]["PortBindings"].update(
+                    {"{}/tcp".format(p):
+                     [{"HostPort": "{}".format(p)}]}
+                )
+                docker_kwargs["ExposedPorts"].update({"{}/tcp".format(p): {}})
+
+    # handle features enabled for this service
+    for f in prof['features']:
+        feat = cfg.get_feature(f)
+        if feat:
+            caps = feat.get('caps', list())
+            docker_kwargs['HostConfig']['CapAdd'].extend(caps)
+            limits = feat.get('limits', list())
+            docker_kwargs['HostConfig']['Ulimits'].extend(limits)
+
+            devices = feat.get('devices', list())
+            for d in devices:
+                """
+                for n in d['names']:
+                    # need to find uverb device for attached VF or NIC
+                    if n.startswith("uverbs") and vfmac:
+                        dev = node["networks"][dnet]["netdevice"]
+                        vfs = node["host"]["sriov"][dev]["vfs"]
+                        n = next((item["ib_verbs_devs"][0] for item in vfs if item.get("mac") == vfmac), None)
+                    elif n.startswith("uverbs"):
+                        try:
+                            dev = node["networks"][dnet]["netdevice"]
+                            iface = node["host"]["sriov"][dev]
+                            n = iface["ib_verbs_devs"][0]
+                        except:
+                            raise Exception("Could not find uverbs device for data net {}".format(dnet))
+                    dev = {'PathOnHost': os.path.join(d['devprefix'], n),
+                           'PathInContainer': os.path.join(d['devprefix'], n),
+                           'CGroupPermissions': "rwm"}
+                    docker_kwargs['HostConfig']['Devices'].append(dev)
+                """
+                if "rdma_cm" in d['names']:
+                    dev = {'PathOnHost': os.path.join(d['devprefix'], "rdma_cm"),
+                           'PathInContainer': os.path.join(d['devprefix'], "rdma_cm"),
+                           'CGroupPermissions': "rwm"}
+                    docker_kwargs['HostConfig']['Devices'].append(dev)
+                if "uverbs" in d['names']:
+                    dev = node["networks"][dnet]["netdevice"]
+                    vfs = node["host"]["sriov"][dev]["vfs"]
+                    for iface in vfs:
+                        n = iface["ib_verbs_devs"][0]
+                        dev = {'PathOnHost': os.path.join(d['devprefix'], n),
+                               'PathInContainer': os.path.join(d['devprefix'], n),
+                               'CGroupPermissions': "rwm"}
+                        docker_kwargs['HostConfig']['Devices'].append(dev)
+
+    srec['mgmt_net'] = node['networks'].get(mnet, None)
+    srec['data_net'] = node['networks'].get(dnet, None)
+    srec['data_net_name'] = dnet
+    srec['data_ipv4'] = ipv4
+    srec['data_ipv6'] = ipv6
+    srec['data_vfmac'] = vfmac
+    srec['container_user'] = kwargs.get("USER_NAME", None)
+
+    srec['node'] = node
+    srec['serv_port'] = sport
+    srec['ctrl_port'] = cport
+    srec['ctrl_host'] = node['public_url']
+    srec['docker_kwargs'] = docker_kwargs
+    srec['net_kwargs'] = net_kwargs
+    srec['image'] = img
+    srec['profile'] = profile
+    srec['errors'] = list()
+    return srec
