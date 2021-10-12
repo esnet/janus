@@ -1,8 +1,10 @@
 import os
 import json
 from ipaddress import IPv4Network, IPv4Address
+from ipaddress import IPv6Network, IPv6Address
 
 from janus import settings
+from janus.api.models import Network
 from janus.settings import cfg
 from tinydb import TinyDB, Query
 
@@ -42,11 +44,15 @@ def commit_db(record, rid=None, delete=False):
                 net = net_table.get(Q.name == s['data_net_name'])
                 if delete:
                     try:
-                        net['allocated'].remove(s['data_ipv4'])
+                        net['allocated_v4'].remove(s['data_ipv4'])
+                        net['allocaged_v6'].remove(s['data_ipv6'])
                     except Exception as e:
                         pass
                 else:
-                    net['allocated'].append(s['data_ipv4'])
+                    if s['data_ipv4']:
+                        net['allocated_v4'].append(s['data_ipv4'])
+                    if s['data_ipv6']:
+                        net['allocated_v6'].append(s['data_ipv6'])
                 net_table.update(net, Q.name == s['data_net_name'])
 
     table = DB.table('active')
@@ -109,17 +115,58 @@ def get_next_ipv4(net, curr=set()):
     DB = TinyDB(cfg.get_dbpath())
     Net = Query()
     nets = DB.table('networks')
-    network = nets.get(Net.name == net)
-    alloced = network['allocated']
+    network = nets.get(Net.name == net.name)
+    alloced = network['allocated_v4']
     set_alloced = set([IPv4Address(i) for i in alloced])
     ipnet = IPv4Network(network['subnet'][0]['Subnet'])
     avail = set(ipnet.hosts()) - set_alloced - curr
-    try:
-        ipv4 = next(iter(avail))
-    except:
-        raise Exception("No more data net ipv4 addresses available")
+    if net.ipv4:
+        ipv4 = IPv4Address(net.ipv4)
+        if ipv4 not in avail:
+            raise Exception(f"Requested IPv4 address already in use: {ipv4}")
+    else:
+        try:
+            ipv4 = next(iter(avail))
+        except:
+            raise Exception("No more data net ipv4 addresses available")
     curr.add(ipv4)
     return str(ipv4)
+
+def get_next_ipv6(net, curr=set()):
+    DB = TinyDB(cfg.get_dbpath())
+    Net = Query()
+    nets = DB.table('networks')
+    network = nets.get(Net.name == net.name)
+    alloced = network['allocated_v6']
+    set_alloced = set([IPv6Address(i) for i in alloced])
+    ipnet = None
+    for sub in network['subnet']:
+        try:
+            ipnet = IPv6Network(sub['Subnet'])
+            break
+        except:
+            pass
+
+    if net.ipv6 and not ipnet:
+        raise Exception(f"No IPv6 subnet found for network {net.name}")
+
+    avail = ipnet.hosts()
+    unavail = set.union(set_alloced, curr)
+    if net.ipv6:
+        ipv6 = IPv6Address(net.ipv6)
+        if ipv6 in unavail:
+            raise Exception(f"Requested IPv6 address already in use: {ipv6}")
+    else:
+        ipv6 = None
+        while not ipv6:
+            try:
+                test = next(avail)
+                if test not in unavail:
+                    ipv6 = test
+            except:
+                raise Exception("No more data net ipv6 addresses available")
+    curr.add(ipv6)
+    return str(ipv6)
 
 def get_cpuset(node, net, prof):
     if net in node['networks']:
@@ -169,8 +216,8 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
     srec = dict()
     prof = cfg.get_profile(profile)
     dpr = prof['data_port_range']
-    dnet = prof['data_net']
-    mnet = prof['mgmt_net']
+    dnet = Network(prof['data_net'])
+    mnet = Network(prof['mgmt_net'])
     priv = prof['privileged']
     sysd = prof['systemd']
 
@@ -186,7 +233,7 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
         "HostName": nname,
         "HostConfig": {
             "PortBindings": dict(),
-            "NetworkMode": mnet,
+            "NetworkMode": mnet.name,
             "Mounts": list(),
             "Devices": list(),
             "CapAdd": list(),
@@ -224,11 +271,11 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
             "{}/tcp".format(sport): {}
         })
 
-    if mnet and mnet != "host":
+    if not mnet.is_host():
         try:
-            minfo = node['networks'][mnet]
+            minfo = node['networks'][mnet.name]
         except:
-            raise Exception("Network not found: {}".format(mnet))
+            raise Exception("Network not found: {}".format(mnet.name))
         mnet_type = minfo['driver']
         # Remove port mappings if control network requested is not bridge
         if mnet_type != "bridge":
@@ -257,26 +304,27 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
             if "driver" in vol:
                 docker_kwargs['HostConfig']['VolumeDriver'] = vol['driver']
 
-    if dnet and mnet != "host":
+    if dnet.name and not mnet.is_host():
         try:
-            dinfo = node['networks'][dnet]
+            dinfo = node['networks'][dnet.name]
         except:
-            raise Exception("Network not found: {}".format(dnet))
+            raise Exception("Network not found: {}".format(dnet.name))
 
         # Pin CPUs based on data net
-        cpus = get_cpuset(node, dnet, prof)
+        cpus = get_cpuset(node, dnet.name, prof)
         if cpus:
             docker_kwargs["HostConfig"].update({"CpusetCpus": cpus})
 
         # Set data net layer 3
-        ipv4 = get_next_ipv4(dnet, addrs)
-        ipv6 = get_next_ipv6(dnet, addrs)
-        docker_kwargs["HostConfig"].update({"NetworkMode": dnet})
+        ipv4 = get_next_ipv4(dnet, addrs_v4)
+        ipv6 = get_next_ipv6(dnet, addrs_v6)
+        docker_kwargs["HostConfig"].update({"NetworkMode": dnet.name})
         docker_kwargs.update({"NetworkingConfig": {
             "EndpointsConfig": {
-                dnet: {
+                dnet.name: {
                     "IPAMConfig": {
-                        "IPv4Address": ipv4
+                        "IPv4Address": ipv4,
+                        "IPv6Address": ipv6
                     }
                 }
             }
@@ -287,13 +335,11 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
         # Need to specify and track sriov vfs explicitly
         ndrv = dinfo.get("driver", None)
         if ndrv == "sriov":
-            vfmac = get_next_vf(node, dnet)
-            #docker_kwargs['MacAddress'] = vfmac
-            #docker_kwargs['NetworkingConfig']['EndpointsConfig'][dnet]['MacAddress'] = vfmac
-            docker_kwargs['NetworkingConfig']['EndpointsConfig'][dnet]['IPAMConfig']['MacAddress'] = vfmac
+            vfmac = get_next_vf(node, dnet.name)
+            docker_kwargs['NetworkingConfig']['EndpointsConfig'][dnet.name]['IPAMConfig']['MacAddress'] = vfmac
     else:
         docker_kwargs["Env"].append("DATA_IFACE={}".format(node['public_url']))
-        if mnet and mnet != "host":
+        if not mnet.is_host():
             for p in range(dpr[0], dpr[1]+1):
                 docker_kwargs["HostConfig"]["PortBindings"].update(
                     {"{}/tcp".format(p):
@@ -316,16 +362,16 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
                 for n in d['names']:
                     # need to find uverb device for attached VF or NIC
                     if n.startswith("uverbs") and vfmac:
-                        dev = node["networks"][dnet]["netdevice"]
+                        dev = node["networks"][dnet.name]["netdevice"]
                         vfs = node["host"]["sriov"][dev]["vfs"]
                         n = next((item["ib_verbs_devs"][0] for item in vfs if item.get("mac") == vfmac), None)
                     elif n.startswith("uverbs"):
                         try:
-                            dev = node["networks"][dnet]["netdevice"]
+                            dev = node["networks"][dnet.name]["netdevice"]
                             iface = node["host"]["sriov"][dev]
                             n = iface["ib_verbs_devs"][0]
                         except:
-                            raise Exception("Could not find uverbs device for data net {}".format(dnet))
+                            raise Exception("Could not find uverbs device for data net {}".format(dnet.name))
                     dev = {'PathOnHost': os.path.join(d['devprefix'], n),
                            'PathInContainer': os.path.join(d['devprefix'], n),
                            'CGroupPermissions': "rwm"}
@@ -337,7 +383,7 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
                            'CGroupPermissions': "rwm"}
                     docker_kwargs['HostConfig']['Devices'].append(dev)
                 if "uverbs" in d['names']:
-                    dev = node["networks"][dnet]["netdevice"]
+                    dev = node["networks"][dnet.name]["netdevice"]
                     vfs = node["host"]["sriov"][dev]["vfs"]
                     for iface in vfs:
                         n = iface["ib_verbs_devs"][0]
@@ -346,9 +392,9 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
                                'CGroupPermissions': "rwm"}
                         docker_kwargs['HostConfig']['Devices'].append(dev)
 
-    srec['mgmt_net'] = node['networks'].get(mnet, None)
-    srec['data_net'] = node['networks'].get(dnet, None)
-    srec['data_net_name'] = dnet
+    srec['mgmt_net'] = node['networks'].get(mnet.name, None)
+    srec['data_net'] = node['networks'].get(dnet.name, None)
+    srec['data_net_name'] = dnet.name
     srec['data_ipv4'] = ipv4
     srec['data_ipv6'] = ipv6
     srec['data_vfmac'] = vfmac

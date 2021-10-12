@@ -135,5 +135,6 @@ def init_db(client, refresh=False):
                 # otherwise create default record for net
                 networks[n] = {'name': n,
                                'subnet': subnet,
-                               'allocated': []}
+                               'allocated_v4': [],
+                               'allocated_v6': []}
                 net_table.insert(networks[n])
