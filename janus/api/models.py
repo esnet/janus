@@ -1,0 +1,16 @@
+class Network(object):
+    def __init__(self, net):
+        self.name = None
+        self.ipv4 = None
+        self.ipv6 = None
+        if isinstance(net, dict):
+            self.name = net["name"]
+            self.ipv4 = net["ipv4_addr"]
+            self.ipv6 = net["ipv6_addr"]
+        elif isinstance(net, str):
+            self.name = net
+
+    def is_host(self):
+        if self.name and self.name == "host":
+            return True
+        return False
