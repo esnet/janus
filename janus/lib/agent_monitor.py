@@ -57,7 +57,10 @@ class AgentMonitor(object):
     def check_agent(self, n):
         url = n['public_url']
         try:
-            ret = requests.get("http://{}:{}/api/janus/agent/node".format(url, settings.AGENT_PORT), timeout=2)
+            ret = requests.get("{}://{}:{}/api/janus/agent/node".format(settings.AGENT_PROTO,
+                                                                        url,
+                                                                        settings.AGENT_PORT),
+                               timeout=2)
             return n,ret
         except Exception as e:
             return n,None

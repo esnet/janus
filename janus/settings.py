@@ -9,6 +9,7 @@ DEFAULT_PROFILE_PATH = "/etc/janus/profiles"
 DB_FILE = "janus_db.json"
 IGNORE_EPS = []
 AGENT_PORT = 5000
+AGENT_PROTO = "https"
 AGENT_IMAGE = "dtnaas/agent"
 
 try:

@@ -62,7 +62,9 @@ def init_db(client, refresh=False):
         nodes[nname]['images'] = parse_portainer_images(imgs)
 
         try:
-            ret = requests.get("http://{}:{}/api/janus/agent/node".format(url, settings.AGENT_PORT))
+            ret = requests.get("{}://{}:{}/api/janus/agent/node".format(settings.AGENT_PROTO,
+                                                                        url,
+                                                                        settings.AGENT_PORT))
             nodes[nname]['host'] = ret.json()
         except Exception as e:
             log.error("Could not fetch agent info from {}".format(url))
