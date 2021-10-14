@@ -3,6 +3,8 @@ class Network(object):
         self.name = None
         self.ipv4 = None
         self.ipv6 = None
+        if isinstance(net, list):
+            raise Exception("List of networks not supported")
         if isinstance(net, dict):
             self.name = net["name"]
             self.ipv4 = net["ipv4_addr"]
