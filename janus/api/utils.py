@@ -45,7 +45,10 @@ def commit_db(record, rid=None, delete=False):
                 if delete:
                     try:
                         net['allocated_v4'].remove(s['data_ipv4'])
-                        net['allocaged_v6'].remove(s['data_ipv6'])
+                    except Exception as e:
+                        pass
+                    try:
+                        net['allocated_v6'].remove(s['data_ipv6'])
                     except Exception as e:
                         pass
                 else:
@@ -271,7 +274,7 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
             "{}/tcp".format(sport): {}
         })
 
-    if not mnet.is_host():
+    if mnet.name and not mnet.is_host():
         try:
             minfo = node['networks'][mnet.name]
         except:
