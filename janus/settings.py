@@ -10,6 +10,7 @@ DB_FILE = "janus_db.json"
 IGNORE_EPS = []
 AGENT_PORT = 5000
 AGENT_PROTO = "https"
+AGENT_SSL_VERIFY = False
 AGENT_IMAGE = "dtnaas/agent"
 
 try:
