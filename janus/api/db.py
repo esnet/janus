@@ -64,8 +64,9 @@ def init_db(client, refresh=False):
         try:
             ret = requests.get("{}://{}:{}/api/janus/agent/node".format(settings.AGENT_PROTO,
                                                                         url,
-                                                                        settings.AGENT_PORT,
-                                                                        verify=settings.AGENT_SSL_VERIFY))
+                                                                        settings.AGENT_PORT),
+                               verify=settings.AGENT_SSL_VERIFY,
+                               timeout=2)
             nodes[nname]['host'] = ret.json()
         except Exception as e:
             log.error("Could not fetch agent info from {}".format(url))

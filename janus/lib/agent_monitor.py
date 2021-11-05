@@ -59,8 +59,8 @@ class AgentMonitor(object):
         try:
             ret = requests.get("{}://{}:{}/api/janus/agent/node".format(settings.AGENT_PROTO,
                                                                         url,
-                                                                        settings.AGENT_PORT,
-                                                                        verify=settings.AGENT_SSL_VERIFY),
+                                                                        settings.AGENT_PORT),
+                               verify=settings.AGENT_SSL_VERIFY,
                                timeout=2)
             return n,ret
         except Exception as e:
