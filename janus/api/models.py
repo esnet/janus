@@ -6,9 +6,9 @@ class Network(object):
         if isinstance(net, list):
             raise Exception("List of networks not supported")
         if isinstance(net, dict):
-            self.name = net["name"]
-            self.ipv4 = net["ipv4_addr"]
-            self.ipv6 = net["ipv6_addr"]
+            self.name = net.get("name", None)
+            self.ipv4 = net.get("ipv4_addr", None)
+            self.ipv6 = net.get("ipv6_addr", None)
         elif isinstance(net, str):
             self.name = net
 
@@ -16,3 +16,4 @@ class Network(object):
         if self.name and self.name == "host":
             return True
         return False
+

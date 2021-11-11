@@ -110,8 +110,12 @@ def init_db(client, refresh=False):
     profs = cfg.get_profiles()
     for k, v in profs.items():
         net = profs[k]['data_net']
-        if net not in data_nets:
-            data_nets.append(net)
+        if isinstance(net, str):
+            if net not in data_nets:
+                data_nets.append(net)
+        elif isinstance(net, dict):
+            if net['name'] not in data_nets:
+                data_nets.append(net['name'])
 
     # simple IPAM for data networks
     net_table = DB.table('networks')

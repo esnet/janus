@@ -115,10 +115,14 @@ def get_next_sport(node, prof, curr=set()):
     return str(port)
 
 def get_next_ipv4(net, curr=set()):
+    if not net.ipv4:
+        return None
     DB = TinyDB(cfg.get_dbpath())
     Net = Query()
     nets = DB.table('networks')
     network = nets.get(Net.name == net.name)
+    if not network:
+        raise Exception(f"Network not found: {net.name}")
     alloced = network['allocated_v4']
     set_alloced = set([IPv4Address(i) for i in alloced])
     ipnet = IPv4Network(network['subnet'][0]['Subnet'])
@@ -136,10 +140,14 @@ def get_next_ipv4(net, curr=set()):
     return str(ipv4)
 
 def get_next_ipv6(net, curr=set()):
+    if not net.ipv6:
+        return None
     DB = TinyDB(cfg.get_dbpath())
     Net = Query()
     nets = DB.table('networks')
     network = nets.get(Net.name == net.name)
+    if not network:
+        raise Exception(f"Network not found: {net.name}")
     alloced = network['allocated_v6']
     set_alloced = set([IPv6Address(i) for i in alloced])
     ipnet = None
