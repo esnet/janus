@@ -125,17 +125,19 @@ def get_next_ipv4(net, curr=set()):
         raise Exception(f"Network not found: {net.name}")
     alloced = network['allocated_v4']
     set_alloced = set([IPv4Address(i) for i in alloced])
-    ipnet = IPv4Network(network['subnet'][0]['Subnet'])
-    avail = set(ipnet.hosts()) - set_alloced - curr
     if net.ipv4:
-        ipv4 = IPv4Address(net.ipv4)
-        if ipv4 not in avail:
-            raise Exception(f"Requested IPv4 address already in use: {ipv4}")
+        if isinstance(net.ipv4, str):
+            avail = set(IPv4Address(net.ipv4))
+        elif isinstance(net.ipv4, list):
+            avail = set(IPv4Address(addr) for addr in net.ipv4)
+            avail = avail - set_alloced - curr
     else:
-        try:
-            ipv4 = next(iter(avail))
-        except:
-            raise Exception("No more data net ipv4 addresses available")
+        ipnet = IPv4Network(network['subnet'][0]['Subnet'])
+        avail = set(ipnet.hosts()) - set_alloced - curr
+    try:
+        ipv4 = next(iter(avail))
+    except:
+        raise Exception("No more data net ipv4 addresses available")
     curr.add(ipv4)
     return str(ipv4)
 
@@ -161,21 +163,22 @@ def get_next_ipv6(net, curr=set()):
     if net.ipv6 and not ipnet:
         raise Exception(f"No IPv6 subnet found for network {net.name}")
 
-    avail = ipnet.hosts()
+    ipv6 = None
     unavail = set.union(set_alloced, curr)
     if net.ipv6:
-        ipv6 = IPv6Address(net.ipv6)
-        if ipv6 in unavail:
-            raise Exception(f"Requested IPv6 address already in use: {ipv6}")
+        if isinstance(net.ipv6, str):
+            avail = set(IPv6Address(net.ipv6))
+        elif isinstance(net.ipv6, list):
+            avail = set(IPv6Address(addr) for addr in net.ipv6)
     else:
-        ipv6 = None
-        while not ipv6:
-            try:
-                test = next(avail)
-                if test not in unavail:
-                    ipv6 = test
-            except:
-                raise Exception("No more data net ipv6 addresses available")
+        avail = set(ipnet.hosts())
+    while not ipv6:
+        try:
+            test = next(iter(avail))
+            if test not in unavail:
+                ipv6 = test
+        except:
+            raise Exception("No more data net ipv6 addresses available")
     curr.add(ipv6)
     return str(ipv6)
 

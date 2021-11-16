@@ -235,6 +235,8 @@ class Create(Resource):
                   'allocations': dict()}
 
         dapi = PortainerDockerApi(pclient)
+        # get an ID from the DB
+        Id = precommit_db()
         for k, v in svcs.items():
             for s in svcs[k]:
                 # the portainer node this service will start on
@@ -244,8 +246,6 @@ class Create(Resource):
                     ret = {'Id': str(uuid.uuid4())}
                 else:
                     try:
-                        # get an ID from the DB
-                        Id = precommit_db()
                         handle_image(n, img, dapi)
                         name = f"janus_{Id}" if Id else None
                         ret = dapi.create_container(n['id'], img, name, **s['docker_kwargs'])
