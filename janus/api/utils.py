@@ -242,6 +242,11 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
     sport = get_next_sport(node, prof, sports)
     internal_port = prof['internal_port'] or cport
 
+    if dpr:
+        dports = "{},{}".format(dpr[0],dpr[1])
+    else:
+        dports = ""
+
     net_kwargs = {}
     docker_kwargs = {
         "HostName": nname,
@@ -259,7 +264,7 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
             "HOSTNAME={}".format(node['public_url']),
             "CTRL_PORT={}".format(cport),
             "SERV_PORT={}".format(sport),
-            "DATA_PORTS={},{}".format(dpr[0], dpr[1]),
+            "DATA_PORTS={}".format(dports),
             "USER_NAME={}".format(kwargs.get("USER_NAME", "")),
             "PUBLIC_KEY={}".format(kwargs.get("PUBLIC_KEY", ""))
         ],
@@ -353,7 +358,7 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
             docker_kwargs['NetworkingConfig']['EndpointsConfig'][dnet.name]['IPAMConfig']['MacAddress'] = vfmac
     else:
         docker_kwargs["Env"].append("DATA_IFACE={}".format(node['public_url']))
-        if not mnet.is_host():
+        if not mnet.is_host() and dpr:
             for p in range(dpr[0], dpr[1]+1):
                 docker_kwargs["HostConfig"]["PortBindings"].update(
                     {"{}/tcp".format(p):
