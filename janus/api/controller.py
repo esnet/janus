@@ -223,8 +223,8 @@ class Create(Resource):
                     svcs[s].append(create_service(s, r['image'], r['profile'], addrs_v4, addrs_v6,
                                                   cports, sports, **kwargs))
         except Exception as e:
-            #import traceback
-            #traceback.print_exc()
+            import traceback
+            traceback.print_exc()
             log.error("Could not allocate request: {}".format(e))
             return {"Error": "{}".format(e)}, 503
         
