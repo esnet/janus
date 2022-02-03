@@ -236,8 +236,10 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
     sysd = prof['systemd']
 
     vfmac = None
-    ipv4 = None
-    ipv6 = None
+    mgmt_ipv4 = None
+    mgmt_ipv6 = None
+    data_ipv4 = None
+    data_ipv6 = None
     cport = get_next_cport(node, prof, cports)
     sport = get_next_sport(node, prof, sports)
     internal_port = prof['internal_port'] or cport
@@ -247,7 +249,7 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
     else:
         dports = ""
 
-    net_kwargs = {}
+    mnet_kwargs = {}
     docker_kwargs = {
         "HostName": nname,
         "HostConfig": {
@@ -301,6 +303,18 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
             del docker_kwargs["HostConfig"]["PortBindings"]
             del docker_kwargs["ExposedPorts"]
 
+        if not mnet.is_host() and mnet_type != "bridge":
+            # Set data net layer 3
+            mgmt_ipv4 = get_next_ipv4(mnet, addrs_v4)
+            mgmt_ipv6 = get_next_ipv6(mnet, addrs_v6)
+            mnet_kwargs.update({"EndpointConfig": {
+                "IPAMConfig": {
+                    "IPv4Address": mgmt_ipv4,
+                    "IPv6Address": mgmt_ipv6
+                }
+            }
+            })
+
     # Constrain container memory if requested
     mem = get_mem(node, prof)
     if mem:
@@ -335,21 +349,21 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
             docker_kwargs["HostConfig"].update({"CpusetCpus": cpus})
 
         # Set data net layer 3
-        ipv4 = get_next_ipv4(dnet, addrs_v4)
-        ipv6 = get_next_ipv6(dnet, addrs_v6)
+        data_ipv4 = get_next_ipv4(dnet, addrs_v4)
+        data_ipv6 = get_next_ipv6(dnet, addrs_v6)
         docker_kwargs["HostConfig"].update({"NetworkMode": dnet.name})
         docker_kwargs.update({"NetworkingConfig": {
             "EndpointsConfig": {
                 dnet.name: {
                     "IPAMConfig": {
-                        "IPv4Address": ipv4,
-                        "IPv6Address": ipv6
+                        "IPv4Address": data_ipv4,
+                        "IPv6Address": data_ipv6
                     }
                 }
             }
         }
         })
-        docker_kwargs["Env"].append("DATA_IFACE={}".format(ipv4))
+        docker_kwargs["Env"].append("DATA_IFACE={}".format(data_ipv4))
 
         # Need to specify and track sriov vfs explicitly
         ndrv = dinfo.get("driver", None)
@@ -412,10 +426,12 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
                         docker_kwargs['HostConfig']['Devices'].append(dev)
 
     srec['mgmt_net'] = node['networks'].get(mnet.name, None)
+    srec['mgmt_ipv4'] = mgmt_ipv4
+    srec['mgmt_ipv6'] = mgmt_ipv6
     srec['data_net'] = node['networks'].get(dnet.name, None)
     srec['data_net_name'] = dnet.name
-    srec['data_ipv4'] = ipv4
-    srec['data_ipv6'] = ipv6
+    srec['data_ipv4'] = data_ipv4
+    srec['data_ipv6'] = data_ipv6
     srec['data_vfmac'] = vfmac
     srec['container_user'] = kwargs.get("USER_NAME", None)
 
@@ -424,7 +440,7 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
     srec['ctrl_port'] = cport
     srec['ctrl_host'] = node['public_url']
     srec['docker_kwargs'] = docker_kwargs
-    srec['net_kwargs'] = net_kwargs
+    srec['net_kwargs'] = mnet_kwargs
     srec['image'] = img
     srec['profile'] = profile
     srec['errors'] = list()

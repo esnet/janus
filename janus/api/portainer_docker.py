@@ -115,6 +115,7 @@ class PortainerDockerApi(object):
         for k, v in six.iteritems(kwargs):
             if k in params:
                 body[k] = v
+        kwargs = dict()
         kwargs['_return_http_data_only'] = True
         res = self._call("/endpoints/{}/docker/networks/{}/connect".format(pid, nid),
                          "POST", body, **kwargs)
