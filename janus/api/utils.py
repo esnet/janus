@@ -15,12 +15,8 @@ def precommit_db():
     Id = table.insert(dict())
     return Id
 
-def commit_db(record, rid=None, delete=False):
-    DB = TinyDB(cfg.get_dbpath())
+def commit_db_realized(record, node_table, net_table, delete=False):
     Q = Query()
-    node_table = DB.table('nodes')
-    net_table = DB.table('networks')
-
     services = record.get("services", dict())
     for k,v in services.items():
         for s in v:
@@ -58,9 +54,20 @@ def commit_db(record, rid=None, delete=False):
                         net['allocated_v6'].append(s['data_ipv6'])
                 net_table.update(net, Q.name == s['data_net_name'])
 
+def commit_db(record, rid=None, delete=False, realized=False):
+    DB = TinyDB(cfg.get_dbpath())
+    node_table = DB.table('nodes')
+    net_table = DB.table('networks')
     table = DB.table('active')
+
+    if realized:
+        commit_db_realized(record, node_table, net_table, delete)
+        table.update(record, doc_ids=[rid])
+        return {rid: record}
+
     if delete:
         table.remove(doc_ids=[rid])
+        return {rid: record}
     elif rid:
         table.update(record, doc_ids=[rid])
         return {rid: record}
@@ -83,7 +90,7 @@ def get_next_vf(node, dnet):
     except:
         raise Exception("No more SRIOV VFs available for data net {}".format(dnet))
     return vf
-    
+
 def get_next_cport(node, prof, curr=set()):
     if not prof['ctrl_port_range']:
         return None
@@ -130,14 +137,15 @@ def get_next_ipv4(net, curr=set()):
             avail = set([IPv4Address(net.ipv4)])
         elif isinstance(net.ipv4, list):
             avail = set([IPv4Address(addr) for addr in net.ipv4])
-            avail = avail - set_alloced - curr
     else:
         ipnet = IPv4Network(network['subnet'][0]['Subnet'])
-        avail = set(ipnet.hosts()) - set_alloced - curr
+        avail = set(ipnet.hosts())
+    # prune final avail set
+    avail = avail - set_alloced - curr
     try:
         ipv4 = next(iter(avail))
     except:
-        raise Exception("No more data net ipv4 addresses available")
+        raise Exception("No more ipv4 addresses available for network {}".format(net.name))
     curr.add(ipv4)
     return str(ipv4)
 
@@ -172,13 +180,14 @@ def get_next_ipv6(net, curr=set()):
             avail = set([IPv6Address(addr) for addr in net.ipv6])
     else:
         avail = set(ipnet.hosts())
+    aiter = iter(avail)
     while not ipv6:
         try:
-            test = next(iter(avail))
+            test = next(aiter)
             if test not in unavail:
                 ipv6 = test
         except:
-            raise Exception("No more data net ipv6 addresses available")
+            raise Exception("No more ipv6 addresses available for network {}".format(net.name))
     curr.add(ipv6)
     return str(ipv6)
 
@@ -226,7 +235,7 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
     node = table.get(Node.name == nname)
     if not node:
         raise Exception("Node not found: {}".format(nname))
-    
+
     srec = dict()
     prof = cfg.get_profile(profile)
     dpr = prof['data_port_range']
@@ -304,8 +313,9 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
             del docker_kwargs["ExposedPorts"]
 
         if not mnet.is_host() and mnet_type != "bridge":
-            # Set data net layer 3
+            # Set mgmt net layer 3
             mgmt_ipv4 = get_next_ipv4(mnet, addrs_v4)
+            print (mgmt_ipv4)
             mgmt_ipv6 = get_next_ipv6(mnet, addrs_v6)
             mnet_kwargs.update({"EndpointConfig": {
                 "IPAMConfig": {
@@ -323,7 +333,7 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
     for e in prof['environment']:
         # XXX: do some sanity checking here
         docker_kwargs['Env'].append(e)
-    
+
     for v in prof['volumes']:
         vol = cfg.get_volume(v)
         if vol:

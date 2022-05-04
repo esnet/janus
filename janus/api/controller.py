@@ -68,7 +68,7 @@ class auth(object):
         if not db_init:
             init_db(client, refresh=True)
             db_init = True
-            
+
         return self.func(*args, **kwargs)
 
     def do_auth(self):
@@ -85,7 +85,7 @@ class auth(object):
 
         if not pcfg.username or not pcfg.password:
             raise Exception("No Portainer username or password defined")
-        
+
         pclient = ApiClient(pcfg)
 
         aa_api = AuthApi(pclient)
@@ -157,13 +157,17 @@ class ActiveCollection(Resource):
                             futures.append(executor.submit(dapi.stop_container, n['id'], alloc))
                 except Exception as e:
                     log.error("Could not find node/container to stop, or already stopped: {}".format(k))
-                    return {'Internal server error': id}, 500
         if not (cfg.dryrun):
             for future in concurrent.futures.as_completed(futures):
-                res = future.result()
-                if "container_id" in res:
-                    log.debug(f"Removing container {res['container_id']}")
-                    dapi.remove_container(res['node_id'], res['container_id'])
+                try:
+                    res = future.result()
+                    if "container_id" in res:
+                        log.debug(f"Removing container {res['container_id']}")
+                        dapi.remove_container(res['node_id'], res['container_id'])
+                except Exception as e:
+                    log.error("Could not remove container on remote node: {}".format(e))
+        # delete always removes realized state info
+        commit_db(doc, id, delete=True, realized=True)
         commit_db(doc, id, delete=True)
         return None, 204
 
@@ -227,7 +231,7 @@ class Create(Resource):
             traceback.print_exc()
             log.error("Could not allocate request: {}".format(e))
             return {"Error": "{}".format(e)}, 503
-        
+
         # setup simple accounting
         record = {'uuid': str(uuid.uuid4()),
                   'user': httpauth.current_user(),
@@ -279,9 +283,7 @@ class Create(Resource):
         # complete accounting
         record['services'] = svcs
         record['request'] = req
-        
         return commit_db(record, Id)
-
 
 @ns.response(200, 'OK')
 @ns.response(404, 'Not found')
@@ -313,8 +315,8 @@ class Start(Resource):
         services = svc.get("services", dict())
         for k,v in services.items():
             for s in v:
-                if len(s['errors']) or not s['container_id']:
-                    log.debug("Skipping service with errors or no container_id: {}".format(k))
+                if not s['container_id']:
+                    log.debug("Skipping service with no container_id: {}".format(k))
                     continue
                 c = s['container_id']
                 Node = Query()
@@ -331,8 +333,7 @@ class Start(Resource):
                         error = True
                         continue
         svc['state'] = State.MIXED.name if error else State.STARTED.name
-        table.update(svc, doc_ids=[id])
-        return {id: svc}
+        return commit_db(svc, id, realized=True)
 
 @ns.response(200, 'OK')
 @ns.response(404, 'Not found')
@@ -359,14 +360,14 @@ class Stop(Resource):
             return {"error": "Service {} already stopped".format(svc['uuid'])}, 503
         if svc['state'] == State.INITIALIZED.name:
             return {"error": "Service {} is in initialized state".format(svc['uuid'])}, 503
-        
+
         # stop the services
         error = False
         dapi = PortainerDockerApi(pclient)
         for k,v in svc['services'].items():
             for s in v:
-                if len(s['errors']) or not s['container_id']:
-                    log.debug("Skipping service with errors or no container_id: {}".format(k))
+                if not s['container_id']:
+                    log.debug("Skipping service with no container_id: {}".format(k))
                     continue
                 c = s['container_id']
                 Node = Query()
@@ -383,15 +384,13 @@ class Stop(Resource):
                         error = True
                         continue
         svc['state'] = State.MIXED.name if error else State.STOPPED.name
-        table.update(svc, doc_ids=[id])
-        return {id: svc}
-
+        return commit_db(svc, id, delete=True, realized=True)
 
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
 @ns.route('/exec')
 class Exec(Resource):
-    
+
     @httpauth.login_required
     @auth
     def post(self):
@@ -411,7 +410,7 @@ class Exec(Resource):
         log.debug(req)
 
         nname = req["node"]
-        
+
         DB = TinyDB(cfg.get_dbpath())
         Node = Query()
         table = DB.table('nodes')
@@ -443,7 +442,7 @@ class Exec(Resource):
 @ns.response(503, 'Service unavailable')
 @ns.route('/profiles')
 class Profile(Resource):
-    
+
     @httpauth.login_required
     @auth
     def get(self):
