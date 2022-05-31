@@ -1,6 +1,7 @@
 import logging
 import uuid
 import time
+import json
 from enum import Enum
 from tinydb import TinyDB, Query
 import concurrent
@@ -61,14 +62,16 @@ class auth(object):
 
     def __call__(self, *args, **kwargs):
         global db_init
-        client = self.do_auth()
+        try:
+            client = self.do_auth()
 
-        # also setup testing DB
-        # could also update DB on some interval...
-        if not db_init:
-            init_db(client, refresh=True)
-            db_init = True
-
+            # also setup testing DB
+            # could also update DB on some interval...
+            if not db_init:
+                init_db(client, refresh=True)
+                db_init = True
+        except Exception as e:
+            return json.loads(e.body), 500
         return self.func(*args, **kwargs)
 
     def do_auth(self):
@@ -87,10 +90,10 @@ class auth(object):
             raise Exception("No Portainer username or password defined")
 
         pclient = ApiClient(pcfg)
-
         aa_api = AuthApi(pclient)
         res = aa_api.authenticate_user(AuthenticateUserRequest(pcfg.username,
                                                                pcfg.password))
+
         pcfg.api_key = {'Authorization': res.jwt}
         pcfg.api_key_prefix = {'Authorization': 'Bearer'}
 
@@ -166,6 +169,7 @@ class ActiveCollection(Resource):
                         dapi.remove_container(res['node_id'], res['container_id'])
                 except Exception as e:
                     log.error("Could not remove container on remote node: {}".format(e))
+                    return {"Error": "{}".format(e)}, 503
         # delete always removes realized state info
         commit_db(doc, id, delete=True, realized=True)
         commit_db(doc, id, delete=True)
@@ -194,7 +198,6 @@ class NodeCollection(Resource):
             nodes = table.search(Node.name == node)
             return nodes if nodes else list()
         return table.all()
-
 
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')

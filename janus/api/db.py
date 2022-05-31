@@ -79,7 +79,7 @@ def init_db(client, refresh=False):
 
     DB = TinyDB(cfg.get_dbpath())
     node_table = DB.table('nodes')
-    
+
     try:
         Node = Query()
         eapi = EndpointsApi(client)
@@ -103,7 +103,7 @@ def init_db(client, refresh=False):
         traceback.print_exc()
         log.error("Backend error: {}".format(e))
         return
-        
+
     # setup some profile accounting
     # these are the data plane networks we care about
     data_nets = list()
