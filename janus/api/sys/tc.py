@@ -110,25 +110,41 @@ def Latency(args, verbose=False):
     if verbose:
         print("Total `tc` args passed: ", len(args))
 
-    if len(args)==3:
+
+    iface = args['interface']
+    latency = args['latency']
+    loss = args['loss']
+
+    if iface is not None and latency is not None and loss is not None:
         if verbose:
             print(f"Type: {bcolors.OKBLUE}Latency{bcolors.OKBLUE}")
-            print(f"\n---ARGUMENTS---\niface: {args['interface']}\nLatency: {args['latency']}\nLoss: {args['loss']}")
+            print(f"\n---ARGUMENTS---\niface: {iface}\nLatency: {latency}\nLoss: {loss}")
 
         print(f"\n{bcolors.HEADER}Traffic Control Latency!{bcolors.ENDC}")
-        print(f"{bcolors.HEADER}Adding latency:{args['latency']} and loss:{args['loss']} to iface:{args['interface']}{bcolors.ENDC}")
+        print(f"{bcolors.HEADER}Adding latency:{latency} and loss:{loss} to iface:{iface}{bcolors.ENDC}")
 
-        sysargs = "tc qdisc add dev {0} root netem delay {1} loss {2} limit 100000".format(args['interface'],
-                                                                                           args['latency'],
-                                                                                           args['loss'])
-        sysargs = sysargs.split()
-        pwd = subprocess.Popen(["echo", SUDO_PWD],
-                                stdout=subprocess.PIPE)
-        ret = subprocess.Popen(["sudo", "-S"]+sysargs,
-                                stdin=pwd.stdout,
-                                stdout=subprocess.PIPE)
-        rstr = ret.stdout.read().decode()
-    return rstr
+        cmd = f"tcset {iface} --delay {latency} --loss {loss} --change"
+        cmd = cmd.split()
+
+        ret = subprocess.run(cmd,
+                         stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT)
+
+        return get_eth_iface_rules(iface)
+
+        # sysargs = "tc qdisc add dev {0} root netem delay {1} loss {2} limit 100000".format(args['interface'],
+        #                                                                                    args['latency'],
+        #                                                                                    args['loss'])
+        # sysargs = sysargs.split()
+        # pwd = subprocess.Popen(["echo", SUDO_PWD],
+        #                         stdout=subprocess.PIPE)
+        # ret = subprocess.Popen(["sudo", "-S"]+sysargs,
+        #                         stdin=pwd.stdout,
+        #                         stdout=subprocess.PIPE)
+        # rstr = ret.stdout.read().decode()
+    # return rstr
+    else:
+        return "Interface, latency and loss must be specified", 400
 
 
 def Filter(args, verbose=False):

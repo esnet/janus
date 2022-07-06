@@ -202,7 +202,7 @@ class TrafficControlLatency(Resource):
 
     @httpauth.login_required
     def post(self):
-        req = { "interface"  : None,
+        default = { "interface"  : None,
                 "latency"    : None,
                 "loss"       : None,
                 "dport"      : None,
@@ -214,22 +214,30 @@ class TrafficControlLatency(Resource):
                 }
         try:
             req = request.get_json()
-            if req and type(req) is not dict:
+            log.info(req)
+
+            if (req is None) or (req and type(req) is not dict):
                 res = jsonify(error="Body is not json dictionary")
                 res.status_code = 400
                 return res
-            else:
-                req = {"interface"  : "eth100",
-                        "latency"   : "20ms",
-                        "loss"      : "0.1%",
-                         }
-            log.debug(req)
-        except:
-            pass
+
+            default.update(req)
+            req = default
+            # if req is None:
+            #     return "Interface and latency must be specified", 400
+                # req = {"interface"  : "eth100",
+                #        "latency"    : "20ms",
+                #        "loss"       : "0.2%"
+                #          }
+            log.info(req)
+        except Exception as e:
+            return str(e), 500
+
         try:
             ret = Latency(req)
         except Exception as e:
             return str(e), 500
+
         return ret, 200
 
 
