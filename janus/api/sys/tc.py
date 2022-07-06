@@ -38,6 +38,7 @@ def Netem(args, verbose=False, delete=False):
 
     iface = args['interface']
     if delete:
+        run_cmd = True
         cmd = f"tcdel {iface} --all"
     else:
         run_cmd = False
