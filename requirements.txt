@@ -10,4 +10,5 @@ requests
 six
 tinydb
 virtfs
+tcconfig
 Werkzeug==0.16.1

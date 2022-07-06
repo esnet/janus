@@ -1,5 +1,5 @@
 import subprocess
-
+import json
 
 # Need to get hashed password of docker container from ~/settings.py
 SUDO_PWD = ""
@@ -15,18 +15,21 @@ class bcolors:
     UNDERLINE = '\033[4m'
 
 
-def get_tc():
-    sysargs = ["/sbin/sysctl"]
+def get_eth_iface_rules(iface):
+    # sysargs = ["/sbin/sysctl"]
+    sysargs = ["tcshow", iface]
+
     ret = subprocess.run(sysargs,
-                         stdout=subprocess,
+                         stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT)
     rstr = ret.stdout.decode("utf-8").strip()
-    res = dict()
-    for item in rstr.split("\n"):
-        parts = item.split("=")
-        rhs = parts[-1].strip().split("\t")
-        res.update({parts[0].strip(): rhs if len(rhs)>1 else rhs[0]})
-    return res
+    return json.loads(rstr)
+    # res = dict()
+    # for item in rstr.split("\n"):
+    #     parts = item.split("=")
+    #     rhs = parts[-1].strip().split("\t")
+    #     res.update({parts[0].strip(): rhs if len(rhs)>1 else rhs[0]})
+    # return res
 
 
 def Netem(args, verbose=False, delete=False):
@@ -65,24 +68,38 @@ def Delay(args, verbose=False):
     if verbose:
         print("Total `tc` args passed: ", len(args))
 
-    if len(args)==2:
+    iface = args['interface']
+    latency = args['latency']
+
+    if iface is not None and latency is not None:
         if verbose:
             print(f"Type: {bcolors.OKBLUE}Delay{bcolors.OKBLUE}")
-            print(f"\n---ARGUMENTS---\niface: {args['interface']}\nLatency: {args['latency']}")
+            print(f"\n---ARGUMENTS---\niface: {iface}\nLatency: {latency}")
 
         print(f"\n{bcolors.HEADER}Traffic Control Delay!{bcolors.ENDC}")
         print(f"{bcolors.HEADER}Adding {args['latency']} latency to iface {args['interface']}{bcolors.ENDC}")
+        cmd = f"tcset {iface} --delay {latency} --change"
+        cmd = cmd.split()
 
-        sysargs = "tc qdisc add dev {0} root netem delay {1} limit 10000".format(args['interface'],
-                                                                                 args['latency'])
-        sysargs = sysargs.split()
-        pwd = subprocess.Popen(['echo', SUDO_PWD],
-                                stdout=subprocess.PIPE)
-        ret = subprocess.Popen(["sudo", "-S"]+sysargs,
-			   stdin=pwd.stdout,
-			   stdout=subprocess.PIPE)
-        rstr = ret.stdout.read().decode()
-    return rstr
+        ret = subprocess.run(cmd,
+                         stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT)
+
+        return get_eth_iface_rules(iface)
+
+        # sysargs = "tc qdisc add dev {0} root netem delay {1} limit 10000".format(args['interface'],
+        #                                                                          args['latency'])
+        # sysargs = sysargs.split()
+        # pwd = subprocess.Popen(['echo', SUDO_PWD],
+        #                         stdout=subprocess.PIPE)
+        # ret = subprocess.Popen(["sudo", "-S"]+sysargs,
+		# 	   stdin=pwd.stdout,
+		# 	   stdout=subprocess.PIPE)
+        # rstr = ret.stdout.read().decode()
+        # return rstr
+
+    else:
+        return "Interface and latency must be specified", 400
 
 
 def Latency(args, verbose=False):
@@ -128,10 +145,10 @@ def Filter(args, verbose=False):
             print(f"Type: {bcolors.OKBLUE}Filter{bcolors.OKBLUE}")
             print(f"\n---ARGUMENTS---\niface:\t{args['interface']}\nLatency:{args['latency']}\nLoss:\t{args['loss']}\
 \nDport:\t{args['dport']}\nDmask:\t{args['dmask']}\nid:\t{args['id']}")
-        
+
         print(f"\n{bcolors.HEADER}Traffic Control Filter!{bcolors.ENDC}")
         print(f"{bcolors.HEADER}Adding latency:{args['latency']} and loss:{args['loss']} to iface:{args['interface']} (dport={args['dport']}/{args['dmask']}){bcolors.ENDC}")
-        
+
         sysargs_ = [
         "tc qdisc add dev {0} root handle 1: htb".format(args['interface']),
         "tc class add dev {0} parent 1: classid 1:1 htb rate 100000Mbps".format(args['interface']),
