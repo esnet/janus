@@ -36,28 +36,38 @@ def Netem(args, verbose=False, delete=False):
     if "interface" not in args:
         raise Exception("Interface not given")
 
+    iface = args['interface']
     if delete:
-        base = f"tc qdisc del dev {args['interface']} root"
+        cmd = f"tcdel {iface} --all"
     else:
-        base = f"tc qdisc add dev {args['interface']} root netem"
-        if "latency" in args:
-            base += f" delay {args['latency']}"
-        if "loss" in args:
-            base += f" loss {args['loss']}"
-        if "rate" in args:
-            base += f" rate {args['rate']}"
-        if "limit" in args:
-            base += f" limit {args['limit']}"
+        run_cmd = False
+        cmd = f"tcset {iface}"
 
-    sysargs = base.split()
-    p = subprocess.Popen(["sudo"]+sysargs,
-			 stdin=None,
-			 stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE)
-    outs, errs = p.communicate()
-    if p.returncode:
-        raise Exception(errs.decode())
-    return outs.decode()
+        if "latency" in args:
+            run_cmd = True
+            cmd += f" --delay {args['latency']}"
+
+        if "loss" in args:
+            run_cmd = True
+            cmd += f" --loss {args['loss']}"
+
+        if "rate" in args:
+            run_cmd = True
+            cmd += f" --rate {args['rate']}"
+
+        if "limit" in args:
+            run_cmd = True
+            cmd += f" --limit {args['limit']}"
+
+        cmd += " --change"
+
+    if run_cmd:
+        cmd = cmd.split()
+        ret = subprocess.run(cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT)
+
+    return get_eth_iface_rules(iface)
 
 
 def Delay(args, verbose=False):

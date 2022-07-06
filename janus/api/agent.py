@@ -99,11 +99,16 @@ class TrafficControlNetem(Resource):
     def post(self):
         try:
             req = request.get_json()
-            if req and type(req) is not dict:
+            log.info(req)
+
+            if (req is None) or (req and type(req) is not dict):
                 res = jsonify(error="Body is not json dictionary")
                 res.status_code = 400
                 return res
-            log.debug(req)
+
+            if req.get("interface", None) is None:
+                return "Interface must be specified", 400
+
         except Exception as e:
             return str(e), 500
 
@@ -111,17 +116,22 @@ class TrafficControlNetem(Resource):
             ret = Netem(req)
         except Exception as e:
             return str(e), 500
-        return "OK", 200
+        return ret, 200
 
     @httpauth.login_required
     def delete(self):
         try:
             req = request.get_json()
-            if req and type(req) is not dict:
+            log.info(req)
+
+            if (req is None) or (req and type(req) is not dict):
                 res = jsonify(error="Body is not json dictionary")
                 res.status_code = 400
                 return res
-            log.debug(req)
+
+            if req.get("interface", None) is None:
+                return "Interface must be specified", 400
+
         except Exception as e:
             return str(e), 500
 
@@ -129,7 +139,7 @@ class TrafficControlNetem(Resource):
             ret = Netem(req, delete=True)
         except Exception as e:
             return str(e), 500
-        return "OK", 200
+        return ret, 200
 
 
 @ns.route('/tc/delay')
