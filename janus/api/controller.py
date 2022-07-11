@@ -147,6 +147,7 @@ class ActiveCollection(Resource):
         if doc == None:
             return {'Not found': id}, 404
 
+        force = request.args.get('force', None)
         dapi = PortainerDockerApi(pclient)
         futures = list()
 
@@ -169,7 +170,8 @@ class ActiveCollection(Resource):
                         dapi.remove_container(res['node_id'], res['container_id'])
                 except Exception as e:
                     log.error("Could not remove container on remote node: {}".format(e))
-                    return {"Error": "{}".format(e)}, 503
+                    if not force:
+                        return {"Error": "{}".format(e)}, 503
         # delete always removes realized state info
         commit_db(doc, id, delete=True, realized=True)
         commit_db(doc, id, delete=True)
