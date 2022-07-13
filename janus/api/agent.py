@@ -97,6 +97,19 @@ class TrafficControlNetem(Resource):
 
     @httpauth.login_required
     def post(self):
+        default = {
+            "interface": None,
+            "latency": None,
+            "loss": None,
+            "rate": None,
+            "corrupt": None,
+            "reordering": None,
+            "limit": None,
+            "dport": None,
+            "ip": None,
+            "container": None
+        }
+
         try:
             req = request.get_json()
             log.info(req)
@@ -109,11 +122,14 @@ class TrafficControlNetem(Resource):
             if req.get("interface", None) is None:
                 return "Interface must be specified", 400
 
+            default.update(req)
+            req = default
+
         except Exception as e:
             return str(e), 500
 
         try:
-            ret = Netem(req)
+            ret = Netem(req, verbose=True)
         except Exception as e:
             return str(e), 500
         return ret, 200

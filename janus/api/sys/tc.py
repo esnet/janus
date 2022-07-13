@@ -15,9 +15,13 @@ class bcolors:
     UNDERLINE = '\033[4m'
 
 
-def get_eth_iface_rules(iface):
+def get_eth_iface_rules(iface, docker=None):
     # sysargs = ["/sbin/sysctl"]
-    sysargs = ["tcshow", iface]
+
+    if docker is not None:
+        sysargs = ["sudo", "tcshow", "--docker", docker]
+    else:
+        sysargs = ["tcshow", iface]
 
     ret = subprocess.run(sysargs,
                          stdout=subprocess.PIPE,
@@ -41,26 +45,78 @@ def Netem(args, verbose=False, delete=False):
         run_cmd = True
         cmd = f"tcdel {iface} --all"
     else:
+        ip = args["ip"]
+        dport = args["dport"]
+
+        if args['container'] is None:
+            curr_rules = get_eth_iface_rules(iface)[iface]["outgoing"]
+            key = ""
+
+            if ip is not None:
+                key += f"dst-network={ip}, "
+
+            if dport is not None:
+                key += f"dst-port={dport}, "
+
+            key += "protocol=ip"
+
+            if key in curr_rules:
+                target_rules = curr_rules[key]
+                print(f"target: {target_rules}")
+                for rule in target_rules:
+                    if rule in args and args[rule] is None:
+                        print(target_rules[rule])
+                        args[rule] = target_rules[rule]
+        else:
+            curr_rules = get_eth_iface_rules(iface, args['container'])
+            for key in curr_rules:
+                target_rules = curr_rules[key]["outgoing"]["protocol=ip"]
+                print(f"target: {target_rules}")
+                for rule in target_rules:
+                    if rule in args and args[rule] is None:
+                        print(target_rules[rule])
+                        args[rule] = target_rules[rule]
+
         run_cmd = False
         cmd = f"tcset {iface}"
+        if args["container"] is not None:
+            cmd = f"sudo tcset --docker"
 
-        if "latency" in args:
+        if args["latency"] is not None:
             run_cmd = True
             cmd += f" --delay {args['latency']}"
 
-        if "loss" in args:
-            run_cmd = True
-            cmd += f" --loss {args['loss']}"
-
-        if "rate" in args:
+        if args["rate"] is not None:
             run_cmd = True
             cmd += f" --rate {args['rate']}"
 
-        if "limit" in args:
+        if args["loss"] is not None:
             run_cmd = True
-            cmd += f" --limit {args['limit']}"
+            cmd += f" --loss {args['loss']}"
 
-        cmd += " --change"
+        if args["corrupt"] is not None:
+            run_cmd = True
+            cmd += f" --corrupt {args['corrupt']}"
+
+        if args["reordering"] is not None:
+            run_cmd = True
+            cmd += f" --reordering {args['reordering']}"
+
+        if ip is not None:
+            cmd += f" --network {ip}"
+
+        if dport is not None:
+            cmd += f" --port {dport}"
+
+        # if args["limit"] is not None:
+        #     run_cmd = True
+        #     cmd += f" --limit {args['limit']}"
+
+
+        if args["container"] is not None:
+            cmd += f" {args['container']} --change"
+        else:
+            cmd += " --change"
 
     if run_cmd:
         cmd = cmd.split()
@@ -68,7 +124,14 @@ def Netem(args, verbose=False, delete=False):
                             stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT)
 
-    return get_eth_iface_rules(iface)
+        if verbose:
+            print(f'cmd: {cmd}')
+            print(ret.stdout.decode("utf-8"), ret.stderr)
+
+    if args["container"] is None:
+        return get_eth_iface_rules(iface)
+    else:
+        return get_eth_iface_rules(iface, args["container"])
 
 
 def Delay(args, verbose=False):
