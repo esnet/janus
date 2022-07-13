@@ -37,54 +37,54 @@ def get_eth_iface_rules(iface, docker=None):
 
 
 def Netem(args, verbose=False, delete=False):
-    if "interface" not in args:
-        raise Exception("Interface not given")
+    # if "interface" not in args:
+    #     raise Exception("Interface not given")
 
-    iface = args['interface']
+    iface = args.get('interface')
+    container = args.get('container')
+
     if delete:
         run_cmd = True
-        cmd = f"tcdel {iface} --all"
+        if container is not None:
+            cmd = f"sudo tcdel --docker {container}"
+        else:
+            cmd = f"tcdel {iface} --all"
     else:
         ip = args["ip"]
         dport = args["dport"]
 
-        if args['container'] is None:
+        if container is None:
             curr_rules = get_eth_iface_rules(iface)[iface]["outgoing"]
-            key = ""
-
-            if ip is not None:
-                key += f"dst-network={ip}, "
-
-            if dport is not None:
-                key += f"dst-port={dport}, "
-
-            key += "protocol=ip"
-
-            if key in curr_rules:
-                target_rules = curr_rules[key]
-                print(f"target: {target_rules}")
-                for rule in target_rules:
-                    if rule in args and args[rule] is None:
-                        print(target_rules[rule])
-                        args[rule] = target_rules[rule]
         else:
-            curr_rules = get_eth_iface_rules(iface, args['container'])
-            for key in curr_rules:
-                target_rules = curr_rules[key]["outgoing"]["protocol=ip"]
-                print(f"target: {target_rules}")
-                for rule in target_rules:
-                    if rule in args and args[rule] is None:
-                        print(target_rules[rule])
-                        args[rule] = target_rules[rule]
+            docker_rules = get_eth_iface_rules(iface, container)
+            for entry in docker_rules:
+                curr_rules = docker_rules[entry]["outgoing"]
+
+        key = ""
+        if ip is not None:
+            key += f"dst-network={ip}, "
+
+        if dport is not None:
+            key += f"dst-port={dport}, "
+
+        key += "protocol=ip"
+
+        if key in curr_rules:
+            target_rules = curr_rules[key]
+            print(f"target: {target_rules}")
+            for rule in target_rules:
+                if rule in args and args[rule] is None:
+                    print(target_rules[rule])
+                    args[rule] = target_rules[rule]
 
         run_cmd = False
         cmd = f"tcset {iface}"
-        if args["container"] is not None:
+        if container is not None:
             cmd = f"sudo tcset --docker"
 
-        if args["latency"] is not None:
+        if args["delay"] is not None:
             run_cmd = True
-            cmd += f" --delay {args['latency']}"
+            cmd += f" --delay {args['delay']}"
 
         if args["rate"] is not None:
             run_cmd = True
@@ -113,8 +113,8 @@ def Netem(args, verbose=False, delete=False):
         #     cmd += f" --limit {args['limit']}"
 
 
-        if args["container"] is not None:
-            cmd += f" {args['container']} --change"
+        if container is not None:
+            cmd += f" {container} --change"
         else:
             cmd += " --change"
 
@@ -128,10 +128,10 @@ def Netem(args, verbose=False, delete=False):
             print(f'cmd: {cmd}')
             print(ret.stdout.decode("utf-8"), ret.stderr)
 
-    if args["container"] is None:
+    if container is None:
         return get_eth_iface_rules(iface)
     else:
-        return get_eth_iface_rules(iface, args["container"])
+        return get_eth_iface_rules(iface, container)
 
 
 def Delay(args, verbose=False):

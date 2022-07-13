@@ -1,4 +1,5 @@
 import logging
+from typing import Container
 from janus.settings import cfg
 
 from flask import request, jsonify
@@ -89,17 +90,18 @@ class TuneCollection(Resource):
 class TrafficControlNetem(Resource):
     def get(self):
         iface = request.args.get('interface', None)
+        container = request.args.get('container', None)
 
-        if iface is None:
-            return "No interface specified", 400
+        if iface is None and container is None:
+            return "No interface or container id specified", 400
 
-        return get_eth_iface_rules(iface)
+        return get_eth_iface_rules(iface, docker=container)
 
     @httpauth.login_required
     def post(self):
         default = {
             "interface": None,
-            "latency": None,
+            "delay": None,
             "loss": None,
             "rate": None,
             "corrupt": None,
@@ -119,8 +121,11 @@ class TrafficControlNetem(Resource):
                 res.status_code = 400
                 return res
 
-            if req.get("interface", None) is None:
-                return "Interface must be specified", 400
+            iface = req.get('interface', None)
+            container = req.get('container', None)
+
+            if iface is None and container is None:
+                return "No interface or container id specified", 400
 
             default.update(req)
             req = default
@@ -145,8 +150,11 @@ class TrafficControlNetem(Resource):
                 res.status_code = 400
                 return res
 
-            if req.get("interface", None) is None:
-                return "Interface must be specified", 400
+            iface = req.get('interface', None)
+            container = req.get('container', None)
+
+            if iface is None and container is None:
+                return "No interface or container id specified", 400
 
         except Exception as e:
             return str(e), 500
