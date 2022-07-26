@@ -1,5 +1,6 @@
 import os
 import yaml
+import logging
 from werkzeug.security import generate_password_hash
 
 
@@ -8,13 +9,14 @@ DEFAULT_CFG_PATH = "/etc/janus/janus.conf"
 DEFAULT_PROFILE_PATH = "/etc/janus/profiles"
 DB_FILE = "janus_db.json"
 IGNORE_EPS = []
-AGENT_PORT = 5000
-AGENT_PROTO = "https"
+AGENT_PORT = 5050
+AGENT_PROTO = "http"
 AGENT_SSL_VERIFY = False
 AGENT_IMAGE = "dtnaas/agent"
+log = logging.getLogger(__name__)
 
 try:
-    FLASK_DEBUG = os.environ['DEBUG']
+    FLASK_DEBUG = True #os.environ['DEBUG']
 except:
     FLASK_DEBUG = False
 
@@ -63,6 +65,7 @@ class JanusConfig():
         }
 
         self._volumes = dict()
+        self._qos = dict()
         self._profiles = dict()
 
         # base profile is merged with profiles below
@@ -121,6 +124,9 @@ class JanusConfig():
     def get_volume(self, v):
         return self._volumes.get(v, None)
 
+    def get_qos(self, v):
+        return self._qos.get(v, None)
+
     def get_feature(self, f):
         return self._features.get(f, None)
 
@@ -135,12 +141,18 @@ class JanusConfig():
                 with open(entry, "r") as yfile:
                     try:
                         data = yaml.safe_load(yfile)
+                        log.info("read profile directory: {}".format(data))
                         for k,v in data.items():
                             if isinstance(v, dict):
                                 if (k == "volumes"):
                                     self._volumes.update(v)
+
+                                if (k == "qos"):
+                                    self._qos.update(v)
+
                                 if (k == "profiles"):
                                     self._profiles.update(v)
+
                                 if (k == "features"):
                                     self._features.update(v)
 
