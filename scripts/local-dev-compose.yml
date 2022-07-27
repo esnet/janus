@@ -1,0 +1,66 @@
+version: '3.7'
+services:
+  portainer-ce:
+    image: portainer/portainer-ce
+    restart: unless-stopped
+    volumes:
+      - portainer_data:/data
+    expose:
+      - 9000
+    ports:
+      - "9000:9000"
+    networks:
+      - dtnaas
+
+  portainer-agent:
+    image: portainer/agent
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+    expose:
+      - 9001
+    ports:
+      - "9001:9001"
+    network_mode: bridge
+
+  controller:
+    image: dtnaas/controller
+    restart: unless-stopped
+    environment:
+      - PORT=5000
+      - DEBUG=1
+    volumes:
+      - /opt/janus/controller:/opt/janus
+      - /etc/janus:/etc/janus
+    expose:
+      - 5000
+    ports:
+      - "5000:5000"
+    networks:
+      - dtnaas
+
+  agent:
+    image: dtnaas/agent
+    restart: unless-stopped
+    environment:
+      - AGENT_BIND=0.0.0.0
+      - AGENT_PORT=5050
+      - AGENT_SSL=
+    expose:
+      - 5050
+    ports:
+      - "5050:5050"
+    network_mode: host
+
+volumes:
+  portainer_data:
+    external: true
+    name: portainer_data
+
+networks:
+  dtnaas:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: fd00:dead:beef::/48
