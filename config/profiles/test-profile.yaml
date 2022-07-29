@@ -1,0 +1,27 @@
+volumes:
+  esnet_local_conf:
+    type: bind
+    source: "/etc/janus/configs//95-local-esnet.cfg"
+    target: "/etc/95-local-esnet.cfg"
+
+profiles:
+  my-test-profile:
+    privileged: false
+    systemd: false
+    cpu: false
+    mem: false
+    mgmt_net:
+      name: my-mgmt-net  # existing docker network
+      ipv4_addr: 192.168.1.100
+      ipv6_addr: 2001:400:6201:1200:2
+    serv_port_range: null
+    ctrl_port_range: null
+    data_net:
+      name: my-data-net  # existing docker network
+      ipv4_addr: 10.10.10.100
+      ipv6_addr: 2001:400:f200:1200:3
+    volumes:
+      - esnet_local_conf
+      - tmpfs             # defined in volumes.yaml
+    environment:
+      - LOGROTATE=15
