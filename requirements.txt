@@ -1,7 +1,7 @@
 cryptography
-flask
-flask-restplus
-flask-httpauth
+Flask=2.0.2
+flask-restplus==0.13.0
+Flask-httpauth==4.4.0
 numa
 portainer-api
 psutil
@@ -11,4 +11,4 @@ six
 tinydb
 virtfs
 tcconfig
-Werkzeug==0.16.1
+Werkzeug==2.0.2
