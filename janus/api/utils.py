@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 from ipaddress import IPv4Network, IPv4Address
 from ipaddress import IPv6Network, IPv6Address
 
@@ -7,7 +8,9 @@ from janus import settings
 from janus.api.models import Network
 from janus.settings import cfg
 from tinydb import TinyDB, Query
+import requests
 
+log = logging.getLogger(__name__)
 
 def precommit_db():
     DB = TinyDB(cfg.get_dbpath())
@@ -224,8 +227,30 @@ def handle_image(n, img, dapi):
         elif len(parts) > 1:
             dapi.pull_image(n['id'], parts[0], parts[1])
 
+def set_qos(url, qos):
+        try:
+            api_url = "{}://{}:{}/api/janus/agent/tc/netem".format(
+                settings.AGENT_PROTO,
+                url,
+                settings.AGENT_PORT
+            )
+
+            # basic authentication for now
+            res = requests.post(
+                url=api_url,
+                json=qos,
+                auth=("admin", "admin"),
+                verify=settings.AGENT_SSL_VERIFY,
+                timeout=2
+            )
+
+            log.info(res.json())
+        except Exception as e:
+            log.error(e)
+            # return node, None
+
 def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kwargs):
-    if not profile:
+    if not profile or profile == "default":
         profile = settings.DEFAULT_PROFILE
 
     DB = TinyDB(cfg.get_dbpath())
@@ -238,6 +263,8 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
 
     srec = dict()
     prof = cfg.get_profile(profile)
+
+    qos = cfg.get_qos(prof["qos"]) if "qos" in prof else None
     dpr = prof['data_port_range']
     dnet = Network(prof['data_net'])
     mnet = Network(prof['mgmt_net'])
@@ -453,5 +480,6 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
     srec['net_kwargs'] = mnet_kwargs
     srec['image'] = img
     srec['profile'] = profile
+    srec['qos'] = qos
     srec['errors'] = list()
     return srec
