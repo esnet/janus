@@ -46,7 +46,7 @@ services:
     environment:
       - AGENT_BIND=0.0.0.0
       - AGENT_PORT=5050
-      - AGENT_SSL=
+      - AGENT_SSL=--ssl
     expose:
       - 5050
     ports:
