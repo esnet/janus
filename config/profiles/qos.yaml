@@ -1,0 +1,9 @@
+qos:
+  default:
+    delay: "10ms"
+    rate: "500mbps"
+  test:
+    delay: "10ms"
+    rate: "100mbps"
+    loss: "1%"
+    dport: "8000"
