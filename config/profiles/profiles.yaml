@@ -6,3 +6,4 @@ profiles:
       - 10100
     volumes:
       - dtnaas-1
+    qos: default
