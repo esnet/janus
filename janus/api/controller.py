@@ -334,7 +334,7 @@ class Start(Resource):
                     try:
                         dapi.start_container(node['id'], c)
 
-                        if "qos" in s:
+                        if s['qos'] is not None and s['qos'].isinstance(dict):
                             qos = s["qos"]
                             qos["container"] = c
                             set_qos(node["public_url"], qos)
