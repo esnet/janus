@@ -24,8 +24,8 @@ setup(
 
     packages=find_packages(),
 
-    install_requires=['flask-restplus', 'portainer-api',
-                      'tinydb', 'Werkzeug', 'cryptography',
+    install_requires=['flask==2.0.2', 'flask-restplus==0.13.0', 'portainer-api',
+                      'tinydb', 'werkzeug==2.0.2', 'cryptography',
                       'psutil', 'virtfs', 'py-cpuinfo', 'numa',
-                      'requests', 'flask-httpauth', 'pyyaml']
+                      'requests', 'flask-httpauth==4.4.0', 'pyyaml']
 )

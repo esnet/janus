@@ -1,0 +1,23 @@
+volumes:
+  cgroup:
+    type: bind
+    source: "/sys/fs/cgroup"
+    target: "/sys/fs/cgroup"
+    ReadOnly: true
+  tmp:
+    type: tmpfs
+    target: "/tmp"
+  run:
+    type: tmpfs
+    target: "/run"
+  data:
+    type: bind
+    source: "/data"
+    target: "/data"
+  ceph:
+    type: rbd
+  dtnaas-1:
+    driver: rexray/s3fs
+    type: volume
+    source: dtnaas-1
+    target: "/data"

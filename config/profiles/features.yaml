@@ -1,0 +1,13 @@
+features:
+  rdma:
+    devices:
+      - devprefix: "/dev/infiniband"
+        names:
+          - rdma_cm
+          - uverbs
+    caps:
+      - IPC_LOCK
+    limits:
+      - Name: memlock
+        Soft: -1
+        Hard: -1

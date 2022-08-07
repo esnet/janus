@@ -1,0 +1,9 @@
+profiles:
+  default: {}  # will just inherit base config in settings.py
+  local:
+    ctrl_port_range:
+      - 10000
+      - 10100
+    volumes:
+      - dtnaas-1
+    qos: default

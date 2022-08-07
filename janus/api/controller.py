@@ -14,7 +14,7 @@ from werkzeug.security import check_password_hash
 
 from janus import settings
 from janus.settings import cfg
-from .utils import create_service, commit_db, precommit_db, error_svc, handle_image
+from .utils import create_service, commit_db, precommit_db, error_svc, handle_image, set_qos
 from .db import init_db
 
 # XXX: Portainer will eventually go behind an ABC interface
@@ -229,6 +229,8 @@ class Create(Resource):
                     kwargs = r.get("kwargs", dict())
                     if s not in svcs:
                         svcs[s] = list()
+
+                    # print("Hello: ", r['profile'], "\n\n")
                     svcs[s].append(create_service(s, r['image'], r['profile'], addrs_v4, addrs_v6,
                                                   cports, sports, **kwargs))
         except Exception as e:
@@ -327,9 +329,16 @@ class Start(Resource):
                 Node = Query()
                 node = ntable.get(Node.name == k)
                 log.debug("Starting container {} on {}".format(c, k))
+
                 if not (cfg.dryrun):
                     try:
                         dapi.start_container(node['id'], c)
+
+                        if s['qos'] is not None and s['qos'].isinstance(dict):
+                            qos = s["qos"]
+                            qos["container"] = c
+                            set_qos(node["public_url"], qos)
+
                     except ApiException as e:
                         log.error("Could not start container on {}: {}: {}".format(k,
                                                                                    e.reason,
@@ -452,9 +461,14 @@ class Profile(Resource):
     @auth
     def get(self):
         refresh = request.args.get('refresh', None)
+        pname = request.args.get('pname', None)
         if refresh and refresh.lower() == 'true':
             try:
                 cfg.read_profiles()
             except Exception as e:
                 return {"error": str(e)}, 500
-        return cfg.get_profiles(inline=True)
+
+        if pname:
+            return cfg.get_profile(pname, inline=True)
+        else:
+            return cfg.get_profiles(inline=True)
