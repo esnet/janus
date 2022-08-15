@@ -12,3 +12,4 @@ tinydb
 virtfs
 tcconfig
 Werkzeug==2.0.2
+pydantic==1.9.0

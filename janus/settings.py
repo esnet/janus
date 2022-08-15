@@ -1,8 +1,9 @@
 import os
 import yaml
 import logging
+from tinydb import TinyDB, Query
 from werkzeug.security import generate_password_hash
-
+from api.validator import QoS_Controller, Profile
 
 API_PREFIX = '/api'
 DEFAULT_CFG_PATH = "/etc/janus/janus.conf"
@@ -10,10 +11,11 @@ DEFAULT_PROFILE_PATH = "/etc/janus/profiles"
 DB_FILE = "janus_db.json"
 IGNORE_EPS = []
 AGENT_PORT = 5050
-AGENT_PROTO = "https"
+AGENT_PROTO = "http"
 AGENT_SSL_VERIFY = False
 AGENT_IMAGE = "dtnaas/agent"
 log = logging.getLogger(__name__)
+
 
 try:
     FLASK_DEBUG = True #os.environ['DEBUG']
@@ -40,6 +42,10 @@ class JanusConfig():
         self.PORTAINER_USER = None
         self.PORTAINER_PASSWORD = None
         self.PORTAINER_VERIFY_SSL = True
+
+        self._DB = TinyDB(self._dbpath)
+        self._query = Query()
+        self._profile_tbl = self._DB.table('profiles')
 
         user = os.getenv("JANUS_USER")
         pwd = os.getenv("JANUS_PASSWORD")
@@ -83,7 +89,8 @@ class JanusConfig():
             "serv_port_range": [60000,60032],
             "features": list(),
             "volumes": list(),
-            "environment": list()
+            "environment": list(),
+            "qos": None,
         }
 
     @property
@@ -104,31 +111,51 @@ class JanusConfig():
     def get_users(self):
         return self._users
 
-    def get_profile(self, p, inline=False):
-        if p not in self._profiles:
-            raise Exception("Profile not found: {}".format(p))
-        if not inline:
-            return {**self._base_profile, **self._profiles[p]}
+
+    def get_profile_from_db(self, p=None):
+        if p:
+            return self._profile_tbl.search(self._query.name == p)
         else:
-            prof = {**self._base_profile, **self._profiles[p]}
+            return self._profile_tbl.all()
+
+    def get_profile(self, p, inline=False):
+        res = self.get_profile_from_db(p)
+        # if p not in self._profiles:
+        #     raise Exception("Profile not found: {}".format(p))
+        # if not inline:
+        #     return {**self._base_profile, **self._profiles[p]}
+        # else:
+        #     prof = {**self._base_profile, **self._profiles[p]}
+        #     prof['volumes'] = [{v: self._volumes[v]} for v in prof['volumes']]
+        #     prof['features'] = [{f: self._features[f]} for f in prof['features']]
+        #     return prof
+
+        if len(res) == 0:
+            return {}
+
+        if not inline:
+            return res[0]["settings"].copy() #{**self._base_profile, **res[0]}
+        else:
+            prof = res[0]["settings"].copy() #{**self._base_profile, **res[0]}
+            log.info(prof)
             prof['volumes'] = [{v: self._volumes[v]} for v in prof['volumes']]
             prof['features'] = [{f: self._features[f]} for f in prof['features']]
             return prof
 
     def get_profiles(self, inline=False):
         ret = dict()
-        for prof in self._profiles:
-            ret.update({prof: self.get_profile(prof, inline)})
+        for prof in self.get_profile_from_db():
+            ret.update({prof["name"]: self.get_profile(prof["name"], inline)})
         return ret
 
     def get_volume(self, v):
-        return self._volumes.get(v, None)
+        return self._volumes.get(v, {})
 
     def get_qos(self, v):
-        return self._qos.get(v, None)
+        return self._qos.get(v, {})
 
     def get_feature(self, f):
-        return self._features.get(f, None)
+        return self._features.get(f, {})
 
     def read_profiles(self, path=None):
         if not path:
@@ -141,17 +168,39 @@ class JanusConfig():
                 with open(entry, "r") as yfile:
                     try:
                         data = yaml.safe_load(yfile)
-                        log.info("read profile directory: {}".format(data))
+                        # log.info("read profile directory: {}".format(data))
                         for k,v in data.items():
                             if isinstance(v, dict):
                                 if (k == "volumes"):
                                     self._volumes.update(v)
 
                                 if (k == "qos"):
-                                    self._qos.update(v)
+                                    for key, value in v.items():
+                                        try:
+                                            # temp = self._qos.copy()
+                                            QoS_Controller(**value)
+                                            self._qos[key] = value
+                                        except Exception as e:
+                                            log.error("Error reading qos: {}".format(e))
+                                    # self._qos.update(v)
 
                                 if (k == "profiles"):
-                                    self._profiles.update(v)
+                                    for key, value in v.items():
+                                        try:
+                                            temp = self._base_profile.copy()
+                                            temp.update(value)
+                                            Profile(**temp)
+                                            # log.info(temp)
+                                            self._profiles[key] = temp
+
+                                            self._profile_tbl.upsert({
+                                                "settings": temp
+                                            }, self._query.name == key)
+
+                                            # log.info(cfg.get_profile(key))
+                                        except Exception as e:
+                                            log.error("Error reading profiles: {}".format(e))
+                                    # self._profiles.update(v)
 
                                 if (k == "features"):
                                     self._features.update(v)
@@ -159,5 +208,10 @@ class JanusConfig():
                     except Exception as e:
                         raise Exception(f"Could not load configuration file: {entry}: {e}")
                     yfile.close()
+
+        log.info("qos: {}".format(self._qos.keys()))
+        log.info("volumes: {}".format(self._volumes.keys()))
+        log.info("features: {}".format(self._features.keys()))
+        log.info("profiles: {}".format(self._profiles.keys()))
 
 cfg = JanusConfig()

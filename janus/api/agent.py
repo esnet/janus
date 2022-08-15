@@ -1,5 +1,5 @@
 import logging
-from typing import Container
+from pydantic import ValidationError
 from janus.settings import cfg
 
 from flask import request, jsonify
@@ -13,6 +13,7 @@ from .sys.numa import build_numa
 from .sys.disk import build_block
 from .sys.sysctl import DEF_SYSCTL, get_tune, set_tune
 from .sys.tc import get_eth_iface_rules, Delay, Latency, Filter, Pacing, Netem
+from .validator import QoS_Agent
 
 
 # Basic auth
@@ -114,6 +115,7 @@ class TrafficControlNetem(Resource):
 
         try:
             req = request.get_json()
+            QoS_Agent(**req)
             log.info(req)
 
             if (req is None) or (req and type(req) is not dict):
@@ -129,6 +131,9 @@ class TrafficControlNetem(Resource):
 
             default.update(req)
             req = default
+
+        except ValidationError as e:
+            return str(e), 400
 
         except Exception as e:
             return str(e), 500

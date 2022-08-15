@@ -1,3 +1,5 @@
+from distutils.command.config import config
+from email.policy import default
 import logging
 import uuid
 import time
@@ -12,10 +14,12 @@ from flask_restplus import Namespace, Resource
 from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import check_password_hash
 
+from pydantic import ValidationError
 from janus import settings
 from janus.settings import cfg
 from .utils import create_service, commit_db, precommit_db, error_svc, handle_image, set_qos
 from .db import init_db
+from .validator import Profile as ProfileSchema
 
 # XXX: Portainer will eventually go behind an ABC interface
 # so we can support other provisioning backends
@@ -334,7 +338,8 @@ class Start(Resource):
                     try:
                         dapi.start_container(node['id'], c)
 
-                        if s['qos'] is not None and s['qos'].isinstance(dict):
+                        log.info("s: {}".format(s["qos"]))
+                        if s['qos']: # is not None and s['qos'].isinstance(dict)
                             qos = s["qos"]
                             qos["container"] = c
                             set_qos(node["public_url"], qos)
@@ -458,7 +463,7 @@ class Exec(Resource):
 class Profile(Resource):
 
     @httpauth.login_required
-    @auth
+    # @auth
     def get(self):
         refresh = request.args.get('refresh', None)
         pname = request.args.get('pname', None)
@@ -469,6 +474,135 @@ class Profile(Resource):
                 return {"error": str(e)}, 500
 
         if pname:
-            return cfg.get_profile(pname, inline=True)
+            res = cfg.get_profile(pname, inline=True)
+            if not res:
+                return {"error": "Profile not found: {}".format(pname)}, 404
+
+            return res
         else:
             return cfg.get_profiles(inline=True)
+
+    @httpauth.login_required
+    # @auth
+    def post(self):
+        try:
+            req = request.get_json()
+
+            if (req is None) or (req and type(req) is not dict):
+                res = jsonify(error="Body is not json dictionary")
+                res.status_code = 400
+                return res
+
+            if "name" not in req or "settings" not in req:
+                res = jsonify(error="please follow this format: {\"name\": \"myprofile\", \"settings\": {\"key\": \"value\"}}")
+                res.status_code = 400
+                return res
+
+            configs = req["settings"]
+            pname = req["name"]
+            res = cfg.get_profile(pname, inline=True)
+            if res:
+                return {"error": "Profile {} already exists!".format(pname)}, 400
+
+            default = cfg._base_profile.copy()
+            default.update((k, configs[k]) for k in default.keys() & configs.keys())
+            ProfileSchema(**default)
+
+        except ValidationError as e:
+            return str(e), 400
+
+        except Exception as e:
+            return str(e), 500
+
+        try:
+            DB = cfg._DB #TinyDB(cfg.get_dbpath())
+            profile_tbl = DB.table('profiles')
+            log.info("Creating profile {}".format(
+                profile_tbl.insert({
+                'name': pname,
+                "settings": default
+                })
+            ))
+        except Exception as e:
+            return str(e), 500
+
+        return cfg.get_profile(pname), 200
+
+    @httpauth.login_required
+    # @auth
+    def put(self):
+        try:
+            req = request.get_json()
+
+            if (req is None) or (req and type(req) is not dict):
+                res = jsonify(error="Body is not json dictionary")
+                res.status_code = 400
+                return res
+
+            if "name" not in req or "settings" not in req:
+                res = jsonify(error="please follow this format: {\"name\": \"myprofile\", \"settings\": {\"key\": \"value\"}}")
+                res.status_code = 400
+                return res
+
+            configs = req["settings"]
+            pname = req["name"]
+            res = cfg.get_profile(pname, inline=True)
+            if not res:
+                return {"error": "Profile not found: {}".format(pname)}, 404
+
+            default = res.copy()
+            log.info(default)
+            default.update((k, configs[k]) for k in default.keys() & configs.keys())
+            ProfileSchema(**default)
+
+        except ValidationError as e:
+            return str(e), 400
+
+        except Exception as e:
+            return str(e), 500
+
+        try:
+            DB = cfg._DB #TinyDB(cfg.get_dbpath())
+            query = Query()
+            profile_tbl = DB.table('profiles')
+            profile_tbl.upsert({
+                "settings": default
+            }, query.name == pname)
+        except Exception as e:
+            return str(e), 500
+
+        return cfg.get_profile(pname), 200
+
+    @httpauth.login_required
+    # @auth
+    def delete(self):
+        try:
+            req = request.get_json()
+
+            if (req is None) or (req and type(req) is not dict):
+                res = jsonify(error="Body is not json dictionary")
+                res.status_code = 400
+                return res
+
+            if "name" not in req:
+                res = jsonify(error="please follow this format: {\"name\": \"myprofile\"}")
+                res.status_code = 400
+                return res
+
+            pname = req["name"]
+            res = cfg.get_profile(pname, inline=True)
+            if not res:
+                return {"error": "Profile not found: {}".format(pname)}, 404
+
+        except Exception as e:
+            return str(e), 500
+
+        try:
+            DB = cfg._DB #TinyDB(cfg.get_dbpath())
+            query = Query()
+            profile_tbl = DB.table('profiles')
+            profile_tbl.remove(query.name == pname)
+        except Exception as e:
+            return str(e), 500
+
+        return {}, 200
