@@ -2,7 +2,7 @@ import os
 import sys
 import virtfs
 import psutil
-import agent_settings as settings
+import janus.agent_settings as settings
 
 
 def build_sriov():
@@ -18,7 +18,7 @@ def build_sriov():
         dev = getattr(cls.net, n)
 
         ret[n] = dict()
-        
+
         try:
             # start with initial sriov info for device
             total_vfs = dev.device.sriov_totalvfs.contents.strip()

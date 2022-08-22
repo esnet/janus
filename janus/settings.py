@@ -7,6 +7,7 @@ from werkzeug.security import generate_password_hash
 API_PREFIX = '/api'
 DEFAULT_CFG_PATH = "/etc/janus/janus.conf"
 DEFAULT_PROFILE_PATH = "/etc/janus/profiles"
+#LOG_CFG_PATH = "/etc/janus/logging.conf"
 DB_FILE = "janus_db.json"
 IGNORE_EPS = []
 AGENT_PORT = 5050
