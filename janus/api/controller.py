@@ -455,6 +455,21 @@ class Exec(Resource):
             return {"error": e.reason}, 503
         return ret
 
+
+@ns.response(200, 'OK')
+@ns.response(503, 'Service unavailable')
+@ns.route('/qos')
+class QoS(Resource):
+    @httpauth.login_required
+    def get(self):
+        name = request.args.get('name', None)
+        if name:
+            qos = cfg.get_qos(name)
+            return {name: qos}
+
+        return cfg.get_qos_list()
+
+
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
 @ns.route('/profiles')

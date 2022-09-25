@@ -159,6 +159,9 @@ class JanusConfig():
     def get_qos(self, v):
         return self._qos.get(v, {})
 
+    def get_qos_list(self):
+        return self._qos
+
     def get_feature(self, f):
         return self._features.get(f, {})
 
