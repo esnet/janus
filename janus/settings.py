@@ -1,4 +1,5 @@
 import os
+import profile
 import yaml
 import logging
 from tinydb import TinyDB, Query
@@ -114,8 +115,10 @@ class JanusConfig():
 
     def get_profile_from_db(self, p=None):
         if p:
+            # log.info("Searching for profile: {}".format(p))
             return self._profile_tbl.search(self._query.name == p)
         else:
+            # log.info("return all profiles")
             return self._profile_tbl.all()
 
     def get_profile(self, p, inline=False):
@@ -144,7 +147,9 @@ class JanusConfig():
 
     def get_profiles(self, inline=False):
         ret = dict()
-        for prof in self.get_profile_from_db():
+        profiles = self.get_profile_from_db()
+        log.info("total profiles: {}".format(len(profiles)))
+        for prof in profiles:
             ret.update({prof["name"]: self.get_profile(prof["name"], inline)})
         return ret
 
@@ -157,7 +162,9 @@ class JanusConfig():
     def get_feature(self, f):
         return self._features.get(f, {})
 
-    def read_profiles(self, path=None):
+    def read_profiles(self, path=None, reset=False):
+        if reset:
+            self._profile_tbl.truncate()
         if not path:
             path = self._profile_path
         if not path:
@@ -194,6 +201,7 @@ class JanusConfig():
                                             self._profiles[key] = temp
 
                                             self._profile_tbl.upsert({
+                                                "name": key,
                                                 "settings": temp
                                             }, self._query.name == key)
 

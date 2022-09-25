@@ -1,5 +1,3 @@
-from distutils.command.config import config
-from email.policy import default
 import logging
 import uuid
 import time
@@ -461,15 +459,21 @@ class Exec(Resource):
 @ns.response(503, 'Service unavailable')
 @ns.route('/profiles')
 class Profile(Resource):
-
     @httpauth.login_required
     # @auth
     def get(self):
         refresh = request.args.get('refresh', None)
+        reset = request.args.get('reset', None)
         pname = request.args.get('pname', None)
         if refresh and refresh.lower() == 'true':
             try:
                 cfg.read_profiles()
+            except Exception as e:
+                return {"error": str(e)}, 500
+
+        if reset and reset.lower() == 'true':
+            try:
+                cfg.read_profiles(reset=True)
             except Exception as e:
                 return {"error": str(e)}, 500
 
@@ -480,6 +484,7 @@ class Profile(Resource):
 
             return res
         else:
+            log.info("Returning all profiles")
             return cfg.get_profiles(inline=True)
 
     @httpauth.login_required
@@ -546,6 +551,10 @@ class Profile(Resource):
 
             configs = req["settings"]
             pname = req["name"]
+            pname = req["name"]
+            if pname == "default":
+                return {"error": "Cannot update default profile!"}, 400
+
             res = cfg.get_profile(pname, inline=True)
             if not res:
                 return {"error": "Profile not found: {}".format(pname)}, 404
@@ -556,10 +565,10 @@ class Profile(Resource):
             ProfileSchema(**default)
 
         except ValidationError as e:
-            return str(e), 400
+            return {"error" : str(e)}, 400
 
         except Exception as e:
-            return str(e), 500
+            return {"error" : str(e)}, 500
 
         try:
             DB = cfg._DB #TinyDB(cfg.get_dbpath())
@@ -590,6 +599,9 @@ class Profile(Resource):
                 return res
 
             pname = req["name"]
+            if pname == "default":
+                return {"error": "Cannot delete default profile"}, 400
+
             res = cfg.get_profile(pname, inline=True)
             if not res:
                 return {"error": "Profile not found: {}".format(pname)}, 404
@@ -605,4 +617,4 @@ class Profile(Resource):
         except Exception as e:
             return str(e), 500
 
-        return {}, 200
+        return {}, 204
