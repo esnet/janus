@@ -4,7 +4,7 @@ import yaml
 import logging
 from tinydb import TinyDB, Query
 from werkzeug.security import generate_password_hash
-from api.validator import QoS_Controller, Profile
+from janus.api.validator import QoS_Controller, Profile
 
 API_PREFIX = '/api'
 DEFAULT_CFG_PATH = "/etc/janus/janus.conf"
@@ -12,7 +12,7 @@ DEFAULT_PROFILE_PATH = "/etc/janus/profiles"
 DB_FILE = "janus_db.json"
 IGNORE_EPS = []
 AGENT_PORT = 5050
-AGENT_PROTO = "http"
+AGENT_PROTO = "https"
 AGENT_SSL_VERIFY = False
 AGENT_IMAGE = "dtnaas/agent"
 log = logging.getLogger(__name__)

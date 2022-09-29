@@ -47,7 +47,7 @@ class Profile(BaseModel):
     cpu: int = 0
     memory: int = 0
     affinity: str = "network"
-    mgmt_net: str = "bridge"
+    mgmt_net: Union[dict, str] = None
     data_net: Optional[Union[dict, str]] = None
     internal_port: Optional[str] = None
     ctrl_port_range: Optional[List[int]] = None

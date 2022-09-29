@@ -475,7 +475,6 @@ class QoS(Resource):
 @ns.route('/profiles')
 class Profile(Resource):
     @httpauth.login_required
-    # @auth
     def get(self):
         refresh = request.args.get('refresh', None)
         reset = request.args.get('reset', None)
@@ -503,7 +502,6 @@ class Profile(Resource):
             return cfg.get_profiles(inline=True)
 
     @httpauth.login_required
-    # @auth
     def post(self):
         try:
             req = request.get_json()
@@ -549,7 +547,6 @@ class Profile(Resource):
         return cfg.get_profile(pname), 200
 
     @httpauth.login_required
-    # @auth
     def put(self):
         try:
             req = request.get_json()
@@ -598,7 +595,6 @@ class Profile(Resource):
         return cfg.get_profile(pname), 200
 
     @httpauth.login_required
-    # @auth
     def delete(self):
         try:
             req = request.get_json()
