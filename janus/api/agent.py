@@ -1,5 +1,6 @@
 import logging
-from typing import Container
+from urllib import response
+from pydantic import ValidationError
 from janus.settings import cfg
 
 from flask import request, jsonify
@@ -13,6 +14,7 @@ from .sys.numa import build_numa
 from .sys.disk import build_block
 from .sys.sysctl import DEF_SYSCTL, get_tune, set_tune
 from .sys.tc import get_eth_iface_rules, Delay, Latency, Filter, Pacing, Netem
+from .validator import QoS_Agent
 
 
 # Basic auth
@@ -95,7 +97,12 @@ class TrafficControlNetem(Resource):
         if iface is None and container is None:
             return "No interface or container id specified", 400
 
-        return get_eth_iface_rules(iface, docker=container)
+        response = get_eth_iface_rules(iface, docker=container)
+
+        if "error" in response:
+            return response, 400
+
+        return response, 200
 
     @httpauth.login_required
     def post(self):
@@ -114,6 +121,7 @@ class TrafficControlNetem(Resource):
 
         try:
             req = request.get_json()
+            QoS_Agent(**req)
             log.info(req)
 
             if (req is None) or (req and type(req) is not dict):
@@ -129,6 +137,9 @@ class TrafficControlNetem(Resource):
 
             default.update(req)
             req = default
+
+        except ValidationError as e:
+            return str(e), 400
 
         except Exception as e:
             return str(e), 500
@@ -157,12 +168,12 @@ class TrafficControlNetem(Resource):
                 return "No interface or container id specified", 400
 
         except Exception as e:
-            return str(e), 500
+            return {"error": str(e)}, 400
 
         try:
-            ret = Netem(req, delete=True)
+            ret = Netem(req, verbose=True, delete=True)
         except Exception as e:
-            return str(e), 500
+            return {"error": str(e)}, 400
         return ret, 200
 
 

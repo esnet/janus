@@ -264,7 +264,7 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
     srec = dict()
     prof = cfg.get_profile(profile)
 
-    qos = cfg.get_qos(prof["qos"]) if "qos" in prof else None
+    qos = cfg.get_qos(prof["qos"]) if "qos" in prof else {}
     dpr = prof['data_port_range']
     dnet = Network(prof['data_net'])
     mnet = Network(prof['mgmt_net'])
