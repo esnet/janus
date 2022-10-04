@@ -67,6 +67,7 @@ class JanusConfig():
         self._volumes = dict()
         self._qos = dict()
         self._profiles = dict()
+        self._ansible = dict()
 
         # base profile is merged with profiles below
         self._base_profile = {
@@ -129,6 +130,9 @@ class JanusConfig():
 
     def get_feature(self, f):
         return self._features.get(f, None)
+    
+    def get_ansible(self, key):
+        return self._ansible.get(key, None)
 
     def read_profiles(self, path=None):
         if not path:
@@ -155,6 +159,9 @@ class JanusConfig():
 
                                 if (k == "features"):
                                     self._features.update(v)
+                                    
+                                if (k == "ansible"):
+                                    self._ansible.update(v)
 
                     except Exception as e:
                         raise Exception(f"Could not load configuration file: {entry}: {e}")
