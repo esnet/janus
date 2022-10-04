@@ -25,6 +25,7 @@ from portainer_api.api import AuthApi, EndpointsApi
 from portainer_api.models import AuthenticateUserRequest
 from portainer_api.rest import ApiException
 from .portainer_docker import PortainerDockerApi
+from ansible_job import AnsibleJob
 
 
 class State(Enum):
@@ -284,8 +285,34 @@ class Create(Resource):
                 if n['name'] not in record['allocations']:
                     record['allocations'].update({n['name']: list()})
                 record['allocations'][n['name']].append(ret['Id'])
-
                 del s['node']
+                
+                #
+                # Ansible job is requested if configured
+                # - Enviroment variabls must be set to access Ansible Tower server:
+                #   TOWER_HOST, TOWER_USERNAME, TOWER_PASSWORD, TOWER_SSL_VERIFY
+                # - It may take some time for the ansible job to finish or timeout (300 seconds)
+                #
+                enabled = cfg.get_ansible('enabled')
+                if enabled:
+                    jt_name = cfg.get_ansible('jobtemplate')
+                    gateway = cfg.get_ansible('gateway')
+                    ipprot = cfg.get_ansible('ipprot')
+                    inf = cfg.get_ansible('interface')        
+                    limit = cfg.get_ansible('limit')
+                    default_name= cfg.get_ansible('container_name')        
+                    container_name= name if name else default_name        
+                    ex_vars = f'{{"ipprot": "{ipprot}", "interface": "{inf}", "gateway": "{gateway}", "container": "{container_name}"}}'
+
+                    job = AnsibleJob()
+                    try:
+                        result = job.launch(job_template=jt_name, monitor=False, wait=True, timeout=300, extra_vars=ex_vars, limits=limit)
+                    except (exc.UsageError, exc.JobFailure, exc.Timeout) as err:
+                        log.err('Ansible Job exception : {}'.format(err.reason))
+                        continue
+                    log.info('Ansible Job Status? : {}'.format(result['status']))
+                    log.info('Ansible Job failed? : {}'.format(result['failed']))
+                # End of Ansible job   
 
         # complete accounting
         record['services'] = svcs
