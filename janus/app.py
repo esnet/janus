@@ -97,6 +97,10 @@ def main():
 
     parse_config(args.config)
 
+    # FIXME: dbpath needing to be set first is an ugly side-effect
+    if args.database:
+        cfg._dbpath = args.database
+
     if args.controller:
         try:
             cfg.read_profiles(args.profiles)
@@ -109,8 +113,6 @@ def main():
         cfg._agent = True
     if args.dryrun:
         cfg._dry_run = True
-    if args.database:
-        cfg._dbpath = args.database
 
     # signal closure for re-reading profiles
     def sighup_handler(signum, frame):
