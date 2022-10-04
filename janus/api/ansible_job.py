@@ -3,6 +3,7 @@
 #
 from tower_cli import models, get_resource, resources, exceptions as exc
 from tower_cli.api import client
+from janus.settings import cfg
 
 class AnsibleJob(models.ExeResource):
     """ An Ansible job.
@@ -69,16 +70,27 @@ class AnsibleJob(models.ExeResource):
 
     
 if __name__ == '__main__':
-        jt_name = 'DTNaaS update routes'
-        ex_vars = '{"ipprot": "ipv4", "interface": "eth0", "gateway": "172.17.0.1", "container": "dtnaas-controller"}'
-        limit = 'lbl-dev-dtn.es.net'
+        # jt_name = 'DTNaaS update routes'
+        # ex_vars = '{"ipprot": "ipv4", "interface": "eth0", "gateway": "172.17.0.1", "container": "dtnaas-controller"}'
+        # limit = 'lbl-dev-dtn.es.net'
         
+        cfg.read_profiles(path="/Users/lzhang9/Projects/janus/config/profiles")
+        
+        enabled = cfg.get_ansible('enabled')
+        jt_name = cfg.get_ansible('jobtemplate')
+        gateway = cfg.get_ansible('gateway')
+        ipprot = cfg.get_ansible('ipprot')
+        inf = cfg.get_ansible('interface')        
+        limit = cfg.get_ansible('limit')
+        container_name= cfg.get_ansible('container_name')
+                
+        ex_vars = f'{{"ipprot": "{ipprot}", "interface": "{inf}", "gateway": "{gateway}", "container": "{container_name}"}}'
+
         job = AnsibleJob()
-        
         try:
-            job.launch(job_template=jt_name, wait=True, timeout=30, extra_vars=ex_vars, limits=limit)
+            result = job.launch(job_template=jt_name, monitor=False, wait=True, timeout=300, extra_vars=ex_vars, limits=limit)
         except (exc.UsageError, exc.JobFailure, exc.Timeout) as err:
             print (err)
-            
+        print('Job failed? : {}'.format(result['failed']))
               
     
