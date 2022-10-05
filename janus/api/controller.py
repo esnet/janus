@@ -11,6 +11,7 @@ from flask import request, jsonify
 from flask_restplus import Namespace, Resource
 from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import check_password_hash
+from werkzeug.exceptions import BadRequest
 
 from pydantic import ValidationError
 from janus import settings
@@ -23,10 +24,11 @@ from .validator import Profile as ProfileSchema
 # so we can support other provisioning backends
 from portainer_api.configuration import Configuration as Config
 from portainer_api.api_client import ApiClient
-from portainer_api.api import AuthApi, EndpointsApi
+from portainer_api.api import AuthApi
 from portainer_api.models import AuthenticateUserRequest
 from portainer_api.rest import ApiException
 from .portainer_docker import PortainerDockerApi
+from .endpoints_api import EndpointsApi
 
 
 class State(Enum):
@@ -35,6 +37,12 @@ class State(Enum):
     STARTED = 2
     STOPPED = 3
     MIXED = 4
+
+class EPType(Enum):
+    UNKNOWN = 0,
+    PORTAINER = 1
+    KUBERNETES = 2
+    DOCKER = 3
 
 # Basic auth
 httpauth = HTTPBasicAuth()
@@ -173,12 +181,13 @@ class ActiveCollection(Resource):
                 except Exception as e:
                     log.error("Could not remove container on remote node: {}".format(e))
                     if not force:
-                        return {"Error": "{}".format(e)}, 503
+                        return {"error": "{}".format(e)}, 503
         # delete always removes realized state info
         commit_db(doc, id, delete=True, realized=True)
         commit_db(doc, id, delete=True)
         return None, 204
 
+@ns.response(400, 'Bad Request')
 @ns.route('/nodes')
 @ns.route('/nodes/<node>')
 class NodeCollection(Resource):
@@ -203,7 +212,51 @@ class NodeCollection(Resource):
             return nodes if nodes else list()
         return table.all()
 
+    @httpauth.login_required
+    @auth
+    def post(self):
+        """
+        Handle the creation of a new endpoint (Node)
+        """
+        req = request.get_json()
+        if not req:
+            raise BadRequest("Body is empty")
+        if type(req) is dict:
+            req = [req]
+        log.debug(req)
+
+        eps = list()
+        try:
+            for r in req:
+                ep = {"name": r['name'],
+                      "url": r['url'],
+                      "public_url": r['url'] if not "public_url" in r else r['public_url'],
+                      "type": EPType(r['type'])}
+                eps.append(ep)
+        except Exception as e:
+            br = BadRequest()
+            br.data = f"error decoding request: {e}"
+            raise br
+
+        eapi = EndpointsApi(pclient)
+        try:
+            for ep in eps:
+                if ep['type'] == EPType.PORTAINER:
+                    eptype = 2 # We use Portainer Agent registration method
+                else:
+                    raise BadRequest("Unsupported endpoint type")
+                kwargs = {"url": ep['url'],
+                          "public_url": ep['public_url'],
+                          "tls": "true",
+                          "tls_skip_verify": "true",
+                          "tls_skip_client_verify": "true"}
+                ret = eapi.endpoint_create(name=ep['name'], endpoint_type=eptype, **kwargs)
+        except Exception as e:
+            return {"error": "{}".format(e)}, 500
+        return None, 204
+
 @ns.response(200, 'OK')
+@ns.response(400, 'Bad Request')
 @ns.response(503, 'Service unavailable')
 @ns.route('/create')
 class Create(Resource):
@@ -216,6 +269,8 @@ class Create(Resource):
         """
         svcs = dict()
         req = request.get_json()
+        if not req:
+            raise BadRequest("Body is empty")
         if type(req) is dict:
             req = [req]
         log.debug(req)
@@ -231,15 +286,13 @@ class Create(Resource):
                     kwargs = r.get("kwargs", dict())
                     if s not in svcs:
                         svcs[s] = list()
-
-                    # print("Hello: ", r['profile'], "\n\n")
                     svcs[s].append(create_service(s, r['image'], r['profile'], addrs_v4, addrs_v6,
                                                   cports, sports, **kwargs))
         except Exception as e:
             import traceback
             traceback.print_exc()
             log.error("Could not allocate request: {}".format(e))
-            return {"Error": "{}".format(e)}, 503
+            return {"error": "{}".format(e)}, 503
 
         # setup simple accounting
         record = {'uuid': str(uuid.uuid4()),

@@ -45,10 +45,6 @@ class JanusConfig():
         self.PORTAINER_PASSWORD = None
         self.PORTAINER_VERIFY_SSL = True
 
-        self._DB = TinyDB(self._dbpath)
-        self._query = Query()
-        self._profile_tbl = self._DB.table('profiles')
-
         user = os.getenv("JANUS_USER")
         pwd = os.getenv("JANUS_PASSWORD")
         if user and pwd:
@@ -113,14 +109,14 @@ class JanusConfig():
     def get_users(self):
         return self._users
 
-
     def get_profile_from_db(self, p=None):
+        db = TinyDB(self._dbpath)
+        q = Query()
+        profile_tbl = db.table('profiles')
         if p:
-            # log.info("Searching for profile: {}".format(p))
-            return self._profile_tbl.search(self._query.name == p)
+            return profile_tbl.search(q.name == p)
         else:
-            # log.info("return all profiles")
-            return self._profile_tbl.all()
+            return profile_tbl.all()
 
     def get_profile(self, p, inline=False):
         res = self.get_profile_from_db(p)
@@ -167,8 +163,10 @@ class JanusConfig():
         return self._features.get(f, {})
 
     def read_profiles(self, path=None, reset=False):
+        db = TinyDB(self._dbpath)
+        profile_tbl = db.table('profiles')
         if reset:
-            self._profile_tbl.truncate()
+            profile_tbl.truncate()
         if not path:
             path = self._profile_path
         if not path:
@@ -201,13 +199,13 @@ class JanusConfig():
                                             temp = self._base_profile.copy()
                                             temp.update(value)
                                             Profile(**temp)
-                                            # log.info(temp)
+                                            log.info(temp)
                                             self._profiles[key] = temp
-
-                                            self._profile_tbl.upsert({
+                                            q = Query()
+                                            profile_tbl.upsert({
                                                 "name": key,
                                                 "settings": temp
-                                            }, self._query.name == key)
+                                            }, q.name == key)
 
                                             # log.info(cfg.get_profile(key))
                                         except Exception as e:
