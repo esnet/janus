@@ -25,7 +25,7 @@ class AgentMonitor(object):
     def start(self):
         self._th = Thread(target=self._thr, args=())
         self._th.start()
-        
+
     def stop(self):
         self._stop = True
         self._th.join()
@@ -65,7 +65,7 @@ class AgentMonitor(object):
             return n,ret
         except Exception as e:
             return n,None
-        
+
     def _thr(self):
         while not self._stop:
             log.info("Checking on agent status")

@@ -14,6 +14,7 @@ from werkzeug.security import check_password_hash
 from werkzeug.exceptions import BadRequest
 
 from pydantic import ValidationError
+from urllib.parse import urlsplit
 from janus import settings
 from janus.settings import cfg
 from .utils import create_service, commit_db, precommit_db, error_svc, handle_image, set_qos
@@ -155,7 +156,7 @@ class ActiveCollection(Resource):
         table = DB.table('active')
         doc = table.get(doc_id=id)
         if doc == None:
-            return {'Not found': id}, 404
+            return {"error": "Not found", "id": id}, 404
 
         force = request.args.get('force', None)
         dapi = PortainerDockerApi(pclient)
@@ -190,11 +191,12 @@ class ActiveCollection(Resource):
 @ns.response(400, 'Bad Request')
 @ns.route('/nodes')
 @ns.route('/nodes/<node>')
+@ns.route('/nodes/<int:id>')
 class NodeCollection(Resource):
 
     @httpauth.login_required
     @auth
-    def get(self, node=None):
+    def get(self, node: str = None, id: int = None):
         """
         Returns list of existing nodes
         """
@@ -206,11 +208,35 @@ class NodeCollection(Resource):
             global pclient
             init_db(pclient, refresh=True)
         table = DB.table('nodes')
-        if node:
+        if node or id:
             Node = Query()
-            nodes = table.search(Node.name == node)
+            nodes = table.search(Node.id == id) if id else table.search(Node.name == node)
             return nodes if nodes else list()
         return table.all()
+
+    @ns.response(204, 'Node successfully deleted.')
+    @ns.response(404, 'Not found.')
+    @httpauth.login_required
+    @auth
+    def delete(self, node: str = None, id: int = None):
+        """
+        Deletes a node (endpoint)
+        """
+        if not node and not id:
+            return {"error": "Must specify node name or id"}, 400
+        DB = TinyDB(cfg.get_dbpath())
+        Node = Query()
+        nodes = DB.table('nodes')
+        doc = nodes.get(Node.id == id) if id else nodes.get(Node.name == node)
+        if doc == None:
+            return {"error": "Not found"}, 404
+        eapi = EndpointsApi(pclient)
+        try:
+            eapi.endpoint_delete(doc.get('id'))
+        except Exception as e:
+            return {"error": f"Could not remove endpoint: {e}"}
+        nodes.remove(doc_ids=[doc.doc_id])
+        return None, 204
 
     @httpauth.login_required
     @auth
@@ -228,9 +254,10 @@ class NodeCollection(Resource):
         eps = list()
         try:
             for r in req:
+                url_split = urlsplit(r['url'])
                 ep = {"name": r['name'],
                       "url": r['url'],
-                      "public_url": r['url'] if not "public_url" in r else r['public_url'],
+                      "public_url": url_split.hostname if not "public_url" in r else r['public_url'],
                       "type": EPType(r['type'])}
                 eps.append(ep)
         except Exception as e:
@@ -253,6 +280,12 @@ class NodeCollection(Resource):
                 ret = eapi.endpoint_create(name=ep['name'], endpoint_type=eptype, **kwargs)
         except Exception as e:
             return {"error": "{}".format(e)}, 500
+
+        try:
+            log.info("New Node added, refreshing endpoint DB...")
+            init_db(pclient, refresh=True)
+        except Exception as e:
+            return {"error": "Refresh DB failed"}, 500
         return None, 204
 
 @ns.response(200, 'OK')
