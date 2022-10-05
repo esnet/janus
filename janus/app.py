@@ -24,8 +24,11 @@ from janus.settings import cfg
 
 app = Flask(__name__)
 
-logging_conf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), '../logging.conf'))
-logging.config.fileConfig(logging_conf_path)
+try:
+    logging.config.fileConfig(settings.LOG_CFG_PATH)
+except:
+    logging_conf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), 'config/logging.conf'))
+    logging.config.fileConfig(logging_conf_path)
 log = logging.getLogger(__name__)
 
 def parse_config(fpath):
@@ -97,6 +100,10 @@ def main():
 
     parse_config(args.config)
 
+    # FIXME: dbpath needing to be set first is an ugly side-effect
+    if args.database:
+        cfg._dbpath = args.database
+
     if args.controller:
         try:
             cfg.read_profiles(args.profiles)
@@ -109,8 +116,6 @@ def main():
         cfg._agent = True
     if args.dryrun:
         cfg._dry_run = True
-    if args.database:
-        cfg._dbpath = args.database
 
     # signal closure for re-reading profiles
     def sighup_handler(signum, frame):

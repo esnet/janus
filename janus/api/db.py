@@ -9,8 +9,8 @@ from janus.settings import cfg
 from janus.lib import AgentMonitor
 from tinydb import TinyDB, Query
 
-from portainer_api.api import EndpointsApi
 from .portainer_docker import PortainerDockerApi
+from .endpoints_api import EndpointsApi
 
 
 log = logging.getLogger(__name__)

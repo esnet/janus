@@ -1,10 +1,11 @@
 cryptography
-Flask=2.0.2
+Flask==2.0.2
 flask-restplus==0.13.0
 Flask-httpauth==4.4.0
 numa
 portainer-api
 psutil
+py-cpuinfo
 pyyaml
 requests
 six
@@ -12,3 +13,4 @@ tinydb
 virtfs
 tcconfig
 Werkzeug==2.0.2
+pydantic==1.9.0

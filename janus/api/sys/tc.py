@@ -1,3 +1,4 @@
+from asyncio.log import logger
 import subprocess
 import json
 
@@ -27,7 +28,11 @@ def get_eth_iface_rules(iface, docker=None):
                          stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT)
     rstr = ret.stdout.decode("utf-8").strip()
-    return json.loads(rstr)
+    logger.debug(f"tcshow: {rstr}")
+    try:
+        return json.loads(rstr)
+    except json.decoder.JSONDecodeError as e:
+        return {"error": str(e)}
     # res = dict()
     # for item in rstr.split("\n"):
     #     parts = item.split("=")
@@ -46,7 +51,7 @@ def Netem(args, verbose=False, delete=False):
     if delete:
         run_cmd = True
         if container is not None:
-            cmd = f"sudo tcdel --docker {container}"
+            cmd = f"sudo tcdel --docker {container} --all"
         else:
             cmd = f"tcdel {iface} --all"
     else:
