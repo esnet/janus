@@ -207,6 +207,8 @@ class NodeCollection(Resource):
             log.info("Refreshing endpoint DB...")
             global pclient
             init_db(pclient, refresh=True)
+        else:
+            init_db(pclient, refresh=False)
         table = DB.table('nodes')
         if node or id:
             Node = Query()
@@ -234,7 +236,7 @@ class NodeCollection(Resource):
         try:
             eapi.endpoint_delete(doc.get('id'))
         except Exception as e:
-            return {"error": f"Could not remove endpoint: {e}"}
+            log.info("Could not remove portainer endpoint, ignoring...")
         nodes.remove(doc_ids=[doc.doc_id])
         return None, 204
 

@@ -137,7 +137,6 @@ class JanusConfig():
             return res[0]["settings"].copy() #{**self._base_profile, **res[0]}
         else:
             prof = res[0]["settings"].copy() #{**self._base_profile, **res[0]}
-            log.info(prof)
             prof['volumes'] = [{v: self._volumes[v]} for v in prof['volumes']]
             prof['features'] = [{f: self._features[f]} for f in prof['features']]
             return prof
@@ -199,7 +198,6 @@ class JanusConfig():
                                             temp = self._base_profile.copy()
                                             temp.update(value)
                                             Profile(**temp)
-                                            log.info(temp)
                                             self._profiles[key] = temp
                                             q = Query()
                                             profile_tbl.upsert({

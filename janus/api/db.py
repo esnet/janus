@@ -21,11 +21,11 @@ def init_db(client, refresh=False):
         for e in res:
             db[e['Name']] = {
                 'name': e['Name'],
+                'endpoint_status': e['Status'],
                 'id': e['Id'],
                 'gid': e['GroupId'],
                 'url': e['URL'],
                 'public_url': e['PublicURL'],
-                'networks': dict()
             }
         return db
 
@@ -73,24 +73,36 @@ def init_db(client, refresh=False):
             am.start_agent(nodes[nname])
         return nodes[nname]
 
-    # Start init
-    if not refresh:
-        return
-
+    Node = Query()
     DB = TinyDB(cfg.get_dbpath())
     node_table = DB.table('nodes')
-
+    eapi = EndpointsApi(client)
+    res = None
+    nodes = None
     try:
-        Node = Query()
-        eapi = EndpointsApi(client)
-        dapi = PortainerDockerApi(client)
-        am   = AgentMonitor(client)
         res = eapi.endpoint_list()
         # ignore some endpoints based on settings
         for r in res:
             if r['Name'] in settings.IGNORE_EPS:
                 res.remove(r)
         nodes = parse_portainer_endpoints(res)
+        for k,v in nodes.items():
+            node_table.upsert(v, Node.name == k)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        log.error("Backend error: {}".format(e))
+        return
+
+    # Endpoint state updated, unless full refresh we can return
+    if not refresh:
+        return
+    else:
+        assert(nodes is not None)
+
+    try:
+        dapi = PortainerDockerApi(client)
+        am   = AgentMonitor(client)
         futures = list()
         with ThreadPoolExecutor(max_workers=8) as executor:
             for k, v in nodes.items():
@@ -119,9 +131,9 @@ def init_db(client, refresh=False):
                     data_nets.append(net['name'])
 
     # simple IPAM for data networks
+    Net = Query()
     net_table = DB.table('networks')
     networks = dict()
-    Net = Query()
     for k, v in nodes.items():
         # simple accounting for allocated ports (in node table)
         res = node_table.search((Node.name == k) & (Node.allocated_ports.exists()))
@@ -134,7 +146,8 @@ def init_db(client, refresh=False):
             node_table.upsert({'allocated_vfs': []}, Node.name == k)
 
         # now do networks in separate table
-        nets = nodes[k]['networks']
+        res = node_table.get(Node.name == k)
+        nets = res['networks']
         for n, w in nets.items():
             subnet = w['subnet']
             if n not in networks and len(subnet) and n in data_nets:
