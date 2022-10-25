@@ -133,7 +133,6 @@ def init_db(client, refresh=False):
     # simple IPAM for data networks
     Net = Query()
     net_table = DB.table('networks')
-    networks = dict()
     for k, v in nodes.items():
         # simple accounting for allocated ports (in node table)
         res = node_table.search((Node.name == k) & (Node.allocated_ports.exists()))
@@ -150,13 +149,12 @@ def init_db(client, refresh=False):
         nets = res['networks']
         for n, w in nets.items():
             subnet = w['subnet']
-            if n not in networks and len(subnet) and n in data_nets:
-                # keep existing state
-                if net_table.contains(Net.name == n):
-                    continue
+            if len(subnet) and n in data_nets:
                 # otherwise create default record for net
-                networks[n] = {'name': n,
-                               'subnet': subnet,
-                               'allocated_v4': [],
-                               'allocated_v6': []}
-                net_table.insert(networks[n])
+                key = f"{k}-{n}"
+                net = {'name': n,
+                       'key': key,
+                       'subnet': list(subnet),
+                       'allocated_v4': [],
+                       'allocated_v6': []}
+                net_table.upsert(net, Net.key == key)

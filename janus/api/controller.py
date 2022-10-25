@@ -423,8 +423,6 @@ class Start(Resource):
                 if not (cfg.dryrun):
                     try:
                         dapi.start_container(node['id'], c)
-
-                        log.info("s: {}".format(s["qos"]))
                         if s['qos']: # is not None and s['qos'].isinstance(dict)
                             qos = s["qos"]
                             qos["container"] = c

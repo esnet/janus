@@ -28,19 +28,20 @@ def commit_db_realized(record, node_table, net_table, delete=False):
                 try:
                     if s['ctrl_port']:
                         node['allocated_ports'].remove(int(s['ctrl_port']))
-                    if s['data_vfmac']:
-                        node['allocated_vfs'].remove(s['data_vfmac'])
+                    if s['data_vfid']:
+                        node['allocated_vfs'].remove(s['data_vfid'])
                 except Exception as e:
                     pass
             else:
                 if s['ctrl_port']:
                     node['allocated_ports'].append(int(s['ctrl_port']))
-                if s['data_vfmac']:
-                    node['allocated_vfs'].append(s['data_vfmac'])
+                if s['data_vfid']:
+                    node['allocated_vfs'].append(s['data_vfid'])
             node_table.update(node, Q.name == k)
 
             if (s['data_net']):
-                net = net_table.get(Q.name == s['data_net_name'])
+                nobj = Network(s['data_net_name'], k)
+                net = net_table.get(Q.key == nobj.key)
                 if delete:
                     try:
                         net['allocated_v4'].remove(s['data_ipv4'])
@@ -55,7 +56,7 @@ def commit_db_realized(record, node_table, net_table, delete=False):
                         net['allocated_v4'].append(s['data_ipv4'])
                     if s['data_ipv6']:
                         net['allocated_v6'].append(s['data_ipv6'])
-                net_table.update(net, Q.name == s['data_net_name'])
+                net_table.update(net, Q.key == nobj.key)
 
 def commit_db(record, rid=None, delete=False, realized=False):
     DB = TinyDB(cfg.get_dbpath())
@@ -83,7 +84,7 @@ def get_next_vf(node, dnet):
         docknet = node["networks"][dnet]
         sriov = node["host"]["sriov"]
         nsr = sriov.get(docknet["netdevice"], None)
-        avail = set([ vf["mac"] for vf in nsr["vfs"] ])
+        avail = set([ (vf["id"], vf['mac']) for vf in nsr["vfs"] ])
         alloced = set(node["allocated_vfs"])
         avail = avail - alloced
     except:
@@ -125,12 +126,10 @@ def get_next_sport(node, prof, curr=set()):
     return str(port)
 
 def get_next_ipv4(net, curr=set()):
-    if not net.ipv4:
-        return None
     DB = TinyDB(cfg.get_dbpath())
     Net = Query()
     nets = DB.table('networks')
-    network = nets.get(Net.name == net.name)
+    network = nets.get(Net.key == net.key)
     if not network:
         raise Exception(f"Network not found: {net.name}")
     alloced = network['allocated_v4']
@@ -153,12 +152,10 @@ def get_next_ipv4(net, curr=set()):
     return str(ipv4)
 
 def get_next_ipv6(net, curr=set()):
-    if not net.ipv6:
-        return None
     DB = TinyDB(cfg.get_dbpath())
     Net = Query()
     nets = DB.table('networks')
-    network = nets.get(Net.name == net.name)
+    network = nets.get(Net.key == net.key)
     if not network:
         raise Exception(f"Network not found: {net.name}")
     alloced = network['allocated_v6']
@@ -173,6 +170,9 @@ def get_next_ipv6(net, curr=set()):
 
     if net.ipv6 and not ipnet:
         raise Exception(f"No IPv6 subnet found for network {net.name}")
+    # IPv6 is not configured
+    if not net.ipv6 and not ipnet:
+        return None
 
     ipv6 = None
     unavail = set.union(set_alloced, curr)
@@ -266,11 +266,12 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
 
     qos = cfg.get_qos(prof["qos"]) if "qos" in prof else {}
     dpr = prof['data_port_range']
-    dnet = Network(prof['data_net'])
-    mnet = Network(prof['mgmt_net'])
+    dnet = Network(prof['data_net'], nname)
+    mnet = Network(prof['mgmt_net'], nname)
     priv = prof['privileged']
     sysd = prof['systemd']
 
+    vfid = None
     vfmac = None
     mgmt_ipv4 = None
     mgmt_ipv6 = None
@@ -342,7 +343,6 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
         if not mnet.is_host() and mnet_type != "bridge":
             # Set mgmt net layer 3
             mgmt_ipv4 = get_next_ipv4(mnet, addrs_v4)
-            print (mgmt_ipv4)
             mgmt_ipv6 = get_next_ipv6(mnet, addrs_v6)
             mnet_kwargs.update({"EndpointConfig": {
                 "IPAMConfig": {
@@ -388,6 +388,7 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
         # Set data net layer 3
         data_ipv4 = get_next_ipv4(dnet, addrs_v4)
         data_ipv6 = get_next_ipv6(dnet, addrs_v6)
+        print (data_ipv4, data_ipv6)
         docker_kwargs["HostConfig"].update({"NetworkMode": dnet.name})
         docker_kwargs.update({"NetworkingConfig": {
             "EndpointsConfig": {
@@ -405,8 +406,8 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
         # Need to specify and track sriov vfs explicitly
         ndrv = dinfo.get("driver", None)
         if ndrv == "sriov":
-            vfmac = get_next_vf(node, dnet.name)
-            docker_kwargs['NetworkingConfig']['EndpointsConfig'][dnet.name]['IPAMConfig']['MacAddress'] = vfmac
+            (vfid, vfmac) = get_next_vf(node, dnet.name)
+            #docker_kwargs['NetworkingConfig']['EndpointsConfig'][dnet.name]['IPAMConfig']['MacAddress'] = vfmac
     else:
         docker_kwargs["Env"].append("DATA_IFACE={}".format(node['public_url']))
         if not mnet.is_host() and dpr:
@@ -470,6 +471,7 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
     srec['data_ipv4'] = data_ipv4
     srec['data_ipv6'] = data_ipv6
     srec['data_vfmac'] = vfmac
+    srec['data_vfid'] = vfid
     srec['container_user'] = kwargs.get("USER_NAME", None)
 
     srec['node'] = node
