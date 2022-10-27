@@ -132,7 +132,11 @@ def get_next_ipv4(net, curr=set()):
     network = nets.get(Net.key == net.key)
     if not network:
         raise Exception(f"Network not found: {net.name}")
-    alloced = network['allocated_v4']
+    # consider all similarly named networks using the same address space
+    named_nets = nets.search(Net.name == net.name)
+    alloced = list()
+    for n in named_nets:
+        alloced.extend(n['allocated_v4'])
     set_alloced = set([IPv4Address(i) for i in alloced])
     if net.ipv4:
         if isinstance(net.ipv4, str):
@@ -158,7 +162,11 @@ def get_next_ipv6(net, curr=set()):
     network = nets.get(Net.key == net.key)
     if not network:
         raise Exception(f"Network not found: {net.name}")
-    alloced = network['allocated_v6']
+    # consider all similarly named networks using the same address space
+    named_nets = nets.search(Net.name == net.name)
+    alloced = list()
+    for n in named_nets:
+        alloced.extend(n['allocated_v6'])
     set_alloced = set([IPv6Address(i) for i in alloced])
     ipnet = None
     for sub in network['subnet']:
@@ -427,41 +435,29 @@ def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kw
             limits = feat.get('limits', list())
             docker_kwargs['HostConfig']['Ulimits'].extend(limits)
 
+        if feat:
             devices = feat.get('devices', list())
             for d in devices:
-                """
-                for n in d['names']:
-                    # need to find uverb device for attached VF or NIC
-                    if n.startswith("uverbs") and vfmac:
-                        dev = node["networks"][dnet.name]["netdevice"]
-                        vfs = node["host"]["sriov"][dev]["vfs"]
-                        n = next((item["ib_verbs_devs"][0] for item in vfs if item.get("mac") == vfmac), None)
-                    elif n.startswith("uverbs"):
-                        try:
-                            dev = node["networks"][dnet.name]["netdevice"]
-                            iface = node["host"]["sriov"][dev]
-                            n = iface["ib_verbs_devs"][0]
-                        except:
-                            raise Exception("Could not find uverbs device for data net {}".format(dnet.name))
-                    dev = {'PathOnHost': os.path.join(d['devprefix'], n),
-                           'PathInContainer': os.path.join(d['devprefix'], n),
-                           'CGroupPermissions': "rwm"}
-                    docker_kwargs['HostConfig']['Devices'].append(dev)
-                """
-                if "rdma_cm" in d['names']:
-                    dev = {'PathOnHost': os.path.join(d['devprefix'], "rdma_cm"),
-                           'PathInContainer': os.path.join(d['devprefix'], "rdma_cm"),
-                           'CGroupPermissions': "rwm"}
-                    docker_kwargs['HostConfig']['Devices'].append(dev)
-                if "uverbs" in d['names']:
-                    dev = node["networks"][dnet.name]["netdevice"]
-                    vfs = node["host"]["sriov"][dev]["vfs"]
-                    for iface in vfs:
-                        n = iface["ib_verbs_devs"][0]
-                        dev = {'PathOnHost': os.path.join(d['devprefix'], n),
-                               'PathInContainer': os.path.join(d['devprefix'], n),
+                if dnet.name:
+                    if "rdma_cm" in d['names']:
+                        dev = {'PathOnHost': os.path.join(d['devprefix'], "rdma_cm"),
+                               'PathInContainer': os.path.join(d['devprefix'], "rdma_cm"),
                                'CGroupPermissions': "rwm"}
                         docker_kwargs['HostConfig']['Devices'].append(dev)
+                    if "uverbs" in d['names']:
+                        dev = node["networks"][dnet.name]["netdevice"]
+                        vfs = node["host"]["sriov"][dev]["vfs"]
+                        for iface in vfs:
+                            n = iface["ib_verbs_devs"][0]
+                            dev = {'PathOnHost': os.path.join(d['devprefix'], n),
+                                   'PathInContainer': os.path.join(d['devprefix'], n),
+                                   'CGroupPermissions': "rwm"}
+                            docker_kwargs['HostConfig']['Devices'].append(dev)
+                else:
+                    dev = {'PathOnHost': d['devprefix'],
+                           'PathInContainer': d['devprefix'],
+                           'CGroupPermissions': "rwm"}
+                    docker_kwargs['HostConfig']['Devices'].append(dev)
 
     srec['mgmt_net'] = node['networks'].get(mnet.name, None)
     srec['mgmt_ipv4'] = mgmt_ipv4
