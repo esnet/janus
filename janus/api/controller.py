@@ -3,7 +3,7 @@ import uuid
 import time
 import json
 from enum import Enum
-from tinydb import TinyDB, Query, where
+from tinydb import Query, where
 import concurrent
 from concurrent.futures.thread import ThreadPoolExecutor
 from operator import eq
@@ -74,7 +74,7 @@ def get_authinfo(request):
     group = request.args.get('group', None)
     log.debug(f"User: {user}, Group: {group}")
     return (user,group)
-    
+
 class auth(object):
     def __init__(self, func):
         self.func = func
@@ -132,9 +132,8 @@ class ActiveCollection(Resource):
         """
         Returns dictionary of active requests
         """
-        DB = TinyDB(cfg.get_dbpath())
         Doc = Query()
-        table = DB.table('active')
+        table = cfg.db.table('active')
         docs = list()
         if id:
             doc = table.get(doc_id=id)
@@ -158,10 +157,9 @@ class ActiveCollection(Resource):
         """
         Deletes an active allocation (e.g. stops containers)
         """
-        DB = TinyDB(cfg.get_dbpath())
         Node = Query()
-        nodes = DB.table('nodes')
-        table = DB.table('active')
+        nodes = cfg.db.table('nodes')
+        table = cfg.db.table('active')
         doc = table.get(doc_id=id)
         if doc == None:
             return {"error": "Not found", "id": id}, 404
@@ -205,9 +203,9 @@ class NodeCollection(Resource):
     def query_builder(self, user=None, group=None, id=None, node=None):
         qs = list()
         if user:
-            qs.append(eq(where('users'), user))
+            qs.append(where('users').any(user))
         if group:
-            qs.append(eq(where('groups'), group))
+            qs.append(where('groups').any(group))
         if id:
             qs.append(eq(where('id'), id))
         elif node:
@@ -215,15 +213,14 @@ class NodeCollection(Resource):
         if len(qs):
             return reduce(lambda a, b: a & b, qs)
         return None
-    
+
     @httpauth.login_required
     @auth
     def get(self, node: str = None, id: int = None):
         """
         Returns list of existing nodes
         """
-        DB = TinyDB(cfg.get_dbpath())
-        DB.clear_cache()
+        cfg.db.clear_cache()
         (user,group) = get_authinfo(request)
         refresh = request.args.get('refresh', None)
         if refresh and refresh.lower() == 'true':
@@ -232,7 +229,7 @@ class NodeCollection(Resource):
             init_db(pclient, refresh=True)
         else:
             init_db(pclient, refresh=False)
-        table = DB.table('nodes')
+        table = cfg.db.table('nodes')
         query = self.query_builder(user, group, id, node)
         if query:
             return table.search(query)
@@ -249,10 +246,11 @@ class NodeCollection(Resource):
         """
         if not node and not id:
             return {"error": "Must specify node name or id"}, 400
-        DB = TinyDB(cfg.get_dbpath())
         Node = Query()
-        nodes = DB.table('nodes')
-        doc = nodes.get(Node.id == id) if id else nodes.get(Node.name == node)
+        nodes = cfg.db.table('nodes')
+        (user,group) = get_authinfo(request)
+        query = self.query_builder(user, group, id, node)
+        doc = nodes.get(query)
         if doc == None:
             return {"error": "Not found"}, 404
         eapi = EndpointsApi(pclient)
@@ -319,13 +317,25 @@ class NodeCollection(Resource):
 @ns.route('/create')
 class Create(Resource):
 
+    def query_builder(self, user=None, group=None, name=None):
+        qs = list()
+        if user:
+            qs.append(where('users').any(user))
+        if group:
+            qs.append(where('groups').any(group))
+        if name:
+            qs.append(eq(where('name'), name))
+        if len(qs):
+            return reduce(lambda a, b: a & b, qs)
+        return None
+
     @httpauth.login_required
     @auth
     def post(self):
         """
         Handle the creation of a container service
         """
-        svcs = dict()
+        (user,group) = get_authinfo(request)
         req = request.get_json()
         if not req:
             raise BadRequest("Body is empty")
@@ -333,19 +343,61 @@ class Create(Resource):
             req = [req]
         log.debug(req)
 
+        Node = Query()
+        cfg.db.clear_cache()
+        ntable = cfg.db.table('nodes')
+        ptable = cfg.db.table('profiles')
+        itable = cfg.db.table('images')
+
+        # Do auth and resource availability checks first
+        create = list()
+        for r in req:
+            instances = r.get("instances", None)
+            profile = r.get("profile", None)
+            image = r.get("image", None)
+            if instances == None or profile == None or image == None:
+                raise BadRequest("Missing fields in POST data")
+            # Profile
+            if not profile or profile == "default":
+                profile = settings.DEFAULT_PROFILE
+            query = self.query_builder(user, group, profile)
+            prof = cfg.get_profile(profile, user, group)
+            if not prof:
+                return {"error": f"Profile {profile} not found"}, 404
+            # Image
+            query = self.query_builder(user, group, image)
+            img = itable.get(query)
+            if not img:
+                pass
+                #return {"error": f"Image {image} not found"}, 404
+            # Nodes
+            for ep in instances:
+                query = self.query_builder(user, group, ep)
+                node = ntable.get(query)
+                if not node:
+                    return {"error": f"Node {ep} not found"}, 404
+                print (prof)
+                create.append(
+                    {"node": node,
+                     "profile": prof,
+                     "image": img,
+                     "kwargs": r.get("kwargs", dict())
+                     }
+                )
+
+        svcs = dict()
         try:
             # keep a running set of addresses and ports allocated for this request
             addrs_v4 = set()
             addrs_v6 = set()
             cports = set()
             sports = set()
-            for r in req:
-                for s in r['instances']:
-                    kwargs = r.get("kwargs", dict())
-                    if s not in svcs:
-                        svcs[s] = list()
-                    svcs[s].append(create_service(s, r['image'], r['profile'], addrs_v4, addrs_v6,
-                                                  cports, sports, **kwargs))
+            for r in create:
+                s = r['node']['name']
+                if s not in svcs:
+                    svcs[s] = list()
+                svcs[s].append(create_service(r['node'], r['image'], r['profile'], addrs_v4, addrs_v6,
+                                              cports, sports, **r['kwargs']))
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -417,10 +469,9 @@ class Start(Resource):
         """
         Handle the starting of container services
         """
-        DB = TinyDB(cfg.get_dbpath())
         Srv = Query()
-        table = DB.table('active')
-        ntable = DB.table('nodes')
+        table = cfg.db.table('active')
+        ntable = cfg.db.table('nodes')
         if id:
             svc = table.get(doc_id=id)
         if not svc:
@@ -473,10 +524,9 @@ class Stop(Resource):
         """
         Handle the stopping of container services
         """
-        DB = TinyDB(cfg.get_dbpath())
         Srv = Query()
-        table = DB.table('active')
-        ntable = DB.table('nodes')
+        table = cfg.db.table('active')
+        ntable = cfg.db.table('nodes')
         if id:
             svc = table.get(doc_id=id)
         if not svc:
@@ -537,9 +587,8 @@ class Exec(Resource):
 
         nname = req["node"]
 
-        DB = TinyDB(cfg.get_dbpath())
         Node = Query()
-        table = DB.table('nodes')
+        table = cfg.db.table('nodes')
         node = table.get(Node.name == nname)
         if not node:
             return {"error": "Node not found: {}".format(nname)}
@@ -582,12 +631,16 @@ class QoS(Resource):
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
 @ns.route('/profiles')
+@ns.route('/profiles/<name>')
 class Profile(Resource):
     @httpauth.login_required
-    def get(self):
+    def get(self, name=None):
         refresh = request.args.get('refresh', None)
         reset = request.args.get('reset', None)
         pname = request.args.get('pname', None)
+        if name:
+            pname = name
+        (user,group) = get_authinfo(request)
         if refresh and refresh.lower() == 'true':
             try:
                 cfg.read_profiles()
@@ -601,14 +654,14 @@ class Profile(Resource):
                 return {"error": str(e)}, 500
 
         if pname:
-            res = cfg.get_profile(pname, inline=True)
+            res = cfg.get_profile(pname, user, group, inline=True)
             if not res:
                 return {"error": "Profile not found: {}".format(pname)}, 404
 
             return res
         else:
             log.info("Returning all profiles")
-            return cfg.get_profiles(inline=True)
+            return cfg.get_profiles(user, group, inline=True)
 
     @httpauth.login_required
     def post(self):
@@ -642,8 +695,7 @@ class Profile(Resource):
             return str(e), 500
 
         try:
-            DB = cfg._DB #TinyDB(cfg.get_dbpath())
-            profile_tbl = DB.table('profiles')
+            profile_tbl = cfg.db.table('profiles')
             log.info("Creating profile {}".format(
                 profile_tbl.insert({
                 'name': pname,
@@ -692,9 +744,8 @@ class Profile(Resource):
             return {"error" : str(e)}, 500
 
         try:
-            DB = cfg._DB #TinyDB(cfg.get_dbpath())
             query = Query()
-            profile_tbl = DB.table('profiles')
+            profile_tbl = cfg.db.table('profiles')
             profile_tbl.upsert({
                 "settings": default
             }, query.name == pname)
@@ -730,11 +781,92 @@ class Profile(Resource):
             return str(e), 500
 
         try:
-            DB = cfg._DB #TinyDB(cfg.get_dbpath())
             query = Query()
-            profile_tbl = DB.table('profiles')
+            profile_tbl = cfg.db.table('profiles')
             profile_tbl.remove(query.name == pname)
         except Exception as e:
             return str(e), 500
 
         return {}, 204
+
+@ns.response(200, 'OK')
+@ns.response(204, 'Not modified')
+@ns.response(404, 'Not found')
+@ns.response(503, 'Service unavailable')
+@ns.route('/auth/<path:resource>/<int:rid>')
+@ns.route('/auth/<path:resource>/<rname>')
+class JanusAuth(Resource):
+    resources = ["nodes",
+                 "images",
+                 "profiles",
+                 "services"]
+
+    def _marshall_req(self):
+        req = request.get_json()
+        if not req:
+            raise BadRequest("Body is empty")
+        if type(req) is not dict:
+            raise BadRequest("Malformed data, expecting dict")
+        users = req.get("users", None)
+        groups = req.get("groups", None)
+        if users == None or groups == None:
+            raise BadRequest("users and groups not present in POST data")
+        log.debug(req)
+        return (users, groups)
+
+    def query_builder(self, id=None, name=None):
+        qs = list()
+        if id:
+            qs.append(eq(where('id'), id))
+        elif name:
+            qs.append(eq(where('name'), name))
+        return reduce(lambda a, b: a & b, qs)
+
+    @httpauth.login_required
+    def get(self, resource, rid=None, rname=None):
+        if resource not in self.resources:
+            return {"error": f"Invalid resource path: {resource}"}, 404
+        query = self.query_builder(rid, rname)
+        table = cfg.db.table(resource)
+        res = table.get(query)
+        if not res:
+            return {"error": f"{resource} resource not found with id {rid if rid else rname}"}, 404
+        users = res.get("users", list())
+        groups = res.get("groups", list())
+        return {"users": users, "groups": groups}, 200
+
+    @httpauth.login_required
+    def post(self, resource, rid=None, rname=None):
+        (users, groups) = self._marshall_req()
+        query = self.query_builder(rid, rname)
+        table = cfg.db.table(resource)
+        res = table.get(query)
+        if not res:
+            return {"error": f"{resource} resource not found with id {rid if rid else rname}"}, 404
+        new_users = list(set(users).union(set(res.get("users", list()))))
+        new_groups = list(set(groups).union(set(res.get("groups", list()))))
+        res['users'] = new_users
+        res['groups'] = new_groups
+        table.update(res, query)
+        return res, 200
+
+    @httpauth.login_required
+    def delete(self, resource, rid=None, rname=None):
+        (users, groups) = self._marshall_req()
+        query = self.query_builder(rid, rname)
+        table = cfg.db.table(resource)
+        res = table.get(query)
+        if not res:
+            return {"error": f"{resource} resource not found with id {rid if rid else rname}"}, 404
+        for u in users:
+            try:
+                res['users'].remove(u)
+            except:
+                pass
+        for g in groups:
+            try:
+                res['groups'].remove(g)
+            except:
+                pass
+        table.update(res, query)
+        return res, 200

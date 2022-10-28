@@ -7,14 +7,13 @@ from ipaddress import IPv6Network, IPv6Address
 from janus import settings
 from janus.api.models import Network
 from janus.settings import cfg
-from tinydb import TinyDB, Query
+from tinydb import Query
 import requests
 
 log = logging.getLogger(__name__)
 
 def precommit_db():
-    DB = TinyDB(cfg.get_dbpath())
-    table = DB.table('active')
+    table = cfg.db.table('active')
     Id = table.insert(dict())
     return Id
 
@@ -59,10 +58,9 @@ def commit_db_realized(record, node_table, net_table, delete=False):
                 net_table.update(net, Q.key == nobj.key)
 
 def commit_db(record, rid=None, delete=False, realized=False):
-    DB = TinyDB(cfg.get_dbpath())
-    node_table = DB.table('nodes')
-    net_table = DB.table('networks')
-    table = DB.table('active')
+    node_table = cfg.db.table('nodes')
+    net_table = cfg.db.table('networks')
+    table = cfg.db.table('active')
 
     if realized:
         commit_db_realized(record, node_table, net_table, delete)
@@ -126,9 +124,8 @@ def get_next_sport(node, prof, curr=set()):
     return str(port)
 
 def get_next_ipv4(net, curr=set()):
-    DB = TinyDB(cfg.get_dbpath())
     Net = Query()
-    nets = DB.table('networks')
+    nets = cfg.db.table('networks')
     network = nets.get(Net.key == net.key)
     if not network:
         raise Exception(f"Network not found: {net.name}")
@@ -156,9 +153,8 @@ def get_next_ipv4(net, curr=set()):
     return str(ipv4)
 
 def get_next_ipv6(net, curr=set()):
-    DB = TinyDB(cfg.get_dbpath())
     Net = Query()
-    nets = DB.table('networks')
+    nets = cfg.db.table('networks')
     network = nets.get(Net.key == net.key)
     if not network:
         raise Exception(f"Network not found: {net.name}")
@@ -257,22 +253,11 @@ def set_qos(url, qos):
             log.error(e)
             # return node, None
 
-def create_service(nname, img, profile, addrs_v4, addrs_v6, cports, sports, **kwargs):
-    if not profile or profile == "default":
-        profile = settings.DEFAULT_PROFILE
-
-    DB = TinyDB(cfg.get_dbpath())
-    DB.clear_cache()
-    Node = Query()
-    table = DB.table('nodes')
-    node = table.get(Node.name == nname)
-    if not node:
-        raise Exception("Node not found: {}".format(nname))
-
+def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs):
     srec = dict()
-    prof = cfg.get_profile(profile)
-
-    qos = cfg.get_qos(prof["qos"]) if "qos" in prof else {}
+    nname = node['name']
+    prof = prof.get('settings')
+    qos = cfg.get_qos(prof["qos"]) if "qos" in prof else dict()
     dpr = prof['data_port_range']
     dnet = Network(prof['data_net'], nname)
     mnet = Network(prof['mgmt_net'], nname)

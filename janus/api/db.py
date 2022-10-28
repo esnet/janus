@@ -7,7 +7,7 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from janus import settings
 from janus.settings import cfg
 from janus.lib import AgentMonitor
-from tinydb import TinyDB, Query
+from tinydb import Query
 
 from .portainer_docker import PortainerDockerApi
 from .endpoints_api import EndpointsApi
@@ -74,8 +74,7 @@ def init_db(client, refresh=False):
         return nodes[nname]
 
     Node = Query()
-    DB = TinyDB(cfg.get_dbpath())
-    node_table = DB.table('nodes')
+    node_table = cfg.db.table('nodes')
     eapi = EndpointsApi(client)
     res = None
     nodes = None
@@ -120,9 +119,9 @@ def init_db(client, refresh=False):
     # these are the data plane networks we care about
     data_nets = list()
     profs = cfg.get_profiles()
-    for k, v in profs.items():
+    for p in profs:
         for nname in ["data_net", "mgmt_net"]:
-            net = profs[k][nname]
+            net = p["settings"][nname]
             if isinstance(net, str):
                 if net not in data_nets:
                     data_nets.append(net)
@@ -132,7 +131,7 @@ def init_db(client, refresh=False):
 
     # simple IPAM for data networks
     Net = Query()
-    net_table = DB.table('networks')
+    net_table = cfg.db.table('networks')
     for k, v in nodes.items():
         # simple accounting for allocated ports (in node table)
         res = node_table.search((Node.name == k) & (Node.allocated_ports.exists()))

@@ -95,14 +95,14 @@ def main():
                         help='Path to configuration file')
     parser.add_argument('-P', '--profiles', type=str, default=settings.DEFAULT_PROFILE_PATH,
                         help='Path to profile directory')
-    parser.add_argument('-db', '--database', type=str, default=None)
+    parser.add_argument('-db', '--database', type=str, default=settings.DEFAULT_DB_PATH)
     args = parser.parse_args()
 
     parse_config(args.config)
 
-    # FIXME: dbpath needing to be set first is an ugly side-effect
+    # Database needs to be set in cfg first
     if args.database:
-        cfg._dbpath = args.database
+        cfg.setdb(args.database)
 
     if args.controller:
         try:

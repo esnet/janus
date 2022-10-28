@@ -2,15 +2,17 @@ import os
 import profile
 import yaml
 import logging
-from tinydb import TinyDB, Query
+from tinydb import TinyDB, Query, where
+from operator import eq
+from functools import reduce
 from werkzeug.security import generate_password_hash
 from janus.api.validator import QoS_Controller, Profile
 
 API_PREFIX = '/api'
 DEFAULT_CFG_PATH = "/etc/janus/janus.conf"
 DEFAULT_PROFILE_PATH = "/etc/janus/profiles"
+DEFAULT_DB_PATH = "/etc/janus/db.json"
 #LOG_CFG_PATH = "/etc/janus/logging.conf"
-DB_FILE = "janus_db.json"
 IGNORE_EPS = []
 AGENT_PORT = 5050
 AGENT_PROTO = "https"
@@ -35,7 +37,8 @@ SUPPORTED_FEATURES = ['rdma']
 
 class JanusConfig():
     def __init__(self):
-        self._dbpath = os.path.join(os.getcwd(), DB_FILE)
+        self._DB = None
+        self._dbpath = None
         self._profile_path = None
         self._dry_run = False
         self._agent = False
@@ -103,51 +106,56 @@ class JanusConfig():
     def is_controller(self):
         return self._controller
 
+    @property
+    def db(self):
+        return self._DB
+
+    def setdb(self, dbpath):
+        self._dbpath = dbpath
+        self._DB = TinyDB(self._dbpath)
+
     def get_dbpath(self):
         return self._dbpath
 
     def get_users(self):
         return self._users
 
-    def get_profile_from_db(self, p=None):
-        db = TinyDB(self._dbpath)
-        q = Query()
-        profile_tbl = db.table('profiles')
+    def get_profile_from_db(self, p=None, user=None, group=None):
+        qs = list()
+        if user:
+            qs.append(where('users').any(user))
+        if group:
+            qs.append(where('groups').any(group))
         if p:
-            return profile_tbl.search(q.name == p)
+            qs.append(eq(where('name'), p))
+        if len(qs):
+            query = reduce(lambda a, b: a & b, qs)
+        else:
+            query = None
+        profile_tbl = self.db.table('profiles')
+        if query:
+            return profile_tbl.get(query)
         else:
             return profile_tbl.all()
 
-    def get_profile(self, p, inline=False):
-        res = self.get_profile_from_db(p)
-        # if p not in self._profiles:
-        #     raise Exception("Profile not found: {}".format(p))
-        # if not inline:
-        #     return {**self._base_profile, **self._profiles[p]}
-        # else:
-        #     prof = {**self._base_profile, **self._profiles[p]}
-        #     prof['volumes'] = [{v: self._volumes[v]} for v in prof['volumes']]
-        #     prof['features'] = [{f: self._features[f]} for f in prof['features']]
-        #     return prof
+    def get_profile(self, p, user=None, group=None, inline=False):
+        return self.get_profile_from_db(p, user, group)
+        #if not inline:
+        #    return res[0]["settings"].copy() #{**self._base_profile, **res[0]}
+        #else:
+        #    prof = res[0]["settings"].copy() #{**self._base_profile, **res[0]}
+        #    prof['volumes'] = [{v: self._volumes[v]} for v in prof['volumes']]
+        #    prof['features'] = [{f: self._features[f]} for f in prof['features']]
+        #    return prof
 
-        if len(res) == 0:
-            return {}
-
-        if not inline:
-            return res[0]["settings"].copy() #{**self._base_profile, **res[0]}
-        else:
-            prof = res[0]["settings"].copy() #{**self._base_profile, **res[0]}
-            prof['volumes'] = [{v: self._volumes[v]} for v in prof['volumes']]
-            prof['features'] = [{f: self._features[f]} for f in prof['features']]
-            return prof
-
-    def get_profiles(self, inline=False):
+    def get_profiles(self, user=None, group=None, inline=False):
         ret = dict()
-        profiles = self.get_profile_from_db()
+        profiles = self.get_profile_from_db(user=user, group=group)
         log.info("total profiles: {}".format(len(profiles)))
-        for prof in profiles:
-            ret.update({prof["name"]: self.get_profile(prof["name"], inline)})
-        return ret
+        return profiles
+        #for prof in profiles:
+        #    ret.update({prof["name"]: self.get_profile(prof["name"], user, group, inline)})
+        #return ret
 
     def get_volume(self, v):
         return self._volumes.get(v, {})
@@ -162,8 +170,7 @@ class JanusConfig():
         return self._features.get(f, {})
 
     def read_profiles(self, path=None, reset=False):
-        db = TinyDB(self._dbpath)
-        profile_tbl = db.table('profiles')
+        profile_tbl = self.db.table('profiles')
         if reset:
             profile_tbl.truncate()
         if not path:
