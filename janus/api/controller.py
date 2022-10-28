@@ -3,9 +3,11 @@ import uuid
 import time
 import json
 from enum import Enum
-from tinydb import TinyDB, Query
+from tinydb import TinyDB, Query, where
 import concurrent
 from concurrent.futures.thread import ThreadPoolExecutor
+from operator import eq
+from functools import reduce
 
 from flask import request, jsonify
 from flask_restplus import Namespace, Resource
@@ -67,6 +69,12 @@ def verify_password(username, password):
             check_password_hash(users.get(username), password):
         return username
 
+def get_authinfo(request):
+    user = request.args.get('user', None)
+    group = request.args.get('group', None)
+    log.debug(f"User: {user}, Group: {group}")
+    return (user,group)
+    
 class auth(object):
     def __init__(self, func):
         self.func = func
@@ -194,6 +202,20 @@ class ActiveCollection(Resource):
 @ns.route('/nodes/<int:id>')
 class NodeCollection(Resource):
 
+    def query_builder(self, user=None, group=None, id=None, node=None):
+        qs = list()
+        if user:
+            qs.append(eq(where('users'), user))
+        if group:
+            qs.append(eq(where('groups'), group))
+        if id:
+            qs.append(eq(where('id'), id))
+        elif node:
+            qs.append(eq(where('name'), node))
+        if len(qs):
+            return reduce(lambda a, b: a & b, qs)
+        return None
+    
     @httpauth.login_required
     @auth
     def get(self, node: str = None, id: int = None):
@@ -202,6 +224,7 @@ class NodeCollection(Resource):
         """
         DB = TinyDB(cfg.get_dbpath())
         DB.clear_cache()
+        (user,group) = get_authinfo(request)
         refresh = request.args.get('refresh', None)
         if refresh and refresh.lower() == 'true':
             log.info("Refreshing endpoint DB...")
@@ -210,11 +233,11 @@ class NodeCollection(Resource):
         else:
             init_db(pclient, refresh=False)
         table = DB.table('nodes')
-        if node or id:
-            Node = Query()
-            nodes = table.search(Node.id == id) if id else table.search(Node.name == node)
-            return nodes if nodes else list()
-        return table.all()
+        query = self.query_builder(user, group, id, node)
+        if query:
+            return table.search(query)
+        else:
+            return table.all()
 
     @ns.response(204, 'Node successfully deleted.')
     @ns.response(404, 'Not found.')
