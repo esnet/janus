@@ -44,9 +44,13 @@ def init_db(client, refresh=False):
 
     def parse_portainer_images(res):
         ret = list()
+        Q = Query()
+        table = cfg.db.table('images')
         for e in res:
             if e['RepoTags']:
                 ret.extend(e['RepoTags'])
+                e['name'] = e['RepoTags'][0].split(":")[0]
+                table.upsert(e, Q.name == e['name'])
         return ret
 
     def _get_endpoint_info(Id, url, nname, nodes):

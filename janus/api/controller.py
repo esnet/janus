@@ -47,6 +47,19 @@ class EPType(Enum):
     KUBERNETES = 2
     DOCKER = 3
 
+class SessionUser:
+    def query_builder(self, user=None, group=None, id=None):
+        qs = list()
+        if user:
+            qs.append(where('users').any(user) | eq(where('user'), user))
+        if group:
+            qs.append(where('groups').any(group))
+        if id:
+            qs.append(eq(where('id'), id))
+        if len(qs):
+            return reduce(lambda a, b: a & b, qs)
+        return None
+
 # Basic auth
 httpauth = HTTPBasicAuth()
 
@@ -124,29 +137,25 @@ class auth(object):
 
 @ns.route('/active')
 @ns.route('/active/<int:id>')
-@ns.route('/active/<user>')
-class ActiveCollection(Resource):
+class ActiveCollection(Resource, SessionUser):
 
     @httpauth.login_required
-    def get(self, id=None, user=None):
+    def get(self, id=None):
         """
-        Returns dictionary of active requests
+        Returns active sessions
         """
-        Doc = Query()
         table = cfg.db.table('active')
-        docs = list()
-        if id:
-            doc = table.get(doc_id=id)
-            if doc:
-                docs = [doc]
-        elif user:
-            docs = table.search(Doc.user == user)
+        (user,group) = get_authinfo(request)
+        query = self.query_builder(user, group, id)
+        if query and id:
+            res = table.get(query)
+            if not res:
+                return {"error": "Not found"}, 404
+            return res
+        elif query:
+            return table.search(query)
         else:
-            docs = table.all()
-        ret = []
-        for d in docs:
-            ret.append({d.doc_id: d})
-        return ret
+            return table.all()
 
     @ns.response(204, 'Allocation successfully deleted.')
     @ns.response(404, 'Not found.')
@@ -157,10 +166,11 @@ class ActiveCollection(Resource):
         """
         Deletes an active allocation (e.g. stops containers)
         """
-        Node = Query()
         nodes = cfg.db.table('nodes')
         table = cfg.db.table('active')
-        doc = table.get(doc_id=id)
+        (user,group) = get_authinfo(request)
+        query = self.query_builder(user, group, id)
+        doc = table.get(query)
         if doc == None:
             return {"error": "Not found", "id": id}, 404
 
@@ -231,7 +241,12 @@ class NodeCollection(Resource):
             init_db(pclient, refresh=False)
         table = cfg.db.table('nodes')
         query = self.query_builder(user, group, id, node)
-        if query:
+        if query and (id or node):
+            res = table.get(query)
+            if not res:
+                return {"error": "Not found"}, 404
+            return res
+        elif query:
             return table.search(query)
         else:
             return table.all()
@@ -273,7 +288,6 @@ class NodeCollection(Resource):
         if type(req) is dict:
             req = [req]
         log.debug(req)
-
         eps = list()
         try:
             for r in req:
@@ -343,7 +357,6 @@ class Create(Resource):
             req = [req]
         log.debug(req)
 
-        Node = Query()
         cfg.db.clear_cache()
         ntable = cfg.db.table('nodes')
         ptable = cfg.db.table('profiles')
@@ -365,18 +378,22 @@ class Create(Resource):
             if not prof:
                 return {"error": f"Profile {profile} not found"}, 404
             # Image
-            query = self.query_builder(user, group, image)
-            img = itable.get(query)
-            if not img:
-                pass
-                #return {"error": f"Image {image} not found"}, 404
+            # By default try to pull the specified image name even if
+            # we don't know about
+            if not user and not group:
+                img = image
+            else:
+                query = self.query_builder(user, group, image)
+                img = itable.get(query)
+                if not img:
+                    return {"error": f"Image {image} not found"}, 404
+                img = image
             # Nodes
             for ep in instances:
                 query = self.query_builder(user, group, ep)
                 node = ntable.get(query)
                 if not node:
                     return {"error": f"Node {ep} not found"}, 404
-                print (prof)
                 create.append(
                     {"node": node,
                      "profile": prof,
@@ -406,7 +423,7 @@ class Create(Resource):
 
         # setup simple accounting
         record = {'uuid': str(uuid.uuid4()),
-                  'user': httpauth.current_user(),
+                  'user': user if user else httpauth.current_user(),
                   'state': State.INITIALIZED.name,
                   'allocations': dict()}
 
@@ -453,6 +470,7 @@ class Create(Resource):
                 del s['node']
 
         # complete accounting
+        record['id'] = Id
         record['services'] = svcs
         record['request'] = req
         return commit_db(record, Id)
@@ -461,7 +479,7 @@ class Create(Resource):
 @ns.response(404, 'Not found')
 @ns.response(503, 'Service unavailable')
 @ns.route('/start/<int:id>')
-class Start(Resource):
+class Start(Resource, SessionUser):
 
     @httpauth.login_required
     @auth
@@ -469,11 +487,12 @@ class Start(Resource):
         """
         Handle the starting of container services
         """
-        Srv = Query()
         table = cfg.db.table('active')
         ntable = cfg.db.table('nodes')
+        (user,group) = get_authinfo(request)
+        query = self.query_builder(user, group, id)
         if id:
-            svc = table.get(doc_id=id)
+            svc = table.get(query)
         if not svc:
             return {"error": "id not found"}, 404
 
@@ -516,7 +535,7 @@ class Start(Resource):
 @ns.response(404, 'Not found')
 @ns.response(503, 'Service unavailable')
 @ns.route('/stop/<int:id>')
-class Stop(Resource):
+class Stop(Resource, SessionUser):
 
     @httpauth.login_required
     @auth
@@ -618,6 +637,7 @@ class Exec(Resource):
 @ns.response(503, 'Service unavailable')
 @ns.route('/qos')
 class QoS(Resource):
+
     @httpauth.login_required
     def get(self):
         name = request.args.get('name', None)
@@ -627,19 +647,16 @@ class QoS(Resource):
 
         return cfg.get_qos_list()
 
-
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
 @ns.route('/profiles')
 @ns.route('/profiles/<name>')
 class Profile(Resource):
+
     @httpauth.login_required
     def get(self, name=None):
         refresh = request.args.get('refresh', None)
         reset = request.args.get('reset', None)
-        pname = request.args.get('pname', None)
-        if name:
-            pname = name
         (user,group) = get_authinfo(request)
         if refresh and refresh.lower() == 'true':
             try:
@@ -653,14 +670,13 @@ class Profile(Resource):
             except Exception as e:
                 return {"error": str(e)}, 500
 
-        if pname:
-            res = cfg.get_profile(pname, user, group, inline=True)
+        if name:
+            res = cfg.get_profile(name, user, group, inline=True)
             if not res:
                 return {"error": "Profile not found: {}".format(pname)}, 404
-
             return res
         else:
-            log.info("Returning all profiles")
+            log.debug("Returning all profiles")
             return cfg.get_profiles(user, group, inline=True)
 
     @httpauth.login_required
@@ -708,29 +724,26 @@ class Profile(Resource):
         return cfg.get_profile(pname), 200
 
     @httpauth.login_required
-    def put(self):
+    def put(self, name=None):
         try:
+            (user,group) = get_authinfo(request)
             req = request.get_json()
 
             if (req is None) or (req and type(req) is not dict):
                 res = jsonify(error="Body is not json dictionary")
-                res.status_code = 400
-                return res
+                raise BadRequest(res)
 
-            if "name" not in req or "settings" not in req:
-                res = jsonify(error="please follow this format: {\"name\": \"myprofile\", \"settings\": {\"key\": \"value\"}}")
-                res.status_code = 400
-                return res
+            if "settings" not in req:
+                res = jsonify(error="please follow this format: {\"settings\": {\"key\": \"value\"}}")
+                raise BadRequest(res)
 
             configs = req["settings"]
-            pname = req["name"]
-            pname = req["name"]
-            if pname == "default":
+            if name == "default":
                 return {"error": "Cannot update default profile!"}, 400
 
-            res = cfg.get_profile(pname, inline=True)
+            res = cfg.get_profile(name, user, group, inline=True)
             if not res:
-                return {"error": "Profile not found: {}".format(pname)}, 404
+                return {"error": "Profile not found: {}".format(name)}, 404
 
             default = res.copy()
             log.info(default)
@@ -748,34 +761,26 @@ class Profile(Resource):
             profile_tbl = cfg.db.table('profiles')
             profile_tbl.upsert({
                 "settings": default
-            }, query.name == pname)
+            }, query.name == name)
         except Exception as e:
             return str(e), 500
 
-        return cfg.get_profile(pname), 200
+        return cfg.get_profile(name), 200
 
     @httpauth.login_required
-    def delete(self):
+    def delete(self, name=None):
         try:
-            req = request.get_json()
+            (user,group) = get_authinfo(request)
 
-            if (req is None) or (req and type(req) is not dict):
-                res = jsonify(error="Body is not json dictionary")
-                res.status_code = 400
-                return res
+            if not name:
+                raise BadRequest("Must specify profile name")
 
-            if "name" not in req:
-                res = jsonify(error="please follow this format: {\"name\": \"myprofile\"}")
-                res.status_code = 400
-                return res
+            if name == "default":
+                raise BadRequest("Cannot delete default profile")
 
-            pname = req["name"]
-            if pname == "default":
-                return {"error": "Cannot delete default profile"}, 400
-
-            res = cfg.get_profile(pname, inline=True)
+            res = cfg.get_profile(name, user, group, inline=True)
             if not res:
-                return {"error": "Profile not found: {}".format(pname)}, 404
+                return {"error": "Profile not found: {}".format(name)}, 404
 
         except Exception as e:
             return str(e), 500
@@ -783,7 +788,7 @@ class Profile(Resource):
         try:
             query = Query()
             profile_tbl = cfg.db.table('profiles')
-            profile_tbl.remove(query.name == pname)
+            profile_tbl.remove(query.name == name)
         except Exception as e:
             return str(e), 500
 
@@ -794,7 +799,7 @@ class Profile(Resource):
 @ns.response(404, 'Not found')
 @ns.response(503, 'Service unavailable')
 @ns.route('/auth/<path:resource>/<int:rid>')
-@ns.route('/auth/<path:resource>/<rname>')
+@ns.route('/auth/<path:resource>/<path:rname>')
 class JanusAuth(Resource):
     resources = ["nodes",
                  "images",

@@ -462,7 +462,7 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs
     srec['docker_kwargs'] = docker_kwargs
     srec['net_kwargs'] = mnet_kwargs
     srec['image'] = img
-    srec['profile'] = profile
+    srec['profile'] = prof
     srec['qos'] = qos
     srec['errors'] = list()
     return srec
