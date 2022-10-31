@@ -673,14 +673,15 @@ class Profile(Resource):
         if name:
             res = cfg.get_profile(name, user, group, inline=True)
             if not res:
-                return {"error": "Profile not found: {}".format(pname)}, 404
+                return {"error": "Profile not found: {}".format(name)}, 404
             return res
         else:
             log.debug("Returning all profiles")
-            return cfg.get_profiles(user, group, inline=True)
+            ret = cfg.get_profiles(user, group, inline=True)
+            return ret if ret else list()
 
     @httpauth.login_required
-    def post(self):
+    def post(self, name=None):
         try:
             req = request.get_json()
 
@@ -689,16 +690,15 @@ class Profile(Resource):
                 res.status_code = 400
                 return res
 
-            if "name" not in req or "settings" not in req:
-                res = jsonify(error="please follow this format: {\"name\": \"myprofile\", \"settings\": {\"key\": \"value\"}}")
+            if "settings" not in req:
+                res = jsonify(error="please follow this format: {\"settings\": {\"key\": \"value\"}}")
                 res.status_code = 400
                 return res
 
             configs = req["settings"]
-            pname = req["name"]
-            res = cfg.get_profile(pname, inline=True)
+            res = cfg.get_profile(name, inline=True)
             if res:
-                return {"error": "Profile {} already exists!".format(pname)}, 400
+                return {"error": "Profile {} already exists!".format(name)}, 400
 
             default = cfg._base_profile.copy()
             default.update((k, configs[k]) for k in default.keys() & configs.keys())
@@ -714,14 +714,14 @@ class Profile(Resource):
             profile_tbl = cfg.db.table('profiles')
             log.info("Creating profile {}".format(
                 profile_tbl.insert({
-                'name': pname,
+                'name': name,
                 "settings": default
                 })
             ))
         except Exception as e:
             return str(e), 500
 
-        return cfg.get_profile(pname), 200
+        return cfg.get_profile(name), 200
 
     @httpauth.login_required
     def put(self, name=None):

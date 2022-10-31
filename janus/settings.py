@@ -133,8 +133,10 @@ class JanusConfig():
         else:
             query = None
         profile_tbl = self.db.table('profiles')
-        if query:
+        if query and p:
             return profile_tbl.get(query)
+        elif query:
+            return profile_tbl.search(query)
         else:
             return profile_tbl.all()
 
@@ -151,7 +153,8 @@ class JanusConfig():
     def get_profiles(self, user=None, group=None, inline=False):
         ret = dict()
         profiles = self.get_profile_from_db(user=user, group=group)
-        log.info("total profiles: {}".format(len(profiles)))
+        nprofs = len(profiles) if profiles else 0
+        log.info(f"total profiles: {nprofs}")
         return profiles
         #for prof in profiles:
         #    ret.update({prof["name"]: self.get_profile(prof["name"], user, group, inline)})
