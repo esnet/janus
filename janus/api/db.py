@@ -3,6 +3,7 @@ import requests
 import queue
 import concurrent
 from concurrent.futures.thread import ThreadPoolExecutor
+from threading import Lock
 
 from janus import settings
 from janus.settings import cfg
@@ -14,6 +15,7 @@ from .endpoints_api import EndpointsApi
 
 
 log = logging.getLogger(__name__)
+mutex = Lock()
 
 def init_db(client, refresh=False):
     def parse_portainer_endpoints(res):
@@ -39,7 +41,9 @@ def init_db(client, refresh=False):
                 'subnet': e['IPAM']['Config']
             }
             if e["Options"]:
+                mutex.acquire()
                 db[key].update(e['Options'])
+                mutex.release()
         return db
 
     def parse_portainer_images(res):
@@ -50,7 +54,9 @@ def init_db(client, refresh=False):
             if e['RepoTags']:
                 ret.extend(e['RepoTags'])
                 e['name'] = e['RepoTags'][0].split(":")[0]
+                mutex.acquire()
                 table.upsert(e, Q.name == e['name'])
+                mutex.release()
         return ret
 
     def _get_endpoint_info(Id, url, nname, nodes):
@@ -90,7 +96,9 @@ def init_db(client, refresh=False):
                 res.remove(r)
         nodes = parse_portainer_endpoints(res)
         for k,v in nodes.items():
+            mutex.acquire()
             node_table.upsert(v, Node.name == k)
+            mutex.release()
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -112,7 +120,9 @@ def init_db(client, refresh=False):
                 futures.append(executor.submit(_get_endpoint_info, v['id'], v['public_url'], k, nodes))
         for future in concurrent.futures.as_completed(futures):
             item = future.result()
+            mutex.acquire()
             node_table.upsert(item, Node.name == item['name'])
+            mutex.release()
     except Exception as e:
         import traceback
         traceback.print_exc()
