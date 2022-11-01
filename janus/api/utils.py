@@ -255,14 +255,15 @@ def set_qos(url, qos):
 
 def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs):
     srec = dict()
-    nname = node['name']
+    nname = node.get('name')
+    pname = prof.get('name')
     prof = prof.get('settings')
     qos = cfg.get_qos(prof["qos"]) if "qos" in prof else dict()
     dpr = prof['data_port_range']
     dnet = Network(prof['data_net'], nname)
     mnet = Network(prof['mgmt_net'], nname)
-    priv = prof['privileged']
-    sysd = prof['systemd']
+    priv = prof.get('privileged')
+    sysd = prof.get('systemd')
 
     vfid = None
     vfmac = None
@@ -462,7 +463,7 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs
     srec['docker_kwargs'] = docker_kwargs
     srec['net_kwargs'] = mnet_kwargs
     srec['image'] = img
-    srec['profile'] = prof
+    srec['profile'] = pname
     srec['qos'] = qos
     srec['errors'] = list()
     return srec
