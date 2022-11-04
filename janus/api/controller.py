@@ -47,15 +47,16 @@ class EPType(Enum):
     KUBERNETES = 2
     DOCKER = 3
 
-class SessionUser:
-    def query_builder(self, user=None, group=None, id=None):
+class QueryUser:
+    def query_builder(self, user=None, group=None, qargs=dict()):
         qs = list()
         if user:
             qs.append(where('users').any(user) | eq(where('user'), user))
         if group:
             qs.append(where('groups').any(group))
-        if id:
-            qs.append(eq(where('id'), id))
+        for k,v in qargs.items():
+            if v:
+                qs.append(eq(where(k), v))
         if len(qs):
             return reduce(lambda a, b: a & b, qs)
         return None
@@ -137,7 +138,7 @@ class auth(object):
 
 @ns.route('/active')
 @ns.route('/active/<int:id>')
-class ActiveCollection(Resource, SessionUser):
+class ActiveCollection(Resource, QueryUser):
 
     @httpauth.login_required
     def get(self, id=None):
@@ -146,7 +147,7 @@ class ActiveCollection(Resource, SessionUser):
         """
         table = cfg.db.table('active')
         (user,group) = get_authinfo(request)
-        query = self.query_builder(user, group, id)
+        query = self.query_builder(user, group, {"id": id})
         if query and id:
             res = table.get(query)
             if not res:
@@ -169,7 +170,7 @@ class ActiveCollection(Resource, SessionUser):
         nodes = cfg.db.table('nodes')
         table = cfg.db.table('active')
         (user,group) = get_authinfo(request)
-        query = self.query_builder(user, group, id)
+        query = self.query_builder(user, group, {"id": id})
         doc = table.get(query)
         if doc == None:
             return {"error": "Not found", "id": id}, 404
@@ -208,21 +209,7 @@ class ActiveCollection(Resource, SessionUser):
 @ns.route('/nodes')
 @ns.route('/nodes/<node>')
 @ns.route('/nodes/<int:id>')
-class NodeCollection(Resource):
-
-    def query_builder(self, user=None, group=None, id=None, node=None):
-        qs = list()
-        if user:
-            qs.append(where('users').any(user))
-        if group:
-            qs.append(where('groups').any(group))
-        if id:
-            qs.append(eq(where('id'), id))
-        elif node:
-            qs.append(eq(where('name'), node))
-        if len(qs):
-            return reduce(lambda a, b: a & b, qs)
-        return None
+class NodeCollection(Resource, QueryUser):
 
     @httpauth.login_required
     @auth
@@ -240,7 +227,7 @@ class NodeCollection(Resource):
         else:
             init_db(pclient, refresh=False)
         table = cfg.db.table('nodes')
-        query = self.query_builder(user, group, id, node)
+        query = self.query_builder(user, group, {"id": id, "name": node})
         if query and (id or node):
             res = table.get(query)
             if not res:
@@ -264,7 +251,7 @@ class NodeCollection(Resource):
         Node = Query()
         nodes = cfg.db.table('nodes')
         (user,group) = get_authinfo(request)
-        query = self.query_builder(user, group, id, node)
+        query = self.query_builder(user, group, {"id": id, "name": node})
         doc = nodes.get(query)
         if doc == None:
             return {"error": "Not found"}, 404
@@ -331,18 +318,6 @@ class NodeCollection(Resource):
 @ns.route('/create')
 class Create(Resource):
 
-    def query_builder(self, user=None, group=None, name=None):
-        qs = list()
-        if user:
-            qs.append(where('users').any(user))
-        if group:
-            qs.append(where('groups').any(group))
-        if name:
-            qs.append(eq(where('name'), name))
-        if len(qs):
-            return reduce(lambda a, b: a & b, qs)
-        return None
-
     @httpauth.login_required
     @auth
     def post(self):
@@ -373,7 +348,7 @@ class Create(Resource):
             # Profile
             if not profile or profile == "default":
                 profile = settings.DEFAULT_PROFILE
-            query = self.query_builder(user, group, profile)
+            query = self.query_builder(user, group, {"name": profile})
             prof = cfg.get_profile(profile, user, group)
             if not prof:
                 return {"error": f"Profile {profile} not found"}, 404
@@ -383,14 +358,14 @@ class Create(Resource):
             if not user and not group:
                 img = image
             else:
-                query = self.query_builder(user, group, image)
+                query = self.query_builder(user, group, {"name": image})
                 img = itable.get(query)
                 if not img:
                     return {"error": f"Image {image} not found"}, 404
                 img = image
             # Nodes
             for ep in instances:
-                query = self.query_builder(user, group, ep)
+                query = self.query_builder(user, group, {"name": ep})
                 node = ntable.get(query)
                 if not node:
                     return {"error": f"Node {ep} not found"}, 404
@@ -479,7 +454,7 @@ class Create(Resource):
 @ns.response(404, 'Not found')
 @ns.response(503, 'Service unavailable')
 @ns.route('/start/<int:id>')
-class Start(Resource, SessionUser):
+class Start(Resource, QueryUser):
 
     @httpauth.login_required
     @auth
@@ -490,7 +465,7 @@ class Start(Resource, SessionUser):
         table = cfg.db.table('active')
         ntable = cfg.db.table('nodes')
         (user,group) = get_authinfo(request)
-        query = self.query_builder(user, group, id)
+        query = self.query_builder(user, group, {"id": id})
         if id:
             svc = table.get(query)
         if not svc:
@@ -535,7 +510,7 @@ class Start(Resource, SessionUser):
 @ns.response(404, 'Not found')
 @ns.response(503, 'Service unavailable')
 @ns.route('/stop/<int:id>')
-class Stop(Resource, SessionUser):
+class Stop(Resource, QueryUser):
 
     @httpauth.login_required
     @auth
@@ -631,7 +606,6 @@ class Exec(Resource):
                                                                          e.body))
             return {"error": e.reason}, 503
         return ret
-
 
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
