@@ -623,6 +623,24 @@ class QoS(Resource):
 
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
+@ns.route('/images')
+@ns.route('/images/<path:name>')
+class Images(Resource, QueryUser):
+
+    @httpauth.login_required
+    def get(self, name=None):
+        (user,group) = get_authinfo(request)
+        query = self.query_builder(user, group, {"name": name})
+        table = cfg.db.table('images')
+        if name:
+            res = table.get(query)
+            if not res:
+                return {"error": "Not found"}, 404
+            return res
+        return table.all()
+
+@ns.response(200, 'OK')
+@ns.response(503, 'Service unavailable')
 @ns.route('/profiles')
 @ns.route('/profiles/<name>')
 class Profile(Resource):
