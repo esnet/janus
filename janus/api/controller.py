@@ -316,7 +316,7 @@ class NodeCollection(Resource, QueryUser):
 @ns.response(400, 'Bad Request')
 @ns.response(503, 'Service unavailable')
 @ns.route('/create')
-class Create(Resource):
+class Create(Resource, QueryUser):
 
     @httpauth.login_required
     @auth
@@ -637,7 +637,10 @@ class Images(Resource, QueryUser):
             if not res:
                 return {"error": "Not found"}, 404
             return res
-        return table.all()
+        elif query:
+            return table.search(query)
+        else:
+            return table.all()
 
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
