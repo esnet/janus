@@ -74,23 +74,26 @@ if __name__ == '__main__':
         # ex_vars = '{"ipprot": "ipv4", "interface": "eth0", "gateway": "172.17.0.1", "container": "dtnaas-controller"}'
         # limit = 'lbl-dev-dtn.es.net'
         
-        cfg.read_profiles(path="/Users/lzhang9/Projects/janus/config/profiles")
-        
-        enabled = cfg.get_ansible('enabled')
-        jt_name = cfg.get_ansible('jobtemplate')
-        gateway = cfg.get_ansible('gateway')
-        ipprot = cfg.get_ansible('ipprot')
-        inf = cfg.get_ansible('interface')        
-        limit = cfg.get_ansible('limit')
-        container_name= cfg.get_ansible('container_name')
+        cfg.read_profiles(path="/Users/lzhang9/Projects/janus/janus/config/profiles")
+        prof = cfg.get_profile('my-test-profile')
+        for psname in prof['post-starts']:
+            ps = cfg.get_poststart(psname)
+            if ps['type'] == 'ansible':
+                jt_name = ps['jobtemplate']
+                gateway = ps['gateway']
+                ipprot = ps['ipprot']
+                inf = ps['interface']       
+                limit = ps['limit']
+                container_name= ps['container_name']
                 
-        ex_vars = f'{{"ipprot": "{ipprot}", "interface": "{inf}", "gateway": "{gateway}", "container": "{container_name}"}}'
-
-        job = AnsibleJob()
-        try:
-            result = job.launch(job_template=jt_name, monitor=False, wait=True, timeout=300, extra_vars=ex_vars, limits=limit)
-        except (exc.UsageError, exc.JobFailure, exc.Timeout) as err:
-            print (err)
-        print('Job failed? : {}'.format(result['failed']))
+                ex_vars = f'{{"ipprot": "{ipprot}", "interface": "{inf}", "gateway": "{gateway}", "container": "{container_name}"}}'
+                job = AnsibleJob()
+                try:
+                    result = job.launch(job_template=jt_name, monitor=True, wait=True, timeout=600, extra_vars=ex_vars, limits=limit)
+                except (exc.UsageError, exc.JobFailure, exc.Timeout) as err:
+                    print (err)
+                # print('Job failed? : {}'.format(result['failed']))
+                
+        print('Done with test!')
               
     
