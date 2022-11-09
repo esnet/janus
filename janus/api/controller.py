@@ -799,7 +799,7 @@ class JanusAuth(Resource):
     resources = ["nodes",
                  "images",
                  "profiles",
-                 "services"]
+                 "active"]
 
     def _marshall_req(self):
         req = request.get_json()
