@@ -4,6 +4,16 @@ volumes:
     source: "/etc/janus/configs//95-local-esnet.cfg"
     target: "/etc/95-local-esnet.cfg"
 
+post-starts:
+  local-test:
+    type: ansible
+    jobtemplate: "DTNaaS update routes"
+    ipprot: "ipv4"
+    interface: "eth0"
+    gateway: "172.17.0.1"
+    limit: "lbl-dev-dtn.es.net"
+    container_name: "dtnaas-controller"
+
 profiles:
   my-test-profile:
     privileged: false
@@ -25,3 +35,5 @@ profiles:
       - tmpfs             # defined in volumes.yaml
     environment:
       - LOGROTATE=15
+    post-starts:
+      - local-test
