@@ -159,7 +159,7 @@ def init_db(client, refresh=False):
 
         # now do networks in separate table
         res = node_table.get(Node.name == k)
-        nets = res['networks']
+        nets = res.get('networks', dict())
         for n, w in nets.items():
             subnet = w['subnet']
             if len(subnet) and n in data_nets:

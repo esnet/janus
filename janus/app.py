@@ -133,7 +133,7 @@ def main():
 
     ssl = 'adhoc' if args.ssl else None
     app.run(host=args.bind, port=args.port, ssl_context=ssl,
-            debug=settings.FLASK_DEBUG,)
+            debug=settings.FLASK_DEBUG, threaded=False)
 
 if __name__ == '__main__':
     main()
