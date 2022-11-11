@@ -741,8 +741,7 @@ class Profile(Resource):
                 return {"error": "Profile not found: {}".format(name)}, 404
 
             default = res.copy()
-            log.info(default)
-            default.update((k, configs[k]) for k in default.keys() & configs.keys())
+            default['settings'].update(configs)
             ProfileSchema(**default)
 
         except ValidationError as e:
@@ -754,9 +753,7 @@ class Profile(Resource):
         try:
             query = Query()
             profile_tbl = cfg.db.table('profiles')
-            profile_tbl.upsert({
-                "settings": default
-            }, query.name == name)
+            profile_tbl.update(default, query.name == name)
         except Exception as e:
             return str(e), 500
 
