@@ -44,9 +44,11 @@ class QoS_Agent(BaseModel):
 class Profile(BaseModel):
     privileged: bool = False
     systemd: bool = False
+    pull_image: bool = False
     cpu: int = 0
     memory: int = 0
     affinity: str = "network"
+    cpu_set: Optional[str] = None
     mgmt_net: Union[dict, str] = None
     data_net: Optional[Union[dict, str]] = None
     internal_port: Optional[str] = None

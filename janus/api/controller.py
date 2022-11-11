@@ -355,7 +355,7 @@ class Create(Resource, QueryUser):
                 return {"error": f"Profile {profile} not found"}, 404
             # Image
             # By default try to pull the specified image name even if
-            # we don't know about
+            # we don't know about it
             if not user and not group:
                 img = image
             else:
@@ -415,7 +415,7 @@ class Create(Resource, QueryUser):
                     ret = {'Id': str(uuid.uuid4())}
                 else:
                     try:
-                        handle_image(n, img, dapi)
+                        handle_image(n, img, dapi, s['pull_image'])
                         name = f"janus_{Id}" if Id else None
                         ret = dapi.create_container(n['id'], img, name, **s['docker_kwargs'])
                     except ApiException as e:

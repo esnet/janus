@@ -223,12 +223,15 @@ def error_svc(s, e):
     if 'node' in s:
         del s['node']
 
-def handle_image(n, img, dapi):
-    if img not in n['images']:
+def handle_image(n, img, dapi, pull=False):
+    if img not in n['images'] or pull:
         parts = img.split(':')
         if len(parts) == 1:
-            dapi.pull_image(n['id'], parts[0], 'latest')
+            if f"{img}:latest" not in n['images'] or pull:
+                log.info(f"Pulling image {img} for node {n['name']}")
+                dapi.pull_image(n['id'], parts[0], 'latest')
         elif len(parts) > 1:
+            log.info(f"Pulling image {img} for node {n['name']}")
             dapi.pull_image(n['id'], parts[0], parts[1])
 
 def set_qos(url, qos):
@@ -264,6 +267,7 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs
     mnet = Network(prof['mgmt_net'], nname)
     priv = prof.get('privileged')
     sysd = prof.get('systemd')
+    pull = prof.get('pull_image')
 
     vfid = None
     vfmac = None
@@ -464,6 +468,7 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs
     srec['net_kwargs'] = mnet_kwargs
     srec['image'] = img
     srec['profile'] = pname
+    srec['pull_image'] = pull
     srec['qos'] = qos
     srec['errors'] = list()
     return srec
