@@ -183,6 +183,7 @@ class ActiveCollection(Resource, QueryUser):
         with ThreadPoolExecutor(max_workers=8) as executor:
             for k, v in allocations.items():
                 try:
+                    Node = Query()
                     n = nodes.search(Node.name == k)[0]
                     if not (cfg.dryrun):
                         for alloc in v:
