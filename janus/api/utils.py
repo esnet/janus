@@ -461,6 +461,7 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs
     srec['container_user'] = kwargs.get("USER_NAME", None)
 
     srec['node'] = node
+    srec['node_id'] = node['id']
     srec['serv_port'] = sport
     srec['ctrl_port'] = cport
     srec['ctrl_host'] = node['public_url']

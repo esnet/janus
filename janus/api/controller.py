@@ -131,6 +131,7 @@ class auth(object):
         pcfg.api_key_prefix = {'Authorization': 'Bearer'}
 
         log.debug("Authenticating with token: {}".format(res.jwt))
+        pclient.jwt = res.jwt
         auth_expire = time.time() + 14400
 
         return pclient
@@ -569,6 +570,7 @@ class Exec(Resource):
         Handle the execution of a container command inside Service
         """
         svcs = dict()
+        start = False
         req = request.get_json()
         if type(req) is not dict or "Cmd" not in req:
             return {"error": "invalid request format"}, 400
@@ -581,6 +583,8 @@ class Exec(Resource):
         log.debug(req)
 
         nname = req["node"]
+        if "start" in req and req["start"]:
+            start = True
 
         Node = Query()
         table = cfg.db.table('nodes')
@@ -600,7 +604,8 @@ class Exec(Resource):
                   }
         try:
             ret = dapi.exec_create(node["id"], container, **kwargs)
-            ret = dapi.exec_start(node["id"], ret["Id"])
+            if start:
+                ret = dapi.exec_start(node["id"], ret["Id"])
         except ApiException as e:
             log.error("Could not exec in container on {}: {}: {}".format(nname,
                                                                          e.reason,
@@ -791,6 +796,7 @@ class Profile(Resource):
 @ns.response(204, 'Not modified')
 @ns.response(404, 'Not found')
 @ns.response(503, 'Service unavailable')
+@ns.route('/auth/<path:resource>')
 @ns.route('/auth/<path:resource>/<int:rid>')
 @ns.route('/auth/<path:resource>/<path:rname>')
 class JanusAuth(Resource):
@@ -798,6 +804,7 @@ class JanusAuth(Resource):
                  "images",
                  "profiles",
                  "active"]
+    get_resources = ["jwt"]
 
     def _marshall_req(self):
         req = request.get_json()
@@ -821,9 +828,14 @@ class JanusAuth(Resource):
         return reduce(lambda a, b: a & b, qs)
 
     @httpauth.login_required
+    @auth
     def get(self, resource, rid=None, rname=None):
-        if resource not in self.resources:
+        if resource not in self.resources and resource not in self.get_resources:
             return {"error": f"Invalid resource path: {resource}"}, 404
+        # Returns active token for backend client (e.g. Portainer)
+        if resource in self.get_resources:
+            global plient
+            return {"jwt": pclient.jwt}, 200
         query = self.query_builder(rid, rname)
         table = cfg.db.table(resource)
         res = table.get(query)
