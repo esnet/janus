@@ -94,6 +94,10 @@ class JanusConfig():
             "volumes": list(),
             "environment": list(),
             "qos": None,
+            "tools": {
+                "dtnaas/tools": ["iperf3", "escp", "xfer_test"],
+                "dtnaas/ofed": ["iperf3", "ib_write_bw", "xfer_test"]
+            }
         }
 
     @property

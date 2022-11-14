@@ -58,4 +58,4 @@ class Profile(BaseModel):
     features: Optional[List[str]] = None
     volumes: Optional[List[str]] = None
     environment: Optional[List[str]] = None
-    qos: Optional[str] = None
+    tools: Optional[dict] = dict()
