@@ -585,11 +585,11 @@ class Exec(Resource):
         log.debug(req)
 
         nname = req["node"]
-        if "start" in req and req["start"]:
+        if "start" in req:
             start = req["start"]
-        if "attach" in req and req["attach"]:
+        if "attach" in req:
             attach = req["attach"]
-        if "tty" in req and req["tty"]:
+        if "tty" in req:
             tty = req["tty"]
 
         Node = Query()
