@@ -571,6 +571,8 @@ class Exec(Resource):
         """
         svcs = dict()
         start = False
+        attach = True
+        tty = False
         req = request.get_json()
         if type(req) is not dict or "Cmd" not in req:
             return {"error": "invalid request format"}, 400
@@ -584,7 +586,11 @@ class Exec(Resource):
 
         nname = req["node"]
         if "start" in req and req["start"]:
-            start = True
+            start = req["start"]
+        if "attach" in req and req["attach"]:
+            attach = req["attach"]
+        if "tty" in req and req["tty"]:
+            tty = req["tty"]
 
         Node = Query()
         table = cfg.db.table('nodes')
@@ -597,9 +603,9 @@ class Exec(Resource):
 
         dapi = PortainerDockerApi(pclient)
         kwargs = {'AttachStdin': False,
-                  'AttachStdout': True,
-                  'AttachStderr': True,
-                  'Tty': True,
+                  'AttachStdout': attach,
+                  'AttachStderr': attach,
+                  'Tty': tty,
                   'Cmd': cmd
                   }
         try:
