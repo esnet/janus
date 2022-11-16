@@ -95,8 +95,8 @@ class JanusConfig():
             "environment": list(),
             "qos": None,
             "tools": {
-                "dtnaas/tools": ["iperf3", "escp", "xfer_test"],
-                "dtnaas/ofed": ["iperf3", "ib_write_bw", "xfer_test"]
+                "dtnaas/tools": ["iperf3", "iperf3_server", "escp", "xfer_test"],
+                "dtnaas/ofed": ["iperf3", "iperf3_server", "ib_write_bw", "xfer_test"]
             }
         }
 
