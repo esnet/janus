@@ -71,7 +71,7 @@ class JanusConfig():
         self._volumes = dict()
         self._qos = dict()
         self._profiles = dict()
-        self._poststarts = dict()
+        self._post_starts = dict()
 
         # base profile is merged with profiles below
         self._base_profile = {
@@ -87,6 +87,7 @@ class JanusConfig():
             "data_port_range": [40000,40032],
             "serv_port_range": [60000,60032],
             "features": list(),
+            "post_starts": list(),
             "volumes": list(),
             "environment": list(),
             "qos": None,
@@ -141,7 +142,7 @@ class JanusConfig():
             log.info(prof)
             prof['volumes'] = [{v: self._volumes[v]} for v in prof['volumes']]
             prof['features'] = [{f: self._features[f]} for f in prof['features']]
-            prof['post-starts'] = [{ps: self._post-starts[s]} for ps in prof['post-starts']]
+            prof['post_starts'] = [{ps: self._post_starts[ps]} for ps in prof['post_starts']]
             return prof
 
     def get_profiles(self, inline=False):
@@ -165,7 +166,7 @@ class JanusConfig():
         return self._features.get(f, {})
 
     def get_poststart(self, key):
-        return self._poststarts.get(key, {})
+        return self._post_starts.get(key, {})
 
     def read_profiles(self, path=None, reset=False):
         db = TinyDB(self._dbpath)
@@ -219,9 +220,9 @@ class JanusConfig():
 
                                 if (k == "features"):
                                     self._features.update(v)
-                                    
-                                if (k == "post-starts"):
-                                    self._poststarts.update(v)
+
+                                if (k == "post_starts"):
+                                    self._post_starts.update(v)
 
                     except Exception as e:
                         raise Exception(f"Could not load configuration file: {entry}: {e}")

@@ -29,7 +29,7 @@ from portainer_api.models import AuthenticateUserRequest
 from portainer_api.rest import ApiException
 from .portainer_docker import PortainerDockerApi
 from .endpoints_api import EndpointsApi
-from ansible_job import AnsibleJob
+from .ansible_job import AnsibleJob
 
 class State(Enum):
     UNKNOWN = 0
@@ -402,7 +402,7 @@ class Start(Resource):
                         error_svc(s, e)
                         error = True
                         continue
-                               
+
                 #
                 # Ansible job is requested if configured
                 # - Enviroment variabls must be set to access Ansible Tower server:
@@ -410,17 +410,16 @@ class Start(Resource):
                 # - It may take some time for the ansible job to finish or timeout (300 seconds)
                 #
                 prof = cfg.get_profile(s['profile'])
-                for psname in prof['post-starts']:
+                for psname in prof['post_starts']:
                     ps = cfg.get_poststart(psname)
                     if ps['type'] == 'ansible':
                         jt_name = ps['jobtemplate']
                         gateway = ps['gateway']
                         ipprot = ps['ipprot']
-                        inf = ps['interface']       
+                        inf = ps['interface']
                         limit = ps['limit']
-                        default_name= ps['container_name']       
-                        container_name= name if s['container_name'] else default_name 
-                
+                        default_name= ps['container_name']
+                        container_name= name if s['container_name'] else default_name
                         ex_vars = f'{{"ipprot": "{ipprot}", "interface": "{inf}", "gateway": "{gateway}", "container": "{container_name}"}}'
                         job = AnsibleJob()
                         try:
@@ -428,7 +427,6 @@ class Start(Resource):
                         except (exc.UsageError, exc.JobFailure, exc.Timeout) as err:
                             print (err)
                 # End of Ansible job
-                   
         svc['state'] = State.MIXED.name if error else State.STARTED.name
         return commit_db(svc, id, realized=True)
 
