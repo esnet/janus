@@ -1,0 +1,8 @@
+ansible:
+  enabled: True
+  jobtemplate: "DTNaaS update routes"
+  ipprot: "ipv4"
+  interface: "eth0"
+  gateway: "172.17.0.1"
+  limit: "lbl-dev-dtn.es.net"
+  container_name: "dtnaas-controller"  
