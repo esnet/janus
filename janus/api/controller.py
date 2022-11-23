@@ -440,7 +440,7 @@ class Create(Resource, QueryUser):
                         continue
 
                 s['container_id'] = ret['Id']
-                s['conainter_name'] = name
+                s['container_name'] = name
                 if n['name'] not in record['allocations']:
                     record['allocations'].update({n['name']: list()})
                 record['allocations'][n['name']].append(ret['Id'])
@@ -513,7 +513,7 @@ class Start(Resource, QueryUser):
                 # - It may take some time for the ansible job to finish or timeout (300 seconds)
                 #
                 prof = cfg.get_profile(s['profile'])
-                for psname in prof['post_starts']:
+                for psname in prof['settings']['post_starts']:
                     ps = cfg.get_poststart(psname)
                     if ps['type'] == 'ansible':
                         jt_name = ps['jobtemplate']
@@ -522,13 +522,14 @@ class Start(Resource, QueryUser):
                         inf = ps['interface']
                         limit = ps['limit']
                         default_name= ps['container_name']
-                        container_name= name if s['container_name'] else default_name
+                        container_name= s.get('container_name', default_name)
                         ex_vars = f'{{"ipprot": "{ipprot}", "interface": "{inf}", "gateway": "{gateway}", "container": "{container_name}"}}'
                         job = AnsibleJob()
                         try:
                             result = job.launch(job_template=jt_name, monitor=True, wait=True, timeout=600, extra_vars=ex_vars, limits=limit)
-                        except (exc.UsageError, exc.JobFailure, exc.Timeout) as err:
-                            print (err)
+                        except Exception as e:
+                            error_svc(s, e)
+                            continue
                 # End of Ansible job
         svc['state'] = State.MIXED.name if error else State.STARTED.name
         return commit_db(svc, id, realized=True)

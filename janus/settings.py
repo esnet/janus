@@ -118,8 +118,8 @@ class JanusConfig():
     def db(self):
         return self._DB
 
-    def setdb(self, dbpath):
-        self._dbpath = dbpath
+    def setdb(self, dbpath=None):
+        self._dbpath = dbpath if dbpath else DEFAULT_DB_PATH
         self._DB = TinyDB(self._dbpath)
 
     def get_dbpath(self):

@@ -217,7 +217,11 @@ def error_svc(s, e):
         restxt = json.loads(e.body)
     except:
         restxt = ''
-    s['errors'].append({'reason': e.reason,
+    try:
+        reason = e.reason
+    except:
+        reason = str(e)
+    s['errors'].append({'reason': reason,
                         'response': restxt})
     s['container_id'] = None
     if 'node' in s:
