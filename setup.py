@@ -41,7 +41,7 @@ with open("requirements.txt", "r") as fh:
 
 setup(
     name='janus-dtnaas',
-    version='0.1-3',
+    version='0.2',
     description='Janus DTNaaS Controller',
     long_description=long_description,
     long_description_content_type="text/markdown",
