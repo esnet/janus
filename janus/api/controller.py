@@ -417,6 +417,22 @@ class Create(Resource, QueryUser):
                 else:
                     try:
                         handle_image(n, img, dapi, s['pull_image'])
+                    except Exception as e:
+                        log.error("Could not pull image {} on node {}, {}: {}".format(img,
+                                                                                      n['name'],
+                                                                                      e.reason,
+                                                                                      e.body))
+                        error_svc(s, e)
+                        try:
+                            handle_image(n, f"registry.ipv6.docker.com/{img}", dapi, s['pull_image'])
+                        except Exception as e:
+                            log.error("Could not pull image {} on node {}, {}: {}".format(img,
+                                                                                          n['name'],
+                                                                                          e.reason,
+                                                                                          e.body))
+                            error_svc(s, e)
+                            continue
+                    try:
                         name = f"janus_{Id}" if Id else None
                         ret = dapi.create_container(n['id'], img, name, **s['docker_kwargs'])
                     except ApiException as e:
