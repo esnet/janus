@@ -28,6 +28,8 @@ except:
 
 DEFAULT_PROFILE = 'default'
 SUPPORTED_FEATURES = ['rdma']
+SUPPORTED_IMAGES = ['dtnaas/tools',
+                    'dtnaas/ofed']
 
 # Controller will expose the following ENV VARS to containers:
 # - HOSTNAME
@@ -184,6 +186,11 @@ class JanusConfig():
         return self._post_starts.get(key, {})
 
     def read_profiles(self, path=None, reset=False):
+        Q = Query()
+        image_tbl = self.db.table('images')
+        for img in SUPPORTED_IMAGES:
+            ni = {"name": img}
+            image_tbl.upsert(ni, Q.name == img)
         profile_tbl = self.db.table('profiles')
         if reset:
             profile_tbl.truncate()
