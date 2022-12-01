@@ -12,9 +12,12 @@ import requests
 
 log = logging.getLogger(__name__)
 
-def precommit_db():
+def precommit_db(Id=None, delete=False):
     table = cfg.db.table('active')
-    Id = table.insert(dict())
+    if Id and delete:
+        table.remove(doc_ids=[Id])
+    else:
+        Id = table.insert(dict())
     return Id
 
 def commit_db_realized(record, node_table, net_table, delete=False):
@@ -226,6 +229,7 @@ def error_svc(s, e):
     s['container_id'] = None
     if 'node' in s:
         del s['node']
+    return True
 
 def handle_image(n, img, dapi, pull=False):
     if img not in n['images'] or pull:

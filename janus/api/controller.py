@@ -407,6 +407,7 @@ class Create(Resource, QueryUser):
         dapi = PortainerDockerApi(pclient)
         # get an ID from the DB
         Id = precommit_db()
+        errs = False
         for k, v in svcs.items():
             for s in svcs[k]:
                 # the portainer node this service will start on
@@ -415,6 +416,7 @@ class Create(Resource, QueryUser):
                 if (cfg.dryrun):
                     ret = {'Id': str(uuid.uuid4())}
                 else:
+                    # Docker-specific v4 vs v6 image registry nonsense. Need to abstract this away.
                     try:
                         handle_image(n, img, dapi, s['pull_image'])
                     except Exception as e:
@@ -422,16 +424,20 @@ class Create(Resource, QueryUser):
                                                                                       n['name'],
                                                                                       e.reason,
                                                                                       e.body))
-                        error_svc(s, e)
+                        errs = error_svc(s, e)
                         try:
-                            handle_image(n, f"registry.ipv6.docker.com/{img}", dapi, s['pull_image'])
+                            v6img = f"registry.ipv6.docker.com/{img}"
+                            handle_image(n, v6img, dapi, s['pull_image'])
+                            s['image'] = v6img
                         except Exception as e:
-                            log.error("Could not pull image {} on node {}, {}: {}".format(img,
+                            log.error("Could not pull image {} on node {}, {}: {}".format(v6img,
                                                                                           n['name'],
                                                                                           e.reason,
                                                                                           e.body))
-                            error_svc(s, e)
+                            errs = error_svc(s, e)
                             continue
+                    # clear any errors if image resolved
+                    s['errors'] = list()
                     try:
                         name = f"janus_{Id}" if Id else None
                         ret = dapi.create_container(n['id'], img, name, **s['docker_kwargs'])
@@ -439,7 +445,7 @@ class Create(Resource, QueryUser):
                         log.error("Could not create container on {}: {}: {}".format(n['name'],
                                                                                     e.reason,
                                                                                     e.body))
-                        error_svc(s, e)
+                        errs = error_svc(s, e)
                         continue
 
                 if not (cfg.dryrun):
@@ -452,7 +458,7 @@ class Create(Resource, QueryUser):
                         log.error("Could not connect network on {}: {}: {}".format(n['name'],
                                                                                    e.reason,
                                                                                    e.body))
-                        error_svc(s, e)
+                        errs = error_svc(s, e)
                         continue
 
                 s['container_id'] = ret['Id']
@@ -466,7 +472,12 @@ class Create(Resource, QueryUser):
         record['id'] = Id
         record['services'] = svcs
         record['request'] = req
-        return commit_db(record, Id)
+        if errs:
+            precommit_db(Id, delete=True)
+            return {Id: record}
+        else:
+            return commit_db(record, Id)
+
 
 @ns.response(200, 'OK')
 @ns.response(404, 'Not found')
