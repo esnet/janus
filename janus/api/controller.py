@@ -438,6 +438,7 @@ class Create(Resource, QueryUser):
                             continue
                     # clear any errors if image resolved
                     s['errors'] = list()
+                    errs = False
                     try:
                         name = f"janus_{Id}" if Id else None
                         ret = dapi.create_container(n['id'], s['image'], name, **s['docker_kwargs'])
@@ -466,7 +467,8 @@ class Create(Resource, QueryUser):
                 if n['name'] not in record['allocations']:
                     record['allocations'].update({n['name']: list()})
                 record['allocations'][n['name']].append(ret['Id'])
-                del s['node']
+                if "node" in s:
+                    del s['node']
 
         # complete accounting
         record['id'] = Id

@@ -227,8 +227,6 @@ def error_svc(s, e):
     s['errors'].append({'reason': reason,
                         'response': restxt})
     s['container_id'] = None
-    if 'node' in s:
-        del s['node']
     return True
 
 def handle_image(n, img, dapi, pull=False):
