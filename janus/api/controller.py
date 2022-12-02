@@ -412,12 +412,12 @@ class Create(Resource, QueryUser):
             for s in svcs[k]:
                 # the portainer node this service will start on
                 n = s['node']
-                img = s['image']
                 if (cfg.dryrun):
                     ret = {'Id': str(uuid.uuid4())}
                 else:
                     # Docker-specific v4 vs v6 image registry nonsense. Need to abstract this away.
                     try:
+                        img = s['image']
                         handle_image(n, img, dapi, s['pull_image'])
                     except Exception as e:
                         log.error("Could not pull image {} on node {}, {}: {}".format(img,
@@ -426,7 +426,7 @@ class Create(Resource, QueryUser):
                                                                                       e.body))
                         errs = error_svc(s, e)
                         try:
-                            v6img = f"registry.ipv6.docker.com/{img}"
+                            v6img = f"registry.ipv6.docker.com/{s['image']}"
                             handle_image(n, v6img, dapi, s['pull_image'])
                             s['image'] = v6img
                         except Exception as e:
@@ -440,7 +440,7 @@ class Create(Resource, QueryUser):
                     s['errors'] = list()
                     try:
                         name = f"janus_{Id}" if Id else None
-                        ret = dapi.create_container(n['id'], img, name, **s['docker_kwargs'])
+                        ret = dapi.create_container(n['id'], s['image'], name, **s['docker_kwargs'])
                     except ApiException as e:
                         log.error("Could not create container on {}: {}: {}".format(n['name'],
                                                                                     e.reason,
