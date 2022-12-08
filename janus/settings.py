@@ -31,6 +31,12 @@ SUPPORTED_FEATURES = ['rdma']
 SUPPORTED_IMAGES = ['dtnaas/tools',
                     'dtnaas/ofed']
 
+REGISTRIES = {
+    "wharf.es.net": {
+        "auth": os.getenv("REGISTRY_AUTH")
+    }
+}
+
 # Controller will expose the following ENV VARS to containers:
 # - HOSTNAME
 # - CTRL_PORT

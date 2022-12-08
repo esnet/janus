@@ -3,6 +3,7 @@ import json
 import logging
 from portainer_api.api_client import ApiClient
 from portainer_api.rest import ApiException
+from janus.settings import REGISTRIES as iregs
 
 log = logging.getLogger(__name__)
 
@@ -22,11 +23,18 @@ class PortainerDockerApi(object):
 
     def pull_image(self, pid, img, tag):
         kwargs = dict()
+        headers = list()
         kwargs['_return_http_data_only'] = True
         kwargs['query'] = {"fromImage": img,
                            "tag": tag}
+        parts = img.split("/")
+        if parts[0] in iregs:
+            auth = iregs[parts[0]].get("auth", None)
+            if not auth:
+                raise ApiException("503", f"Authentication not configured for registry {parts[0]}")
+            headers.append(f"X-Registry-Auth: {auth}")
         res = self._call("/endpoints/{}/docker/images/create".format(pid),
-                         "POST", None, **kwargs)
+                         "POST", None, headers, **kwargs)
         string = res.read().decode('utf-8')
         ret = {"status": res.status}
         for s in string.splitlines():
@@ -147,7 +155,7 @@ class PortainerDockerApi(object):
         string = res.read().decode('utf-8')
         return {"response": string}
 
-    def _call(self, url, method, body, **kwargs):
+    def _call(self, url, method, body, headers=[], **kwargs):
         all_params = ['body', 'query']  # noqa: E501
         all_params.append('async_req')
         all_params.append('_return_http_data_only')
@@ -187,6 +195,11 @@ class PortainerDockerApi(object):
         # HTTP header `Content-Type`
         header_params['Content-Type'] = self.api_client.select_header_content_type(  # noqa: E501
             ['application/json'])  # noqa: E501
+
+        for hdr in headers:
+            parts = hdr.split(":")
+            assert (len(parts) == 2)
+            header_params[parts[0]] = parts[1]
 
         # Authentication setting
         auth_settings = ['jwt']  # noqa: E501
