@@ -2,6 +2,7 @@ version: '3.7'
 services:
   portainer-ce:
     image: portainer/portainer-ce
+    container_name: portainer-ce
     restart: unless-stopped
     volumes:
       - portainer_data:/data
@@ -14,6 +15,7 @@ services:
 
   portainer-agent:
     image: portainer/agent
+    container_name: portainer-agent
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -26,6 +28,7 @@ services:
 
   controller:
     image: dtnaas/controller
+    container_name: janus-controller
     restart: unless-stopped
     environment:
       - PORT=5000
@@ -42,6 +45,7 @@ services:
 
   agent:
     image: dtnaas/agent
+    container_name: janus-agent
     restart: unless-stopped
     environment:
       - AGENT_BIND=0.0.0.0
