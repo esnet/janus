@@ -360,7 +360,8 @@ class Create(Resource, QueryUser):
             if not user and not group:
                 img = image
             else:
-                query = self.query_builder(user, group, {"name": image})
+                parts = image.split(":")
+                query = self.query_builder(user, group, {"name": parts[0]})
                 img = itable.get(query)
                 if not img:
                     return {"error": f"Image {image} not found"}, 404
