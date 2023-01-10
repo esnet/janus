@@ -101,7 +101,7 @@ def main():
     parse_config(args.config)
 
     # Database needs to be set in cfg first
-    if args.database:
+    if args.database and args.controller:
         cfg.setdb(args.database)
 
     if args.controller:
