@@ -51,12 +51,18 @@ def init_db(client, refresh=False):
         Q = Query()
         table = cfg.db.table('images')
         for e in res:
+            if not e['RepoDigests'] and not e['RepoTags']:
+                continue
             if e['RepoTags']:
-                ret.extend(e['RepoTags'])
                 e['name'] = e['RepoTags'][0].split(":")[0]
-                mutex.acquire()
-                table.upsert(e, Q.name == e['name'])
-                mutex.release()
+                ret.extend(e['RepoTags'])
+            elif e['RepoDigests']:
+                e['name'] = e['RepoDigests'][0].split("@")[0]
+            if e['name'] == '<none>':
+                continue
+            mutex.acquire()
+            table.upsert(e, Q.name == e['name'])
+            mutex.release()
         return ret
 
     def _get_endpoint_info(Id, url, nname, nodes):
