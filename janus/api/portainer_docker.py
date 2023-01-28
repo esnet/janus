@@ -132,6 +132,22 @@ class PortainerDockerApi(object):
             return {'status': '200 OK'}
         return json.loads(string)
 
+    #Logs
+    def get_log(self, pid, cid, since=0, stderr=1, stdout=1, tail=100, timestamps=0):
+        kwargs = dict()
+        kwargs['_return_http_data_only'] = True
+        kwargs['query'] = {
+            'since': since,
+            'stderr': stderr,
+            'stdout': stdout,
+            'tail': tail,
+            'timestamps': timestamps
+        }
+        res = self._call("/endpoints/{}/docker/containers/{}/logs".format(pid, cid),
+                         "GET", None, **kwargs)
+        string = res.read().decode('utf-8')
+        return {"response": string}
+
     # Exec
     def exec_create(self, pid, cid, **kwargs):
         body = dict()
@@ -205,6 +221,8 @@ class PortainerDockerApi(object):
         auth_settings = ['jwt']  # noqa: E501
 
         log.debug("Portainer-Docker call: {} {} body={}".format(method, url, body))
+        log.debug("Query params: {}".format(query_params))
+        log.debug("Header params: {}".format(header_params))
 
         return self.api_client.call_api(
             url, method,

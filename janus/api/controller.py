@@ -50,13 +50,18 @@ class EPType(Enum):
 class QueryUser:
     def query_builder(self, user=None, group=None, qargs=dict()):
         qs = list()
-        if user:
-            qs.append(where('users').any(user) | eq(where('user'), user))
-        if group:
+        user = user.split(',') if user else None
+        group = group.split(',') if group else None
+        if user and group:
+            qs.append(where('users').any(user) | where('groups').any(group))
+        elif user:
+            qs.append(where('users').any(user))
+        elif group:
             qs.append(where('groups').any(group))
         for k,v in qargs.items():
             if v:
                 qs.append(eq(where(k), v))
+        print (qs)
         if len(qs):
             return reduce(lambda a, b: a & b, qs)
         return None
@@ -136,24 +141,40 @@ class auth(object):
 
         return pclient
 
-
 @ns.route('/active')
-@ns.route('/active/<int:id>')
+@ns.route('/active/<int:aid>')
+@ns.route('/active/<int:aid>/logs/<path:nname>')
 class ActiveCollection(Resource, QueryUser):
 
     @httpauth.login_required
-    def get(self, id=None):
+    @auth
+    def get(self, aid=None, nname=None):
         """
         Returns active sessions
         """
         table = cfg.db.table('active')
         (user,group) = get_authinfo(request)
-        query = self.query_builder(user, group, {"id": id})
-        if query and id:
+        query = self.query_builder(user, group, {"id": aid})
+        if query and aid:
             res = table.get(query)
             if not res:
                 return {"error": "Not found"}, 404
-            return res
+            if nname:
+                try:
+                    ts = request.args.get('timestamps', 0)
+                    stderr = request.args.get('stderr', 1)
+                    stdout = request.args.get('stdout', 1)
+                    since = request.args.get('since', 0)
+                    tail = request.args.get('tail', 100)
+                    svc = res['services'][nname]
+                    nid = svc[0]['node_id']
+                    cid = svc[0]['container_id']
+                    dapi = PortainerDockerApi(pclient)
+                    return dapi.get_log(nid, cid, since, stderr, stdout, tail, ts)
+                except Exception as e:
+                    return {"error": f"Could not retrieve container logs: {e}"}
+            else:
+                return res
         elif query:
             return table.search(query)
         else:
