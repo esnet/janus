@@ -17,7 +17,10 @@ IGNORE_EPS = []
 AGENT_PORT = 5050
 AGENT_PROTO = "https"
 AGENT_SSL_VERIFY = False
+AGENT_USERNAME = "admin"
+AGENT_PASSWORD = "admin"
 AGENT_IMAGE = "dtnaas/agent"
+AGENT_AUTO_TUNE = True
 log = logging.getLogger(__name__)
 
 
@@ -89,6 +92,7 @@ class JanusConfig():
             "privileged": False,
             "systemd": False,
             "pull_image": False,
+            "auto_tune": False,
             "cpu": 4,
             "mem": 8589934592,
             "affinity": "network",

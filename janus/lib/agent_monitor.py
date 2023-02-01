@@ -54,17 +54,35 @@ class AgentMonitor(object):
         except ApiException as e:
             log.error(f"Could not start agent container on {n['name']}: {e.reason}: {e.body}")
 
-    def check_agent(self, n):
-        url = n['public_url']
+    def check_agent(self, n, url=None):
+        url = url if url else n['public_url']
         try:
             ret = requests.get("{}://{}:{}/api/janus/agent/node".format(settings.AGENT_PROTO,
                                                                         url,
                                                                         settings.AGENT_PORT),
                                verify=settings.AGENT_SSL_VERIFY,
                                timeout=2)
-            return n,ret
+            return n, ret
         except Exception as e:
-            return n,None
+            raise e
+
+    def tune(self, n, url=None, post=False):
+        url = url if url else n['public_url']
+        if post:
+            fn = requests.post
+            log.debug("Applying agent tuning at {}".format(url))
+        else:
+            fn = requests.get
+        try:
+            ret = fn("{}://{}:{}/api/janus/agent/tune".format(settings.AGENT_PROTO,
+                                                              url,
+                                                              settings.AGENT_PORT),
+                     verify=settings.AGENT_SSL_VERIFY,
+                     timeout=2,
+                     auth=(settings.AGENT_USERNAME, settings.AGENT_PASSWORD))
+            return n, ret
+        except Exception as e:
+            raise e
 
     def _thr(self):
         while not self._stop:

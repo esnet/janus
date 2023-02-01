@@ -18,6 +18,7 @@ from werkzeug.exceptions import BadRequest
 from pydantic import ValidationError
 from urllib.parse import urlsplit
 from janus import settings
+from janus.lib import AgentMonitor
 from janus.settings import cfg
 from .utils import create_service, commit_db, precommit_db, error_svc, handle_image, set_qos
 from .db import init_db
@@ -61,7 +62,6 @@ class QueryUser:
         for k,v in qargs.items():
             if v:
                 qs.append(eq(where(k), v))
-        print (qs)
         if len(qs):
             return reduce(lambda a, b: a & b, qs)
         return None
@@ -325,6 +325,10 @@ class NodeCollection(Resource, QueryUser):
                           "tls_skip_verify": "true",
                           "tls_skip_client_verify": "true"}
                 ret = eapi.endpoint_create(name=ep['name'], endpoint_type=eptype, **kwargs)
+                # Tune remote endpoints after addition if requested
+                if settings.AGENT_AUTO_TUNE:
+                    am = AgentMonitor(pclient)
+                    am.tune(ep, post=True)
         except Exception as e:
             return {"error": "{}".format(e)}, 500
 
