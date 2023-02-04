@@ -185,17 +185,17 @@ class ActiveCollection(Resource, QueryUser):
     @ns.response(500, 'Internal server error')
     @httpauth.login_required
     @auth
-    def delete(self, id):
+    def delete(self, aid):
         """
         Deletes an active allocation (e.g. stops containers)
         """
         nodes = cfg.db.table('nodes')
         table = cfg.db.table('active')
         (user,group) = get_authinfo(request)
-        query = self.query_builder(user, group, {"id": id})
+        query = self.query_builder(user, group, {"id": aid})
         doc = table.get(query)
         if doc == None:
-            return {"error": "Not found", "id": id}, 404
+            return {"error": "Not found", "id": aid}, 404
 
         force = request.args.get('force', None)
         dapi = PortainerDockerApi(pclient)
@@ -224,8 +224,8 @@ class ActiveCollection(Resource, QueryUser):
                     if not force:
                         return {"error": "{}".format(e)}, 503
         # delete always removes realized state info
-        commit_db(doc, id, delete=True, realized=True)
-        commit_db(doc, id, delete=True)
+        commit_db(doc, aid, delete=True, realized=True)
+        commit_db(doc, aid, delete=True)
         return None, 204
 
 @ns.response(400, 'Bad Request')
