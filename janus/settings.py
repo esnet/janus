@@ -7,6 +7,8 @@ from operator import eq
 from functools import reduce
 from werkzeug.security import generate_password_hash
 from janus.api.validator import QoS_Controller, Profile
+from janus.api.query import QueryUser
+
 
 API_PREFIX = '/api'
 DEFAULT_CFG_PATH = "/etc/janus/janus.conf"
@@ -141,17 +143,8 @@ class JanusConfig():
         return self._users
 
     def get_profile_from_db(self, p=None, user=None, group=None):
-        qs = list()
-        if user:
-            qs.append(where('users').any(user))
-        if group:
-            qs.append(where('groups').any(group))
-        if p:
-            qs.append(eq(where('name'), p))
-        if len(qs):
-            query = reduce(lambda a, b: a & b, qs)
-        else:
-            query = None
+        q = QueryUser()
+        query = q.query_builder(user, group, {"name": p})
         profile_tbl = self.db.table('profiles')
         if query and p:
             return profile_tbl.get(query)

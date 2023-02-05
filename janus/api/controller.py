@@ -20,9 +20,11 @@ from urllib.parse import urlsplit
 from janus import settings
 from janus.lib import AgentMonitor
 from janus.settings import cfg
-from .utils import create_service, commit_db, precommit_db, error_svc, handle_image, set_qos
-from .db import init_db
-from .validator import Profile as ProfileSchema
+from janus.api.utils import create_service, commit_db, precommit_db, error_svc, handle_image, set_qos
+from janus.api.db import init_db
+from janus.api.query import QueryUser
+from janus.api.validator import Profile as ProfileSchema
+from janus.api.ansible_job import AnsibleJob
 
 # XXX: Portainer will eventually go behind an ABC interface
 # so we can support other provisioning backends
@@ -31,9 +33,9 @@ from portainer_api.api_client import ApiClient
 from portainer_api.api import AuthApi
 from portainer_api.models import AuthenticateUserRequest
 from portainer_api.rest import ApiException
-from .portainer_docker import PortainerDockerApi
-from .endpoints_api import EndpointsApi
-from .ansible_job import AnsibleJob
+from janus.api.portainer_docker import PortainerDockerApi
+from janus.api.endpoints_api import EndpointsApi
+
 
 class State(Enum):
     UNKNOWN = 0
@@ -48,23 +50,6 @@ class EPType(Enum):
     KUBERNETES = 2
     DOCKER = 3
 
-class QueryUser:
-    def query_builder(self, user=None, group=None, qargs=dict()):
-        qs = list()
-        user = user.split(',') if user else None
-        group = group.split(',') if group else None
-        if user and group:
-            qs.append(where('users').any(user) | where('groups').any(group))
-        elif user:
-            qs.append(where('users').any(user))
-        elif group:
-            qs.append(where('groups').any(group))
-        for k,v in qargs.items():
-            if v:
-                qs.append(eq(where(k), v))
-        if len(qs):
-            return reduce(lambda a, b: a & b, qs)
-        return None
 
 # Basic auth
 httpauth = HTTPBasicAuth()
