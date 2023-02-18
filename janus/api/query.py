@@ -1,4 +1,5 @@
 from functools import reduce
+from operator import eq
 from tinydb import Query, where
 
 
