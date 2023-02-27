@@ -485,8 +485,8 @@ class Create(Resource, QueryUser):
         record['id'] = Id
         record['services'] = svcs
         record['request'] = req
-        record['users'] = user.split(",")
-        record['groups'] = group.split(",")
+        record['users'] = user.split(",") if user else []
+        record['groups'] = group.split(",") if group else []
         if errs:
             precommit_db(Id, delete=True)
             return {Id: record}
