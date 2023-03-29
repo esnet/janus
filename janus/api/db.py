@@ -119,11 +119,15 @@ def init_db(client, refresh=False):
         dapi = PortainerDockerApi(client)
         am   = AgentMonitor(client)
         futures = list()
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            for k, v in nodes.items():
-                futures.append(executor.submit(_get_endpoint_info, v['id'], v['public_url'], k, nodes))
-        for future in concurrent.futures.as_completed(futures):
-            item = future.result()
+        tp = ThreadPoolExecutor(max_workers=8)
+        for k, v in nodes.items():
+            futures.append(tp.submit(_get_endpoint_info, v['id'], v['public_url'], k, nodes))
+        for future in futures:
+            try:
+                item = future.result(timeout=5)
+            except Exception as e:
+                log.error(f"Timeout waiting on endpoint query, continuing")
+                continue
             mutex.acquire()
             node_table.upsert(item, Node.name == item['name'])
             mutex.release()
