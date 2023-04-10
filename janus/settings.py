@@ -98,6 +98,7 @@ class JanusConfig():
             "cpu": 4,
             "mem": 8589934592,
             "affinity": "network",
+            "arguments": None,
             "cpu_set": None,
             "mgmt_net": "bridge",
             "data_net": None,
