@@ -59,7 +59,7 @@ class PortainerDockerApi(object):
     def create_container(self, pid, image, name=None, **kwargs):
         body = {'Image': image}
         params = ['HostName', 'HostConfig', 'NetworkingConfig', 'ExposedPorts',
-                  'Env', 'Tty', "MacAddress", 'StopSignal']
+                  'Env', 'Tty', "MacAddress", 'StopSignal', 'Cmd']
         for k, v in six.iteritems(kwargs):
             if k in params:
                 body[k] = v
