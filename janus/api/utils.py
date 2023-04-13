@@ -9,6 +9,7 @@ from janus.api.models import Network
 from janus.settings import cfg
 from tinydb import Query
 import requests
+import shlex
 
 log = logging.getLogger(__name__)
 
@@ -274,7 +275,7 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs
     priv = prof.get('privileged')
     sysd = prof.get('systemd')
     pull = prof.get('pull_image')
-    cmd = prof.get('arguments')
+    cmd = shlex.split(prof.get('arguments'))
 
     vfid = None
     vfmac = None
@@ -314,7 +315,7 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs
         ],
         "Tty": True,
         "StopSignal": "SIGRTMIN+3" if sysd else "SIGTERM",
-        "Cmd": [cmd]
+        "Cmd": cmd
     }
 
     if cport:
