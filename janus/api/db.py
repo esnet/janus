@@ -380,20 +380,16 @@ def init_db(client, refresh=False):
     net_table = dbase.get_table('networks')
     for k, v in nodes.items():
         # simple accounting for allocated ports (in node table)
-        #res = node_table.search((Node.name == k) & (Node.allocated_ports.exists()))
         res = dbase.search(node_table, query=((Node.name == k) & (Node.allocated_ports.exists())))
-        print(f"res============={res}")
         if not len(res):
             dbase.upsert(node_table, {'allocated_ports': []}, 'name', k)
 
         # simple accounting for allocated vfs (in node table)
-        #res = node_table.search((Node.name == k) & (Node.allocated_vfs.exists()))
         res = dbase.search(node_table, query=((Node.name == k) & (Node.allocated_vfs.exists())))
         if not len(res):
             dbase.upsert(node_table, {'allocated_vfs': []}, 'name', k)
 
         # now do networks in separate table
-        #res = node_table.get(Node.name == k)
         res = dbase.get(node_table, name=k)
         nets = res.get('networks', dict())
         for n, w in nets.items():
