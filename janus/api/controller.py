@@ -21,7 +21,7 @@ from janus import settings
 from janus.lib import AgentMonitor
 from janus.settings import cfg
 from janus.api.utils import create_service, commit_db, precommit_db, error_svc, handle_image, set_qos
-from janus.api.db import init_db
+from janus.api.db import init_db, DBLayer
 from janus.api.query import QueryUser
 from janus.api.validator import Profile as ProfileSchema
 from janus.api.ansible_job import AnsibleJob
@@ -137,11 +137,12 @@ class ActiveCollection(Resource, QueryUser):
         """
         Returns active sessions
         """
-        table = cfg.db.table('active')
         (user,group) = get_authinfo(request)
         query = self.query_builder(user, group, {"id": aid})
+        dbase = DBLayer(cfg)
+        table = dbase.get_table('active')
         if query and aid:
-            res = table.get(query)
+            res = dbase.get(table, query=query)
             if not res:
                 return {"error": "Not found"}, 404
             if nname:
@@ -161,9 +162,9 @@ class ActiveCollection(Resource, QueryUser):
             else:
                 return res
         elif query:
-            return table.search(query)
+            return dbase.search(table, query=query)
         else:
-            return table.all()
+            return dbase.all(table)
 
     @ns.response(204, 'Allocation successfully deleted.')
     @ns.response(404, 'Not found.')
@@ -174,11 +175,12 @@ class ActiveCollection(Resource, QueryUser):
         """
         Deletes an active allocation (e.g. stops containers)
         """
-        nodes = cfg.db.table('nodes')
-        table = cfg.db.table('active')
         (user,group) = get_authinfo(request)
         query = self.query_builder(user, group, {"id": aid})
-        doc = table.get(query)
+        dbase = DBLayer(cfg)
+        nodes = dbase.get_table('nodes')
+        table = dbase.get_table('active')
+        doc = dbase.get(table, query=query)
         if doc == None:
             return {"error": "Not found", "id": aid}, 404
 
@@ -190,8 +192,7 @@ class ActiveCollection(Resource, QueryUser):
         with ThreadPoolExecutor(max_workers=8) as executor:
             for k, v in allocations.items():
                 try:
-                    Node = Query()
-                    n = nodes.search(Node.name == k)[0]
+                    n = dbase.search(nodes, name=k)[0]
                     if not (cfg.dryrun):
                         for alloc in v:
                             futures.append(executor.submit(dapi.stop_container, n['id'], alloc))
@@ -234,17 +235,18 @@ class NodeCollection(Resource, QueryUser):
             init_db(pclient, refresh=True)
         else:
             init_db(pclient, refresh=False)
-        table = cfg.db.table('nodes')
+        dbase = DBLayer(cfg)
+        table = dbase.get_table('nodes')
         query = self.query_builder(user, group, {"id": id, "name": node})
         if query and (id or node):
-            res = table.get(query)
+            res = dbase.get(table, query=query)
             if not res:
                 return {"error": "Not found"}, 404
             return res
         elif query:
-            return table.search(query)
+            return dbase.search(table, query=query)
         else:
-            return table.all()
+            return dbase.all(table)
 
     @ns.response(204, 'Node successfully deleted.')
     @ns.response(404, 'Not found.')
@@ -256,11 +258,11 @@ class NodeCollection(Resource, QueryUser):
         """
         if not node and not id:
             return {"error": "Must specify node name or id"}, 400
-        Node = Query()
-        nodes = cfg.db.table('nodes')
         (user,group) = get_authinfo(request)
         query = self.query_builder(user, group, {"id": id, "name": node})
-        doc = nodes.get(query)
+        dbase = DBLayer(cfg)
+        nodes = dbase.get_table('nodes')
+        doc = dbase.get(nodes, query=query)
         if doc == None:
             return {"error": "Not found"}, 404
         eapi = EndpointsApi(pclient)
@@ -268,7 +270,7 @@ class NodeCollection(Resource, QueryUser):
             eapi.endpoint_delete(doc.get('id'))
         except Exception as e:
             log.info("Could not remove portainer endpoint, ignoring...")
-        nodes.remove(doc_ids=[doc.doc_id])
+        dbase.remove(nodes, ids=doc.doc_id)
         return None, 204
 
     @httpauth.login_required
@@ -345,9 +347,10 @@ class Create(Resource, QueryUser):
         log.debug(req)
 
         cfg.db.clear_cache()
-        ntable = cfg.db.table('nodes')
-        ptable = cfg.db.table('profiles')
-        itable = cfg.db.table('images')
+        dbase = DBLayer(cfg)
+        ntable = dbase.get_table('nodes')
+        ptable = dbase.get_table('profiles')
+        itable = dbase.get_table('images')
 
         # Do auth and resource availability checks first
         create = list()
@@ -361,7 +364,7 @@ class Create(Resource, QueryUser):
             if not profile or profile == "default":
                 profile = settings.DEFAULT_PROFILE
             query = self.query_builder(user, group, {"name": profile})
-            prof = cfg.get_profile(profile, user, group)
+            prof = dbase.get_profile(profile, user, group)
             if not prof:
                 return {"error": f"Profile {profile} not found"}, 404
             # Image
@@ -372,14 +375,14 @@ class Create(Resource, QueryUser):
             else:
                 parts = image.split(":")
                 query = self.query_builder(user, group, {"name": parts[0]})
-                img = itable.get(query)
+                img = dbase.get(itable, query=query)
                 if not img:
                     return {"error": f"Image {image} not found"}, 404
                 img = image
             # Nodes
             for ep in instances:
                 query = self.query_builder(user, group, {"name": ep})
-                node = ntable.get(query)
+                node = dbase.get(ntable, query=query)
                 if not node:
                     return {"error": f"Node {ep} not found"}, 404
                 create.append(
@@ -506,12 +509,13 @@ class Start(Resource, QueryUser):
         """
         Handle the starting of container services
         """
-        table = cfg.db.table('active')
-        ntable = cfg.db.table('nodes')
         (user,group) = get_authinfo(request)
         query = self.query_builder(user, group, {"id": id})
+        dbase = DBLayer(cfg)
+        table = dbase.get_table('active')
+        ntable = dbase.get_table('nodes')
         if id:
-            svc = table.get(query)
+            svc = dbase.get(table, query=query)
         if not svc:
             return {"error": "id not found"}, 404
 
@@ -528,8 +532,7 @@ class Start(Resource, QueryUser):
                     log.debug("Skipping service with no container_id: {}".format(k))
                     continue
                 c = s['container_id']
-                Node = Query()
-                node = ntable.get(Node.name == k)
+                node = dbase.get(ntable, name=k)
                 log.debug("Starting container {} on {}".format(c, k))
 
                 if not (cfg.dryrun):
@@ -554,7 +557,7 @@ class Start(Resource, QueryUser):
                 #   TOWER_HOST, TOWER_USERNAME, TOWER_PASSWORD, TOWER_SSL_VERIFY
                 # - It may take some time for the ansible job to finish or timeout (300 seconds)
                 #
-                prof = cfg.get_profile(s['profile'])
+                prof = dbase.get_profile(s['profile'])
                 for psname in prof['settings']['post_starts']:
                     ps = cfg.get_poststart(psname)
                     if ps['type'] == 'ansible':
@@ -588,11 +591,11 @@ class Stop(Resource, QueryUser):
         """
         Handle the stopping of container services
         """
-        Srv = Query()
-        table = cfg.db.table('active')
-        ntable = cfg.db.table('nodes')
+        dbase = DBLayer(cfg)
+        table = dbase.get_table('active')
+        ntable = dbase.get_table('nodes')
         if id:
-            svc = table.get(doc_id=id)
+            svc = dbase.get(table, ids=id)
         if not svc:
             return {"error": "id not found"}, 404
 
@@ -610,8 +613,7 @@ class Stop(Resource, QueryUser):
                     log.debug("Skipping service with no container_id: {}".format(k))
                     continue
                 c = s['container_id']
-                Node = Query()
-                node = ntable.get(Node.name == k)
+                node = dbase.get(ntable, name=k)
                 log.debug("Stopping container {} on {}".format(c, k))
                 if not (cfg.dryrun):
                     try:
@@ -660,9 +662,9 @@ class Exec(Resource):
         if "tty" in req:
             tty = req["tty"]
 
-        Node = Query()
-        table = cfg.db.table('nodes')
-        node = table.get(Node.name == nname)
+        dbase = DBLayer(cfg)
+        table = dbase.get_table('nodes')
+        node = dbase.get(table, name=nname)
         if not node:
             return {"error": "Node not found: {}".format(nname)}
 
@@ -711,16 +713,17 @@ class Images(Resource, QueryUser):
     def get(self, name=None):
         (user,group) = get_authinfo(request)
         query = self.query_builder(user, group, {"name": name})
-        table = cfg.db.table('images')
+        dbase = DBLayer(cfg)
+        table = dbase.get_table('images')
         if name:
-            res = table.get(query)
+            res = dbase.get(table, query=query)
             if not res:
                 return {"error": "Not found"}, 404
             return res
         elif query:
-            return table.search(query)
+            return dbase.search(table, query=query)
         else:
-            return table.all()
+            return dbase.all(table)
 
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
@@ -733,30 +736,32 @@ class Profile(Resource):
         refresh = request.args.get('refresh', None)
         reset = request.args.get('reset', None)
         (user,group) = get_authinfo(request)
+        dbase = DBLayer(cfg)
         if refresh and refresh.lower() == 'true':
             try:
-                cfg.read_profiles()
+                dbase.read_profiles()
             except Exception as e:
                 return {"error": str(e)}, 500
 
         if reset and reset.lower() == 'true':
             try:
-                cfg.read_profiles(reset=True)
+                dbase.read_profiles(reset=True)
             except Exception as e:
                 return {"error": str(e)}, 500
 
         if name:
-            res = cfg.get_profile(name, user, group, inline=True)
+            res = dbase.get_profile(name, user, group, inline=True)
             if not res:
                 return {"error": "Profile not found: {}".format(name)}, 404
             return res
         else:
             log.debug("Returning all profiles")
-            ret = cfg.get_profiles(user, group, inline=True)
+            ret = dbase.get_profiles(user, group, inline=True)
             return ret if ret else list()
 
     @httpauth.login_required
     def post(self, name=None):
+        dbase = DBLayer(cfg)
         try:
             req = request.get_json()
 
@@ -771,7 +776,7 @@ class Profile(Resource):
                 return res
 
             configs = req["settings"]
-            res = cfg.get_profile(name, inline=True)
+            res = dbase.get_profile(name, inline=True)
             if res:
                 return {"error": "Profile {} already exists!".format(name)}, 400
 
@@ -786,20 +791,18 @@ class Profile(Resource):
             return str(e), 500
 
         try:
-            profile_tbl = cfg.db.table('profiles')
-            log.info("Creating profile {}".format(
-                profile_tbl.insert({
-                'name': name,
-                "settings": default
-                })
-            ))
+            #log.info("Creating profile {}".format(profile_tbl.insert({'name': name, "settings": default})))
+            profile_tbl = dbase.get_table('profiles')
+            record = {'name': name, "settings": default}
+            log.info("Creating profile {}".format(dbase.insert(profile_tbl, record)))
         except Exception as e:
             return str(e), 500
 
-        return cfg.get_profile(name), 200
+        return dbase.get_profile(name), 200
 
     @httpauth.login_required
     def put(self, name=None):
+        dbase = DBLayer(cfg)
         try:
             (user,group) = get_authinfo(request)
             req = request.get_json()
@@ -816,7 +819,7 @@ class Profile(Resource):
             if name == "default":
                 return {"error": "Cannot update default profile!"}, 400
 
-            res = cfg.get_profile(name, user, group, inline=True)
+            res = dbase.get_profile(name, user, group, inline=True)
             if not res:
                 return {"error": "Profile not found: {}".format(name)}, 404
 
@@ -831,16 +834,16 @@ class Profile(Resource):
             return {"error" : str(e)}, 500
 
         try:
-            query = Query()
-            profile_tbl = cfg.db.table('profiles')
-            profile_tbl.update(default, query.name == name)
+            profile_tbl = dbase.get_table('profiles')
+            dbase.update(profile_tbl, default, name=name)
         except Exception as e:
             return str(e), 500
 
-        return cfg.get_profile(name), 200
+        return dbase.get_profile(name), 200
 
     @httpauth.login_required
     def delete(self, name=None):
+        dbase = DBLayer(cfg)
         try:
             (user,group) = get_authinfo(request)
 
@@ -850,7 +853,7 @@ class Profile(Resource):
             if name == "default":
                 raise BadRequest("Cannot delete default profile")
 
-            res = cfg.get_profile(name, user, group, inline=True)
+            res = dbase.get_profile(name, user, group, inline=True)
             if not res:
                 return {"error": "Profile not found: {}".format(name)}, 404
 
@@ -858,9 +861,8 @@ class Profile(Resource):
             return str(e), 500
 
         try:
-            query = Query()
-            profile_tbl = cfg.db.table('profiles')
-            profile_tbl.remove(query.name == name)
+            profile_tbl = dbase.get_table('profiles')
+            dbase.remove(profile_tbl, name=name)
         except Exception as e:
             return str(e), 500
 
@@ -911,8 +913,9 @@ class JanusAuth(Resource):
             global plient
             return {"jwt": pclient.jwt}, 200
         query = self.query_builder(rid, rname)
-        table = cfg.db.table(resource)
-        res = table.get(query)
+        dbase = DBLayer(cfg)
+        table = dbase.get_table(resource)
+        res = dbase.get(table, query=query)
         if not res:
             return {"error": f"{resource} resource not found with id {rid if rid else rname}"}, 404
         users = res.get("users", list())
@@ -923,23 +926,25 @@ class JanusAuth(Resource):
     def post(self, resource, rid=None, rname=None):
         (users, groups) = self._marshall_req()
         query = self.query_builder(rid, rname)
-        table = cfg.db.table(resource)
-        res = table.get(query)
+        dbase = DBLayer(cfg)
+        table = dbase.get_table(resource)
+        res = dbase.get(table, query=query)
         if not res:
             return {"error": f"{resource} resource not found with id {rid if rid else rname}"}, 404
         new_users = list(set(users).union(set(res.get("users", list()))))
         new_groups = list(set(groups).union(set(res.get("groups", list()))))
         res['users'] = new_users
         res['groups'] = new_groups
-        table.update(res, query)
+        dbase.update(table, res, query=query)
         return res, 200
 
     @httpauth.login_required
     def delete(self, resource, rid=None, rname=None):
         (users, groups) = self._marshall_req()
         query = self.query_builder(rid, rname)
-        table = cfg.db.table(resource)
-        res = table.get(query)
+        dbase = DBLayer(cfg)
+        table = dbase.get_table(resource)
+        res = dbase.get(table, query=query)
         if not res:
             return {"error": f"{resource} resource not found with id {rid if rid else rname}"}, 404
         for u in users:
@@ -952,5 +957,5 @@ class JanusAuth(Resource):
                 res['groups'].remove(g)
             except:
                 pass
-        table.update(res, query)
+        dbase.update(table, res, query=query)
         return res, 200

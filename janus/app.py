@@ -20,6 +20,7 @@ from janus.api.controller import ns as controller_ns
 from janus.api.agent import ns as agent_ns
 from janus import settings
 from janus.settings import cfg
+from janus.api.db import DBLayer
 
 
 app = Flask(__name__)
@@ -100,15 +101,20 @@ def main():
 
     parse_config(args.config)
 
+
+
     # Database needs to be set in cfg first
     if args.database and args.controller:
         cfg.setdb(args.database)
 
     if args.controller:
         try:
-            cfg.read_profiles(args.profiles)
+            dbase = DBLayer(cfg)
+            dbase.read_profiles(args.profiles)
             cfg._profile_path = args.profiles
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             log.error(e)
             exit(1)
         cfg._controller = True
@@ -120,7 +126,8 @@ def main():
     # signal closure for re-reading profiles
     def sighup_handler(signum, frame):
         log.info(f"Caught HUP signal, reading profiles at {args.profiles}")
-        cfg.read_profiles(args.profiles)
+        dbase = DBLayer(cfg)
+        dbase.read_profiles(args.profiles)
     signal.signal(signal.SIGHUP, sighup_handler)
 
     log.info('Starting development Janus Server at http://{}{}'.format(platform.node(),
@@ -133,7 +140,7 @@ def main():
 
     ssl = 'adhoc' if args.ssl else None
     app.run(host=args.bind, port=args.port, ssl_context=ssl,
-            debug=settings.FLASK_DEBUG, threaded=False)
+            debug=settings.FLASK_DEBUG, threaded=True)
 
 if __name__ == '__main__':
     main()

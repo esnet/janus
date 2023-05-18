@@ -14,11 +14,12 @@ import shlex
 log = logging.getLogger(__name__)
 
 def precommit_db(Id=None, delete=False):
-    table = cfg.db.table('active')
+    dbase = DBLayer(cfg)
+    table = dbase.get_table('active')
     if Id and delete:
-        table.remove(doc_ids=[Id])
+        dbase.remove(table, ids=Id)
     else:
-        Id = table.insert(dict())
+        Id = dbase.insert(table, dict())
     return Id
 
 def commit_db_realized(record, node_table, net_table, delete=False):
@@ -26,7 +27,8 @@ def commit_db_realized(record, node_table, net_table, delete=False):
     services = record.get("services", dict())
     for k,v in services.items():
         for s in v:
-            node = node_table.get(Q.name == k)
+
+            node = dbase.get(node_table, name=k)
             if delete:
                 try:
                     if s['ctrl_port']:
@@ -40,11 +42,11 @@ def commit_db_realized(record, node_table, net_table, delete=False):
                     node['allocated_ports'].append(int(s['ctrl_port']))
                 if s['data_vfid']:
                     node['allocated_vfs'].append(s['data_vfid'])
-            node_table.update(node, Q.name == k)
+            dbase.update(node_table, name=k)
 
             if (s['data_net']):
                 nobj = Network(s['data_net_name'], k)
-                net = net_table.get(Q.key == nobj.key)
+                net = dbase.get(net_table, key=nobj.key)
                 if delete:
                     try:
                         net['allocated_v4'].remove(s['data_ipv4'])
@@ -59,26 +61,27 @@ def commit_db_realized(record, node_table, net_table, delete=False):
                         net['allocated_v4'].append(s['data_ipv4'])
                     if s['data_ipv6']:
                         net['allocated_v6'].append(s['data_ipv6'])
-                net_table.update(net, Q.key == nobj.key)
+                dbase.update(net_table, key=nobj.key)
 
 def commit_db(record, rid=None, delete=False, realized=False):
-    node_table = cfg.db.table('nodes')
-    net_table = cfg.db.table('networks')
-    table = cfg.db.table('active')
+    dbase = DBLayer(cfg)
+    node_table = dbase.get_table('nodes')
+    net_table = dbase.get_table('networks')
+    table = dbase.get_table('active')
 
     if realized:
         commit_db_realized(record, node_table, net_table, delete)
-        table.update(record, doc_ids=[rid])
+        dbase.update(table, record, ids=rid)
         return {rid: record}
 
     if delete:
-        table.remove(doc_ids=[rid])
+        dbase.remove(table, ids=rid)
         return {rid: record}
     elif rid:
-        table.update(record, doc_ids=[rid])
+        dbase.update(table, record, ids=rid)
         return {rid: record}
     else:
-        Id = table.insert(record)
+        Id = dbase.insert(table, record)
         return {Id: record}
 
 def get_next_vf(node, dnet):
@@ -129,12 +132,13 @@ def get_next_sport(node, prof, curr=set()):
 
 def get_next_ipv4(net, curr=set()):
     Net = Query()
-    nets = cfg.db.table('networks')
-    network = nets.get(Net.key == net.key)
+    dbase = DBLayer(cfg)
+    nets = dbase.get_table('networks')
+    network = dbase.get(nets, key=net.key)
     if not network:
         raise Exception(f"Network not found: {net.name}")
     # consider all similarly named networks using the same address space
-    named_nets = nets.search(Net.name == net.name)
+    named_nets = dbase.search(nets, name=net.name)
     alloced = list()
     for n in named_nets:
         alloced.extend(n['allocated_v4'])
@@ -158,12 +162,13 @@ def get_next_ipv4(net, curr=set()):
 
 def get_next_ipv6(net, curr=set()):
     Net = Query()
-    nets = cfg.db.table('networks')
-    network = nets.get(Net.key == net.key)
+    dbase = DBLayer(cfg)
+    nets = dbase.get_table('networks')
+    network = dbase.get(nets, key=net.key)
     if not network:
         raise Exception(f"Network not found: {net.name}")
     # consider all similarly named networks using the same address space
-    named_nets = nets.search(Net.name == net.name)
+    named_nets = dbase.search(nets, name=net.name)
     alloced = list()
     for n in named_nets:
         alloced.extend(n['allocated_v6'])
