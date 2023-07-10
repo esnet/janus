@@ -1,13 +1,8 @@
 import os
 import profile
-import yaml
 import logging
-from tinydb import TinyDB, Query, where
-from operator import eq
 from functools import reduce
 from werkzeug.security import generate_password_hash
-from janus.api.validator import QoS_Controller, Profile
-from janus.api.query import QueryUser
 
 
 API_PREFIX = '/api'
@@ -24,7 +19,6 @@ AGENT_PASSWORD = "admin"
 AGENT_IMAGE = "dtnaas/agent"
 AGENT_AUTO_TUNE = True
 log = logging.getLogger(__name__)
-
 
 try:
     FLASK_DEBUG = True #os.environ['DEBUG']
@@ -50,7 +44,8 @@ REGISTRIES = {
 
 class JanusConfig():
     def __init__(self):
-        self._DB = None
+        self._db = None
+        self._pm = None
         self._dbpath = None
         self._profile_path = None
         self._dry_run = False
@@ -131,11 +126,15 @@ class JanusConfig():
 
     @property
     def db(self):
-        return self._DB
+        return self._db
 
-    def setdb(self, dbpath=None):
-        self._dbpath = dbpath if dbpath else DEFAULT_DB_PATH
-        self._DB = TinyDB(self._dbpath)
+    @property
+    def pm(self):
+        return self._pm
+
+    def setdb(self, db, pm):
+        self._db = db
+        self._pm = pm
 
     def get_dbpath(self):
         return self._dbpath

@@ -14,7 +14,7 @@ import shlex
 log = logging.getLogger(__name__)
 
 def precommit_db(Id=None, delete=False):
-    dbase = DBLayer(cfg)
+    dbase = cfg.db
     table = dbase.get_table('active')
     if Id and delete:
         dbase.remove(table, ids=Id)
@@ -24,6 +24,7 @@ def precommit_db(Id=None, delete=False):
 
 def commit_db_realized(record, node_table, net_table, delete=False):
     Q = Query()
+    dbase = cfg.db
     services = record.get("services", dict())
     for k,v in services.items():
         for s in v:
@@ -42,7 +43,7 @@ def commit_db_realized(record, node_table, net_table, delete=False):
                     node['allocated_ports'].append(int(s['ctrl_port']))
                 if s['data_vfid']:
                     node['allocated_vfs'].append(s['data_vfid'])
-            dbase.update(node_table, name=k)
+            dbase.update(node_table, node, name=k)
 
             if (s['data_net']):
                 nobj = Network(s['data_net_name'], k)
@@ -61,10 +62,10 @@ def commit_db_realized(record, node_table, net_table, delete=False):
                         net['allocated_v4'].append(s['data_ipv4'])
                     if s['data_ipv6']:
                         net['allocated_v6'].append(s['data_ipv6'])
-                dbase.update(net_table, key=nobj.key)
+                dbase.update(net_table, net, key=nobj.key)
 
 def commit_db(record, rid=None, delete=False, realized=False):
-    dbase = DBLayer(cfg)
+    dbase = cfg.db
     node_table = dbase.get_table('nodes')
     net_table = dbase.get_table('networks')
     table = dbase.get_table('active')
@@ -132,7 +133,7 @@ def get_next_sport(node, prof, curr=set()):
 
 def get_next_ipv4(net, curr=set()):
     Net = Query()
-    dbase = DBLayer(cfg)
+    dbase = cfg.db
     nets = dbase.get_table('networks')
     network = dbase.get(nets, key=net.key)
     if not network:
@@ -162,7 +163,7 @@ def get_next_ipv4(net, curr=set()):
 
 def get_next_ipv6(net, curr=set()):
     Net = Query()
-    dbase = DBLayer(cfg)
+    dbase = cfg.db
     nets = dbase.get_table('networks')
     network = dbase.get(nets, key=net.key)
     if not network:
@@ -280,7 +281,10 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs
     priv = prof.get('privileged')
     sysd = prof.get('systemd')
     pull = prof.get('pull_image')
-    cmd = shlex.split(prof.get('arguments'))
+    args = prof.get('arguments')
+    cmd = None
+    if args:
+        cmd = shlex.split(args)
 
     vfid = None
     vfmac = None

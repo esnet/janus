@@ -21,8 +21,7 @@ from janus import settings
 from janus.lib import AgentMonitor
 from janus.settings import cfg
 from janus.api.utils import create_service, commit_db, precommit_db, error_svc, handle_image, set_qos
-from janus.api.db import init_db, DBLayer
-from janus.api.query import QueryUser
+from janus.api.db import init_db, QueryUser
 from janus.api.validator import Profile as ProfileSchema
 from janus.api.ansible_job import AnsibleJob
 
@@ -70,7 +69,7 @@ def auth_error(status):
 def verify_password(username, password):
     users = cfg.get_users()
     if username in users and \
-            check_password_hash(users.get(username), password):
+       check_password_hash(users.get(username), password):
         return username
 
 def get_authinfo(request):
@@ -139,7 +138,7 @@ class ActiveCollection(Resource, QueryUser):
         """
         (user,group) = get_authinfo(request)
         query = self.query_builder(user, group, {"id": aid})
-        dbase = DBLayer(cfg)
+        dbase = cfg.db
         table = dbase.get_table('active')
         if query and aid:
             res = dbase.get(table, query=query)
@@ -177,7 +176,7 @@ class ActiveCollection(Resource, QueryUser):
         """
         (user,group) = get_authinfo(request)
         query = self.query_builder(user, group, {"id": aid})
-        dbase = DBLayer(cfg)
+        dbase = cfg.db
         nodes = dbase.get_table('nodes')
         table = dbase.get_table('active')
         doc = dbase.get(table, query=query)
@@ -226,7 +225,6 @@ class NodeCollection(Resource, QueryUser):
         """
         Returns list of existing nodes
         """
-        cfg.db.clear_cache()
         (user,group) = get_authinfo(request)
         refresh = request.args.get('refresh', None)
         if refresh and refresh.lower() == 'true':
@@ -235,7 +233,7 @@ class NodeCollection(Resource, QueryUser):
             init_db(pclient, refresh=True)
         else:
             init_db(pclient, refresh=False)
-        dbase = DBLayer(cfg)
+        dbase = cfg.db
         table = dbase.get_table('nodes')
         query = self.query_builder(user, group, {"id": id, "name": node})
         if query and (id or node):
@@ -260,7 +258,7 @@ class NodeCollection(Resource, QueryUser):
             return {"error": "Must specify node name or id"}, 400
         (user,group) = get_authinfo(request)
         query = self.query_builder(user, group, {"id": id, "name": node})
-        dbase = DBLayer(cfg)
+        dbase = cfg.db
         nodes = dbase.get_table('nodes')
         doc = dbase.get(nodes, query=query)
         if doc == None:
@@ -346,8 +344,7 @@ class Create(Resource, QueryUser):
             req = [req]
         log.debug(req)
 
-        cfg.db.clear_cache()
-        dbase = DBLayer(cfg)
+        dbase = cfg.db
         ntable = dbase.get_table('nodes')
         ptable = dbase.get_table('profiles')
         itable = dbase.get_table('images')
@@ -364,7 +361,7 @@ class Create(Resource, QueryUser):
             if not profile or profile == "default":
                 profile = settings.DEFAULT_PROFILE
             query = self.query_builder(user, group, {"name": profile})
-            prof = dbase.get_profile(profile, user, group)
+            prof = cfg.pm.get_profile(profile, user, group)
             if not prof:
                 return {"error": f"Profile {profile} not found"}, 404
             # Image
@@ -511,7 +508,7 @@ class Start(Resource, QueryUser):
         """
         (user,group) = get_authinfo(request)
         query = self.query_builder(user, group, {"id": id})
-        dbase = DBLayer(cfg)
+        dbase = cfg.db
         table = dbase.get_table('active')
         ntable = dbase.get_table('nodes')
         if id:
@@ -557,7 +554,7 @@ class Start(Resource, QueryUser):
                 #   TOWER_HOST, TOWER_USERNAME, TOWER_PASSWORD, TOWER_SSL_VERIFY
                 # - It may take some time for the ansible job to finish or timeout (300 seconds)
                 #
-                prof = dbase.get_profile(s['profile'])
+                prof = cfg.pm.get_profile(s['profile'])
                 for psname in prof['settings']['post_starts']:
                     ps = cfg.get_poststart(psname)
                     if ps['type'] == 'ansible':
@@ -591,7 +588,7 @@ class Stop(Resource, QueryUser):
         """
         Handle the stopping of container services
         """
-        dbase = DBLayer(cfg)
+        dbase = cfg.db
         table = dbase.get_table('active')
         ntable = dbase.get_table('nodes')
         if id:
@@ -662,7 +659,7 @@ class Exec(Resource):
         if "tty" in req:
             tty = req["tty"]
 
-        dbase = DBLayer(cfg)
+        dbase = cfg.db
         table = dbase.get_table('nodes')
         node = dbase.get(table, name=nname)
         if not node:
@@ -713,7 +710,7 @@ class Images(Resource, QueryUser):
     def get(self, name=None):
         (user,group) = get_authinfo(request)
         query = self.query_builder(user, group, {"name": name})
-        dbase = DBLayer(cfg)
+        dbase = cfg.db
         table = dbase.get_table('images')
         if name:
             res = dbase.get(table, query=query)
@@ -736,32 +733,30 @@ class Profile(Resource):
         refresh = request.args.get('refresh', None)
         reset = request.args.get('reset', None)
         (user,group) = get_authinfo(request)
-        dbase = DBLayer(cfg)
         if refresh and refresh.lower() == 'true':
             try:
-                dbase.read_profiles()
+                cfg.pm.read_profiles()
             except Exception as e:
                 return {"error": str(e)}, 500
 
         if reset and reset.lower() == 'true':
             try:
-                dbase.read_profiles(reset=True)
+                cfg.pm.read_profiles(reset=True)
             except Exception as e:
                 return {"error": str(e)}, 500
 
         if name:
-            res = dbase.get_profile(name, user, group, inline=True)
+            res = cfg.pm.get_profile(name, user, group, inline=True)
             if not res:
                 return {"error": "Profile not found: {}".format(name)}, 404
             return res
         else:
             log.debug("Returning all profiles")
-            ret = dbase.get_profiles(user, group, inline=True)
+            ret = cfg.pm.get_profiles(user, group, inline=True)
             return ret if ret else list()
 
     @httpauth.login_required
     def post(self, name=None):
-        dbase = DBLayer(cfg)
         try:
             req = request.get_json()
 
@@ -776,7 +771,7 @@ class Profile(Resource):
                 return res
 
             configs = req["settings"]
-            res = dbase.get_profile(name, inline=True)
+            res = cfg.pm.get_profile(name, inline=True)
             if res:
                 return {"error": "Profile {} already exists!".format(name)}, 400
 
@@ -792,17 +787,17 @@ class Profile(Resource):
 
         try:
             #log.info("Creating profile {}".format(profile_tbl.insert({'name': name, "settings": default})))
-            profile_tbl = dbase.get_table('profiles')
+            profile_tbl = cfg.db.get_table('profiles')
             record = {'name': name, "settings": default}
-            log.info("Creating profile {}".format(dbase.insert(profile_tbl, record)))
+            log.info("Creating profile {}".format(cfg.db.insert(profile_tbl, record)))
         except Exception as e:
             return str(e), 500
 
-        return dbase.get_profile(name), 200
+        return cfg.pm.get_profile(name), 200
 
     @httpauth.login_required
     def put(self, name=None):
-        dbase = DBLayer(cfg)
+        dbase = cfg.db
         try:
             (user,group) = get_authinfo(request)
             req = request.get_json()
@@ -819,7 +814,7 @@ class Profile(Resource):
             if name == "default":
                 return {"error": "Cannot update default profile!"}, 400
 
-            res = dbase.get_profile(name, user, group, inline=True)
+            res = cfg.pm.get_profile(name, user, group, inline=True)
             if not res:
                 return {"error": "Profile not found: {}".format(name)}, 404
 
@@ -839,11 +834,11 @@ class Profile(Resource):
         except Exception as e:
             return str(e), 500
 
-        return dbase.get_profile(name), 200
+        return cfg.pm.get_profile(name), 200
 
     @httpauth.login_required
     def delete(self, name=None):
-        dbase = DBLayer(cfg)
+        dbase = cfg.db
         try:
             (user,group) = get_authinfo(request)
 
@@ -853,7 +848,7 @@ class Profile(Resource):
             if name == "default":
                 raise BadRequest("Cannot delete default profile")
 
-            res = dbase.get_profile(name, user, group, inline=True)
+            res = cfg.pm.get_profile(name, user, group, inline=True)
             if not res:
                 return {"error": "Profile not found: {}".format(name)}, 404
 
@@ -913,9 +908,8 @@ class JanusAuth(Resource):
             global plient
             return {"jwt": pclient.jwt}, 200
         query = self.query_builder(rid, rname)
-        dbase = DBLayer(cfg)
-        table = dbase.get_table(resource)
-        res = dbase.get(table, query=query)
+        table = cfg.db.get_table(resource)
+        res = cfg.db.get(table, query=query)
         if not res:
             return {"error": f"{resource} resource not found with id {rid if rid else rname}"}, 404
         users = res.get("users", list())
@@ -926,7 +920,7 @@ class JanusAuth(Resource):
     def post(self, resource, rid=None, rname=None):
         (users, groups) = self._marshall_req()
         query = self.query_builder(rid, rname)
-        dbase = DBLayer(cfg)
+        dbase = cfg.db
         table = dbase.get_table(resource)
         res = dbase.get(table, query=query)
         if not res:
@@ -942,7 +936,7 @@ class JanusAuth(Resource):
     def delete(self, resource, rid=None, rname=None):
         (users, groups) = self._marshall_req()
         query = self.query_builder(rid, rname)
-        dbase = DBLayer(cfg)
+        dbase = cfg.db
         table = dbase.get_table(resource)
         res = dbase.get(table, query=query)
         if not res:

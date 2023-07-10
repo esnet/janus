@@ -74,9 +74,9 @@ if __name__ == '__main__':
         # ex_vars = '{"ipprot": "ipv4", "interface": "eth0", "gateway": "172.17.0.1", "container": "dtnaas-controller"}'
         # limit = 'lbl-dev-dtn.es.net'
         cfg.setdb()
-        dbase = DBLayer(cfg)
-        dbase.read_profiles(path="/etc/janus/profiles")
-        prof = dbase.get_profile('my-test-profile')
+        dbase = cfg.db
+        cfg.pm.read_profiles(path="/etc/janus/profiles")
+        prof = cfg.pm.get_profile('my-test-profile')
         for psname in prof['settings']['post_starts']:
             ps = cfg.get_poststart(psname)
             if ps['type'] == 'ansible':

@@ -24,11 +24,6 @@ log = logging.getLogger(__name__)
 
 ns = Namespace('janus/agent', description='Operations for node tuning')
 
-
-def init_db():
-    pass
-
-
 @httpauth.error_handler
 def auth_error(status):
     return jsonify(error="Unauthorized"), status
