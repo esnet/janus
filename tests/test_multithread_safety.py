@@ -21,7 +21,11 @@ def test_get_profiles():
    assert res.status_code == 200
 
 def test_get_nodes():
-   res = requests.get('https://localhost:5000/api/janus/controller/nodes?refresh=txrue', auth=auth, verify=False)
+   res = requests.get('https://localhost:5000/api/janus/controller/nodes?refresh=true', auth=auth, verify=False)
+   assert res.status_code == 200
+
+def test_get_sessions():
+   res = requests.get('https://localhost:5000/api/janus/controller/active', auth=auth, verify=False)
    assert res.status_code == 200
 
 def test_create_profile():
@@ -46,3 +50,5 @@ def test_create_session():
 def test_delete_session():
    res = requests.delete(f'https://localhost:5000/api/janus/controller/active/{pytest.shared}?force=true', auth=auth, verify=False)
    assert res.status_code == 204
+
+
