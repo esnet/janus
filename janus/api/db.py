@@ -184,6 +184,9 @@ def init_db(client, refresh=False):
             am.start_agent(nodes[nname])
         return nodes[nname]
 
+    if not client:
+        log.warning("init_db called with no active client, returning")
+        return
     Node = Query()
     dbase = cfg.db
     node_table = dbase.get_table('nodes')

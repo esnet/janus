@@ -15,3 +15,4 @@ tcconfig
 Werkzeug==2.0.2
 pydantic==1.9.0
 ansible-tower-cli
+pytest-xprocess

@@ -84,6 +84,9 @@ class auth(object):
 
     def __call__(self, *args, **kwargs):
         global db_init
+        if cfg.dryrun:
+            db_init = True
+            return self.func(*args, **kwargs)
         try:
             client = self.do_auth()
 
@@ -425,6 +428,7 @@ class Create(Resource, QueryUser):
                 n = s['node']
                 if (cfg.dryrun):
                     ret = {'Id': str(uuid.uuid4())}
+                    name = "janus_dryrun"
                 else:
                     # Docker-specific v4 vs v6 image registry nonsense. Need to abstract this away.
                     try:
@@ -492,7 +496,6 @@ class Create(Resource, QueryUser):
             return {Id: record}
         else:
             return commit_db(record, Id)
-
 
 @ns.response(200, 'OK')
 @ns.response(404, 'Not found')
