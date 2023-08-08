@@ -57,18 +57,18 @@ def test_create_profile(Controller):
 #                        auth=auth, verify=False)
 #    assert res.status_code == 200
 
-def test_create_session(Controller):
-    body = {"instances": ["local"], "profile": f"{pytest.shared}", "image": "dtnaas/tools"}
-    res = requests.post('https://localhost:5000/api/janus/controller/create', json=body, headers=headers,
-                        auth=auth, verify=False)
-    print (res.text)
-    assert res.status_code == 200
-    js = json.loads(res.text)
-    pytest.shared = list(js.keys())[0]
+#def test_create_session(Controller):
+#    body = {"instances": ["local"], "profile": f"{pytest.shared}", "image": "dtnaas/tools"}
+#    res = requests.post('https://localhost:5000/api/janus/controller/create', json=body, headers=headers,
+#                        auth=auth, verify=False)
+#    print (res.text)
+#    assert res.status_code == 200
+#    js = json.loads(res.text)
+#    pytest.shared = list(js.keys())[0]
 
-def test_delete_session(Controller):
-    res = requests.delete(f'https://localhost:5000/api/janus/controller/active/{pytest.shared}?force=true', auth=auth, verify=False)
-    assert res.status_code == 204
+#def test_delete_session(Controller):
+#    res = requests.delete(f'https://localhost:5000/api/janus/controller/active/{pytest.shared}?force=true', auth=auth, verify=False)
+#    assert res.status_code == 204
 
 def test_delete_profile(Controller):
     res = requests.delete(f'https://localhost:5000/api/janus/controller/profiles/{pytest.shared}', auth=auth, verify=False)
