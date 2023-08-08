@@ -8,6 +8,6 @@ before_install:
   - sudo apt-get -y install libnuma-dev
 install:
   - "pip install -r requirements.txt"
-  - "pip install -e ."
+  - "pip install --use-pep517 -e ."
 # command to run tests
 script: pytest -v
