@@ -1,13 +1,12 @@
 # ref: https://docs.travis-ci.com/user/languages/python
 language: python
+dist: focal
 python:
-  - "3.6"
-  - "3.8"
   - "3.9"
 # command to install dependencies
 before_install:
   - sudo apt-get -y install libnuma-dev
 install:
-  - "pip install -r requirements.txt"
+  - "pip install --use-pep517 -e ."
 # command to run tests
 script: pytest -v

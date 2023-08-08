@@ -2,13 +2,18 @@ import logging
 import requests
 import queue
 import concurrent
+import os
+import yaml
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Lock
+
+from functools import reduce
+from operator import eq
+from tinydb import TinyDB, Query, where
 
 from janus import settings
 from janus.settings import cfg
 from janus.lib import AgentMonitor
-from tinydb import Query
 
 from .portainer_docker import PortainerDockerApi
 from .endpoints_api import EndpointsApi
@@ -17,11 +22,108 @@ from .endpoints_api import EndpointsApi
 log = logging.getLogger(__name__)
 mutex = Lock()
 
+class QueryUser:
+    def query_builder(self, user=None, group=None, qargs=dict()):
+        qs = list()
+        user = user.split(',') if user else None
+        group = group.split(',') if group else None
+        if user and group:
+            qs.append(where('users').any(user) | where('groups').any(group))
+        elif user:
+            qs.append(where('users').any(user))
+        elif group:
+            qs.append(where('groups').any(group))
+        for k,v in qargs.items():
+            if v:
+                qs.append(eq(where(k), v))
+        if len(qs):
+            return reduce(lambda a, b: a & b, qs)
+        return None
+
+# This layer targets a single backend right now, TinyDB
+class DBLayer():
+
+    def __init__(self, db: str = None, **kwargs):
+        self._client = TinyDB(kwargs.get("path"))
+
+    def mutex_lock(operation):
+        def lock_unlock(*args, **kwargs):
+            mutex.acquire()
+            ret = operation(*args, **kwargs)
+            mutex.release()
+            return ret
+        return lock_unlock
+
+    @mutex_lock
+    def get_table(self, tbl):
+        return self._client.table(tbl)
+
+    @mutex_lock
+    def remove(self, tbl, **kwargs):
+        if "name" in kwargs:
+            Q = Query()
+            tbl.remove(Q.name == kwargs.get("name"))
+        elif "ids" in kwargs:
+            tbl.remove(doc_ids=[kwargs.get("ids")])
+
+    @mutex_lock
+    def update(self, tbl, default, **kwargs):
+        Q = Query()
+        if "name" in kwargs:
+            tbl.update(default, Q.name == kwargs.get("name"))
+        elif "key" in kwargs:
+            tbl.update(default, Q.key == kwargs.get("key"))
+        elif "ids" in kwargs:
+            tbl.update(default, doc_ids=[kwargs.get("ids")])
+        else:
+            tbl.update(default, kwargs.get("query"))
+
+    @mutex_lock
+    def upsert(self, tbl, docs, field, f_value):
+        Q = Query()
+        if field == 'name':
+            tbl.upsert(docs, Q.name == f_value)
+        else:
+            tbl.upsert(docs, Q.key == f_value)
+
+    @mutex_lock
+    def insert(self, tbl, dict):
+        ret = tbl.insert(dict)
+        return ret
+
+    @mutex_lock
+    def get(self, tbl, **kwargs):
+        Q = Query()
+        if "name" in kwargs:
+            ret = tbl.get(Q.name == kwargs.get("name"))
+        elif "key" in kwargs:
+            ret = tbl.get(Q.key == kwargs.get("key"))
+        elif "ids" in kwargs:
+            ret = tbl.get(doc_id=kwargs.get("ids"))
+        else:
+            ret = tbl.get(kwargs.get("query"))
+        return ret
+
+    @mutex_lock
+    def search(self, tbl, **kwargs):
+        if "name" in kwargs:
+            Q = Query()
+            ret = tbl.search(Q.name == kwargs.get("name"))
+        else:
+            ret = tbl.search(kwargs.get("query"))
+        return ret
+
+    @mutex_lock
+    def all(self, tbl):
+        ret = tbl.all()
+        return ret
+
+
 def init_db(client, refresh=False):
     def parse_portainer_endpoints(res):
-        db = dict()
+        ret = dict()
         for e in res:
-            db[e['Name']] = {
+            ret[e['Name']] = {
                 'name': e['Name'],
                 'endpoint_status': e['Status'],
                 'id': e['Id'],
@@ -29,27 +131,25 @@ def init_db(client, refresh=False):
                 'url': e['URL'],
                 'public_url': e['PublicURL'],
             }
-        return db
+        return ret
 
     def parse_portainer_networks(res):
-        db = dict()
+        ret = dict()
         for e in res:
             key = e['Name']
-            db[key] = {
+            ret[key] = {
                 'id': e['Id'],
                 'driver': e['Driver'],
                 'subnet': e['IPAM']['Config']
             }
             if e["Options"]:
-                mutex.acquire()
-                db[key].update(e['Options'])
-                mutex.release()
-        return db
+                ret[key].update(e['Options'])
+        return ret
 
     def parse_portainer_images(res):
         ret = list()
         Q = Query()
-        table = cfg.db.table('images')
+        table = dbase.get_table('images')
         for e in res:
             if not e['RepoDigests'] and not e['RepoTags']:
                 continue
@@ -60,9 +160,7 @@ def init_db(client, refresh=False):
                 e['name'] = e['RepoDigests'][0].split("@")[0]
             if e['name'] == '<none>':
                 continue
-            mutex.acquire()
-            table.upsert(e, Q.name == e['name'])
-            mutex.release()
+            dbase.upsert(table, e, 'name', e['name'])
         return ret
 
     def _get_endpoint_info(Id, url, nname, nodes):
@@ -72,7 +170,6 @@ def init_db(client, refresh=False):
         except Exception as e:
             log.error("No response from {}".format(url))
             return nodes[nname]
-            return
 
         nodes[nname]['networks'] = parse_portainer_networks(nets)
         nodes[nname]['images'] = parse_portainer_images(imgs)
@@ -87,8 +184,12 @@ def init_db(client, refresh=False):
             am.start_agent(nodes[nname])
         return nodes[nname]
 
+    if not client:
+        log.warning("init_db called with no active client, returning")
+        return
     Node = Query()
-    node_table = cfg.db.table('nodes')
+    dbase = cfg.db
+    node_table = dbase.get_table('nodes')
     eapi = EndpointsApi(client)
     res = None
     nodes = None
@@ -100,9 +201,7 @@ def init_db(client, refresh=False):
                 res.remove(r)
         nodes = parse_portainer_endpoints(res)
         for k,v in nodes.items():
-            mutex.acquire()
-            node_table.upsert(v, Node.name == k)
-            mutex.release()
+            dbase.upsert(node_table, v, 'name', k)
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -128,9 +227,7 @@ def init_db(client, refresh=False):
             except Exception as e:
                 log.error(f"Timeout waiting on endpoint query, continuing")
                 continue
-            mutex.acquire()
-            node_table.upsert(item, Node.name == item['name'])
-            mutex.release()
+            dbase.upsert(node_table, item, 'name', item['name'])
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -140,7 +237,7 @@ def init_db(client, refresh=False):
     # setup some profile accounting
     # these are the data plane networks we care about
     data_nets = list()
-    profs = cfg.get_profiles()
+    profs = cfg.pm.get_profiles()
     for p in profs:
         for nname in ["data_net", "mgmt_net"]:
             net = p["settings"][nname]
@@ -152,21 +249,20 @@ def init_db(client, refresh=False):
                     data_nets.append(net['name'])
 
     # simple IPAM for data networks
-    Net = Query()
-    net_table = cfg.db.table('networks')
+    net_table = dbase.get_table('networks')
     for k, v in nodes.items():
         # simple accounting for allocated ports (in node table)
-        res = node_table.search((Node.name == k) & (Node.allocated_ports.exists()))
+        res = dbase.search(node_table, query=((Node.name == k) & (Node.allocated_ports.exists())))
         if not len(res):
-            node_table.upsert({'allocated_ports': []}, Node.name == k)
+            dbase.upsert(node_table, {'allocated_ports': []}, 'name', k)
 
         # simple accounting for allocated vfs (in node table)
-        res = node_table.search((Node.name == k) & (Node.allocated_vfs.exists()))
+        res = dbase.search(node_table, query=((Node.name == k) & (Node.allocated_vfs.exists())))
         if not len(res):
-            node_table.upsert({'allocated_vfs': []}, Node.name == k)
+            dbase.upsert(node_table, {'allocated_vfs': []}, 'name', k)
 
         # now do networks in separate table
-        res = node_table.get(Node.name == k)
+        res = dbase.get(node_table, name=k)
         nets = res.get('networks', dict())
         for n, w in nets.items():
             subnet = w['subnet']
@@ -178,4 +274,4 @@ def init_db(client, refresh=False):
                        'subnet': list(subnet),
                        'allocated_v4': [],
                        'allocated_v6': []}
-                net_table.upsert(net, Net.key == key)
+                dbase.upsert(net_table, net, 'key', key)
