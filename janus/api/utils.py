@@ -303,7 +303,7 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs
 
     mnet_kwargs = {}
     docker_kwargs = {
-        "HostName": nname,
+        "HostName": nname[0:63], # truncate to 63 characters
         "HostConfig": {
             "PortBindings": dict(),
             "NetworkMode": mnet.name,
