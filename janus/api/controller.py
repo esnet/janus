@@ -358,6 +358,7 @@ class Create(Resource, QueryUser):
             instances = r.get("instances", None)
             profile = r.get("profile", None)
             image = r.get("image", None)
+            arguments = r.get("arguments", None)
             if instances == None or profile == None or image == None:
                 raise BadRequest("Missing fields in POST data")
             # Profile
@@ -389,6 +390,7 @@ class Create(Resource, QueryUser):
                     {"node": node,
                      "profile": prof,
                      "image": img,
+                     "arguments": arguments,
                      "kwargs": r.get("kwargs", dict())
                      }
                 )
@@ -405,7 +407,8 @@ class Create(Resource, QueryUser):
                 if s not in svcs:
                     svcs[s] = list()
                 svcs[s].append(create_service(r['node'], r['image'], r['profile'], addrs_v4, addrs_v6,
-                                              cports, sports, **r['kwargs']))
+                                              cports, sports, r['arguments'], **r['kwargs']))
+
         except Exception as e:
             import traceback
             traceback.print_exc()

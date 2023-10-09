@@ -269,7 +269,7 @@ def set_qos(url, qos):
             log.error(e)
             # return node, None
 
-def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs):
+def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, arguments, **kwargs):
     srec = dict()
     nname = node.get('name')
     pname = prof.get('name')
@@ -282,9 +282,12 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs
     sysd = prof.get('systemd')
     pull = prof.get('pull_image')
     args = prof.get('arguments')
+    args_override = arguments
     cmd = None
-    if args:
-        cmd = shlex.split(args)
+    if args_override:
+        cmd = shlex.split(args_override)
+    elif args:
+            cmd = shlex.split(args)
 
     vfid = None
     vfmac = None
