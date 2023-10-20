@@ -73,8 +73,13 @@ def verify_password(username, password):
         return username
 
 def get_authinfo(request):
-    user = request.args.get('user', None)
-    group = request.args.get('group', None)
+    api_user = httpauth.current_user()
+    if api_user == 'admin':
+        user = request.args.get('user', None)
+        group = request.args.get('group', None)
+    else:
+        user = api_user
+        group = None
     log.debug(f"User: {user}, Group: {group}")
     return (user,group)
 
