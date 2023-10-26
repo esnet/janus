@@ -132,6 +132,31 @@ class PortainerDockerApi(object):
             return {'status': '200 OK'}
         return json.loads(string)
 
+    def create_network(self, pid, name, **kwargs):
+        body = {'Name': name}
+        params = ['CheckDuplicate', 'Driver', 'Internal', 'Attachable',
+                  'Ingress', 'IPAM', 'EnableIPv6', 'Options', 'Labels']
+        for k, v in six.iteritems(kwargs):
+            if k in params:
+                body[k] = v
+        kwargs = dict()
+        kwargs['_return_http_data_only'] = True
+        res = self._call("/endpoints/{}/docker/networks/{}/create".format(pid, name),
+                         "POST", body, **kwargs)
+        string = res.read().decode('utf-8')
+        if (res.status == 200):
+            return {'status': '200 OK'}
+        return json.loads(string)
+
+    def remove_network(self, pid, nid, **kwargs):
+        kwargs['_return_http_data_only'] = True
+        res = self._call("/endpoints/{}/docker/networks/{}".format(pid, nid),
+                         "DELETE", None, **kwargs)
+        if (res.status == 204):
+            return {'status': '{} OK'.format(res.status)}
+        string = res.read().decode('utf-8')
+        return json.loads(string)
+
     #Logs
     def get_log(self, pid, cid, since=0, stderr=1, stdout=1, tail=100, timestamps=0):
         kwargs = dict()

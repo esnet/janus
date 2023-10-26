@@ -59,3 +59,6 @@ class Profile(BaseModel):
     volumes: Optional[List[str]] = None
     environment: Optional[List[str]] = None
     tools: Optional[dict] = dict()
+
+class NetworkProfile(BaseModel):
+    pass

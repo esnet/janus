@@ -80,6 +80,7 @@ class JanusConfig():
         }
 
         self._volumes = dict()
+        self._networks = dict()
         self._qos = dict()
         self._profiles = dict()
         self._post_starts = dict()

@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 from janus import settings
 from janus.lib import AgentMonitor
 from janus.settings import cfg
-from janus.api.utils import create_service, commit_db, precommit_db, error_svc, handle_image, set_qos
+from janus.api.utils import create_service, commit_db, precommit_db, error_svc, handle_image, set_qos, Constants
 from janus.api.db import init_db, QueryUser
 from janus.api.validator import Profile as ProfileSchema
 from janus.api.ansible_job import AnsibleJob
@@ -371,7 +371,7 @@ class Create(Resource, QueryUser):
             if not profile or profile == "default":
                 profile = settings.DEFAULT_PROFILE
             query = self.query_builder(user, group, {"name": profile})
-            prof = cfg.pm.get_profile(profile, user, group)
+            prof = cfg.pm.get_profile(Constants.HOST, profile, user, group)
             if not prof:
                 return {"error": f"Profile {profile} not found"}, 404
             # Image
@@ -701,20 +701,6 @@ class Exec(Resource):
 
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
-@ns.route('/qos')
-class QoS(Resource):
-
-    @httpauth.login_required
-    def get(self):
-        name = request.args.get('name', None)
-        if name:
-            qos = cfg.get_qos(name)
-            return {name: qos}
-
-        return cfg.get_qos_list()
-
-@ns.response(200, 'OK')
-@ns.response(503, 'Service unavailable')
 @ns.route('/images')
 @ns.route('/images/<path:name>')
 class Images(Resource, QueryUser):
@@ -738,11 +724,20 @@ class Images(Resource, QueryUser):
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
 @ns.route('/profiles')
-@ns.route('/profiles/<name>')
+@ns.route('/profiles/<path:resource>')
+@ns.route('/profiles/<path:resource>/<path:rname>')
 class Profile(Resource):
+    resources = [
+        Constants.HOST,
+        Constants.NET,
+        Constants.VOL,
+        Constants.QOS
+    ]
 
     @httpauth.login_required
-    def get(self, name=None):
+    def get(self, resource="host", rname=None):
+        if resource and resource not in self.resources:
+            return {"error": f"Invalid resource path: {resource}"}, 404
         refresh = request.args.get('refresh', None)
         reset = request.args.get('reset', None)
         (user,group) = get_authinfo(request)
@@ -758,21 +753,22 @@ class Profile(Resource):
             except Exception as e:
                 return {"error": str(e)}, 500
 
-        if name:
-            res = cfg.pm.get_profile(name, user, group, inline=True)
+        if rname:
+            res = cfg.pm.get_profile(resource, rname, user, group, inline=True)
             if not res:
-                return {"error": "Profile not found: {}".format(name)}, 404
+                return {"error": "Profile not found: {}".format(rname)}, 404
             return res
         else:
             log.debug("Returning all profiles")
-            ret = cfg.pm.get_profiles(user, group, inline=True)
+            ret = cfg.pm.get_profiles(resource, user, group, inline=True)
             return ret if ret else list()
 
     @httpauth.login_required
-    def post(self, name=None):
+    def post(self, resource=None, rname=None):
         try:
+            if not resource or resource not in self.resources:
+                return {"error": f"Invalid resource path: {resource}"}, 404
             req = request.get_json()
-
             if (req is None) or (req and type(req) is not dict):
                 res = jsonify(error="Body is not json dictionary")
                 res.status_code = 400
@@ -784,9 +780,9 @@ class Profile(Resource):
                 return res
 
             configs = req["settings"]
-            res = cfg.pm.get_profile(name, inline=True)
+            res = cfg.pm.get_profile(resource, rname, inline=True)
             if res:
-                return {"error": "Profile {} already exists!".format(name)}, 400
+                return {"error": "Profile {} already exists!".format(rname)}, 400
 
             default = cfg._base_profile.copy()
             default.update((k, configs[k]) for k in default.keys() & configs.keys())
@@ -799,18 +795,19 @@ class Profile(Resource):
             return str(e), 500
 
         try:
-            #log.info("Creating profile {}".format(profile_tbl.insert({'name': name, "settings": default})))
-            profile_tbl = cfg.db.get_table('profiles')
-            record = {'name': name, "settings": default}
+            #log.info("Creating profile {}".format(profile_tbl.insert({'name': rname, "settings": default})))
+            profile_tbl = cfg.db.get_table(resource)
+            record = {'name': rname, "settings": default}
             log.info("Creating profile {}".format(cfg.db.insert(profile_tbl, record)))
         except Exception as e:
             return str(e), 500
 
-        return cfg.pm.get_profile(name), 200
+        return cfg.pm.get_profile(resource, rname), 200
 
     @httpauth.login_required
-    def put(self, name=None):
-        dbase = cfg.db
+    def put(self, resource=None, rname=None):
+        if not resource or resource not in self.resources:
+            return {"error": f"Invalid resource path: {resource}"}, 404
         try:
             (user,group) = get_authinfo(request)
             req = request.get_json()
@@ -824,12 +821,12 @@ class Profile(Resource):
                 raise BadRequest(res)
 
             configs = req["settings"]
-            if name == "default":
+            if rname == "default":
                 return {"error": "Cannot update default profile!"}, 400
 
-            res = cfg.pm.get_profile(name, user, group, inline=True)
+            res = cfg.pm.get_profile(resource, rname, user, group, inline=True)
             if not res:
-                return {"error": "Profile not found: {}".format(name)}, 404
+                return {"error": "Profile not found: {}".format(rname)}, 404
 
             default = res.copy()
             default['settings'].update(configs)
@@ -842,35 +839,36 @@ class Profile(Resource):
             return {"error" : str(e)}, 500
 
         try:
-            profile_tbl = dbase.get_table('profiles')
-            dbase.update(profile_tbl, default, name=name)
+            profile_tbl = cfg.db.get_table(resource)
+            cfg.db.update(profile_tbl, default, name=rname)
         except Exception as e:
             return str(e), 500
 
-        return cfg.pm.get_profile(name), 200
+        return cfg.pm.get_profile(resource, rname), 200
 
     @httpauth.login_required
-    def delete(self, name=None):
-        dbase = cfg.db
+    def delete(self, resource=None, rname=None):
+        if not resource or resource not in self.resources:
+            return {"error": f"Invalid resource path: {resource}"}, 404
         try:
             (user,group) = get_authinfo(request)
 
-            if not name:
+            if not rname:
                 raise BadRequest("Must specify profile name")
 
-            if name == "default":
+            if rname == "default":
                 raise BadRequest("Cannot delete default profile")
 
-            res = cfg.pm.get_profile(name, user, group, inline=True)
+            res = cfg.pm.get_profile(resource, rname, user, group, inline=True)
             if not res:
-                return {"error": "Profile not found: {}".format(name)}, 404
+                return {"error": "Profile not found: {}".format(rname)}, 404
 
         except Exception as e:
             return str(e), 500
 
         try:
-            profile_tbl = dbase.get_table('profiles')
-            dbase.remove(profile_tbl, name=name)
+            profile_tbl = cfg.db.get_table(resource)
+            cfg.db.remove(profile_tbl, name=rname)
         except Exception as e:
             return str(e), 500
 

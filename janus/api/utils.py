@@ -13,6 +13,12 @@ import shlex
 
 log = logging.getLogger(__name__)
 
+class Constants:
+    NET = "network"
+    HOST = "host"
+    QOS = "qos"
+    VOL = "volume"
+
 def precommit_db(Id=None, delete=False):
     dbase = cfg.db
     table = dbase.get_table('active')

@@ -1,6 +1,7 @@
 import os
 import yaml
 import logging
+from .utils import Constants
 from janus import settings
 from janus.settings import cfg
 from janus.api.db import QueryUser
@@ -14,8 +15,8 @@ class ProfileManager(QueryUser):
         self._db = db
         self._profile_path = profile_path
 
-    def get_profile_from_db(self, p=None, user=None, group=None):
-        profile_tbl = self._db.get_table('profiles')
+    def get_profile_from_db(self, ptype=None, p=None, user=None, group=None):
+        profile_tbl = self._db.get_table(ptype)
         query = self.query_builder(user, group, {"name": p})
         if query and p:
             ret = self._db.get(profile_tbl, query=query)
@@ -25,12 +26,12 @@ class ProfileManager(QueryUser):
             ret = self._db.all(profile_tbl)
         return ret
 
-    def get_profile(self, p, user=None, group=None, inline=False):
-        return self.get_profile_from_db(p, user, group)
+    def get_profile(self, ptype, p, user=None, group=None, inline=False):
+        return self.get_profile_from_db(ptype, p, user, group)
 
-    def get_profiles(self, user=None, group=None, inline=False):
+    def get_profiles(self, ptype, user=None, group=None, inline=False):
         ret = dict()
-        profiles = self.get_profile_from_db(user=user, group=group)
+        profiles = self.get_profile_from_db(ptype, user=user, group=group)
         nprofs = len(profiles) if profiles else 0
         log.info(f"total profiles: {nprofs}")
         return profiles
@@ -40,9 +41,15 @@ class ProfileManager(QueryUser):
         for img in settings.SUPPORTED_IMAGES:
             ni = {"name": img}
             self._db.upsert(image_tbl, ni, 'name', img)
-        profile_tbl = self._db.get_table('profiles')
+        host_tbl = self._db.get_table(Constants.HOST)
+        vol_tbl = self._db.get_table(Constants.VOL)
+        net_tbl = self._db.get_table(Constants.NET)
+        qos_tbl = self._db.get_table(Constants.QOS)
         if reset:
-            profile_tbl.truncate()
+            host_tbl.truncate()
+            vol_tbl.truncate()
+            net_tbl.truncate()
+            qos_tbl.truncate()
         if not path:
             path = self._profile_path
         if not path:
@@ -55,14 +62,28 @@ class ProfileManager(QueryUser):
                         data = yaml.safe_load(yfile)
                         for k, v in data.items():
                             if isinstance(v, dict):
+                                if (k == "networks"):
+                                    for key, value in v.items():
+                                        try:
+                                            cfg._networks[key] = value
+                                            self._db.upsert(net_tbl, {"name": key, "settings": value}, 'name', key)
+                                        except Exception as e:
+                                            log.error("Error reading networks: {}".format(e))
+
                                 if (k == "volumes"):
-                                    cfg._volumes.update(v)
+                                    for key, value in v.items():
+                                        try:
+                                            cfg._volumes[key] = value
+                                            self._db.upsert(vol_tbl, {"name": key, "settings": value}, 'name', key)
+                                        except Exception as e:
+                                            log.error("Error reading volumes: {}".format(e))
 
                                 if (k == "qos"):
                                     for key, value in v.items():
                                         try:
                                             QoS_Controller(**value)
                                             cfg._qos[key] = value
+                                            self._db.upsert(qos_tbl, {"name": key, "settings": value}, 'name', key)
                                         except Exception as e:
                                             log.error("Error reading qos: {}".format(e))
 
@@ -73,7 +94,7 @@ class ProfileManager(QueryUser):
                                             temp.update(value)
                                             Profile(**temp)
                                             cfg._profiles[key] = temp
-                                            self._db.upsert(profile_tbl, {"name": key, "settings": temp}, 'name', key)
+                                            self._db.upsert(host_tbl, {"name": key, "settings": temp}, 'name', key)
                                         except Exception as e:
                                             log.error("Error reading profiles: {}".format(e))
 
@@ -92,5 +113,5 @@ class ProfileManager(QueryUser):
         log.info("volumes: {}".format(cfg._volumes.keys()))
         log.info("features: {}".format(cfg._features.keys()))
         log.info("profiles: {}".format(cfg._profiles.keys()))
-
+        log.info("networks: {}".format(cfg._networks.keys()))
 

@@ -14,6 +14,7 @@ from tinydb import TinyDB, Query, where
 from janus import settings
 from janus.settings import cfg
 from janus.lib import AgentMonitor
+from .utils import Constants
 
 from .portainer_docker import PortainerDockerApi
 from .endpoints_api import EndpointsApi
@@ -237,7 +238,7 @@ def init_db(client, refresh=False):
     # setup some profile accounting
     # these are the data plane networks we care about
     data_nets = list()
-    profs = cfg.pm.get_profiles()
+    profs = cfg.pm.get_profiles(Constants.HOST)
     for p in profs:
         for nname in ["data_net", "mgmt_net"]:
             net = p["settings"][nname]

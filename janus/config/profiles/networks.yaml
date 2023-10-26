@@ -1,0 +1,16 @@
+networks:
+  bridge:
+  host:
+  none:
+  cms-xcache-anet:
+   driver: macvlan
+   ipam:
+    config:
+     -
+      subnet: 198.124.238.234/30
+      gateway: 198.124.238.233
+     -
+      subnet: 2001:400:2001:1191::/126
+      gateway: 2001:400:2001:1191::1
+   options:
+    - parent: enp0s3
