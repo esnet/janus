@@ -567,7 +567,7 @@ class Start(Resource, QueryUser):
                 #   TOWER_HOST, TOWER_USERNAME, TOWER_PASSWORD, TOWER_SSL_VERIFY
                 # - It may take some time for the ansible job to finish or timeout (300 seconds)
                 #
-                prof = cfg.pm.get_profile(s['profile'])
+                prof = cfg.pm.get_profile(Constants.HOST, s['profile'])
                 for psname in prof['settings']['post_starts']:
                     ps = cfg.get_poststart(psname)
                     if ps['type'] == 'ansible':
