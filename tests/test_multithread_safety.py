@@ -46,7 +46,7 @@ def test_get_sessions(Controller):
 def test_create_profile(Controller):
     pytest.shared = uuid.uuid4()
     body = {"settings": {}}
-    res = requests.post(f'https://localhost:5000/api/janus/controller/profiles/{pytest.shared}', json=body, headers=headers,
+    res = requests.post(f'https://localhost:5000/api/janus/controller/profiles/host/{pytest.shared}', json=body, headers=headers,
                         auth=auth, verify=False)
     assert res.status_code == 200
 
@@ -71,6 +71,5 @@ def test_create_profile(Controller):
 #    assert res.status_code == 204
 
 def test_delete_profile(Controller):
-    res = requests.delete(f'https://localhost:5000/api/janus/controller/profiles/{pytest.shared}', auth=auth, verify=False)
+    res = requests.delete(f'https://localhost:5000/api/janus/controller/profiles/host/{pytest.shared}', auth=auth, verify=False)
     assert res.status_code == 204
-
