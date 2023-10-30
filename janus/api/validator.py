@@ -1,6 +1,5 @@
-from pydantic import BaseModel, validator, root_validator
+from pydantic import BaseModel, root_validator, create_model
 from typing import List, Optional, Union
-from enum import Enum
 
 
 class QoS_Controller(BaseModel):
@@ -41,7 +40,7 @@ class QoS_Agent(BaseModel):
         return values
 
 
-class Profile(BaseModel):
+class ContainerProfile(BaseModel):
     privileged: bool = False
     systemd: bool = False
     pull_image: bool = False
@@ -60,5 +59,21 @@ class Profile(BaseModel):
     environment: Optional[List[str]] = None
     tools: Optional[dict] = dict()
 
+
 class NetworkProfile(BaseModel):
-    pass
+    driver: str
+    ipam: Optional[create_model('config', config=list)] = None
+    options: Optional[dict] = None
+
+
+class VolumeProfile(BaseModel):
+    type: str
+    driver: Optional[str] = None
+    source: Optional[str] = None
+    target: Optional[str] = None
+
+    @root_validator(pre=True)
+    def validate_type(cls, values):
+        if (values.get('type') == "bind") and (not values.get('source') or not values.get('target')):
+            raise ValueError("Source and Target are required for bind mounts")
+        return values

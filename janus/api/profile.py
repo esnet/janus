@@ -5,7 +5,7 @@ from .utils import Constants
 from janus import settings
 from janus.settings import cfg
 from janus.api.db import QueryUser
-from janus.api.validator import QoS_Controller, Profile
+from janus.api.validator import QoS_Controller, ContainerProfile, NetworkProfile, VolumeProfile
 
 
 log = logging.getLogger(__name__)
@@ -65,6 +65,7 @@ class ProfileManager(QueryUser):
                                 if (k == "networks"):
                                     for key, value in v.items():
                                         try:
+                                            NetworkProfile(**value)
                                             cfg._networks[key] = value
                                             self._db.upsert(net_tbl, {"name": key, "settings": value}, 'name', key)
                                         except Exception as e:
@@ -73,6 +74,7 @@ class ProfileManager(QueryUser):
                                 if (k == "volumes"):
                                     for key, value in v.items():
                                         try:
+                                            VolumeProfile(**value)
                                             cfg._volumes[key] = value
                                             self._db.upsert(vol_tbl, {"name": key, "settings": value}, 'name', key)
                                         except Exception as e:
@@ -92,7 +94,7 @@ class ProfileManager(QueryUser):
                                         try:
                                             temp = cfg._base_profile.copy()
                                             temp.update(value)
-                                            Profile(**temp)
+                                            ContainerProfile(**temp)
                                             cfg._profiles[key] = temp
                                             self._db.upsert(host_tbl, {"name": key, "settings": temp}, 'name', key)
                                         except Exception as e:

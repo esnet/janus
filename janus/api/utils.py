@@ -239,7 +239,6 @@ def error_svc(s, e):
         reason = str(e)
     s['errors'].append({'reason': reason,
                         'response': restxt})
-    s['container_id'] = None
     return True
 
 def handle_image(n, img, dapi, pull=False):

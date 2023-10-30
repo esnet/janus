@@ -22,7 +22,7 @@ from janus.lib import AgentMonitor
 from janus.settings import cfg
 from janus.api.utils import create_service, commit_db, precommit_db, error_svc, handle_image, set_qos, Constants
 from janus.api.db import init_db, QueryUser
-from janus.api.validator import Profile as ProfileSchema
+from janus.api.validator import ContainerProfile as ProfileSchema
 from janus.api.ansible_job import AnsibleJob
 
 # XXX: Portainer will eventually go behind an ABC interface
@@ -42,6 +42,7 @@ class State(Enum):
     STARTED = 2
     STOPPED = 3
     MIXED = 4
+    STALE = 5
 
 class EPType(Enum):
     UNKNOWN = 0,
@@ -494,7 +495,6 @@ class Create(Resource, QueryUser):
                 record['allocations'][n['name']].append(ret['Id'])
                 if "node" in s:
                     del s['node']
-
         # complete accounting
         record['id'] = Id
         record['services'] = svcs
@@ -512,6 +512,32 @@ class Create(Resource, QueryUser):
 @ns.response(503, 'Service unavailable')
 @ns.route('/start/<int:id>')
 class Start(Resource, QueryUser):
+
+    def _do_poststart(self, s):
+        #
+        # Ansible job is requested if configured
+        # - Enviroment variabls must be set to access Ansible Tower server:
+        #   TOWER_HOST, TOWER_USERNAME, TOWER_PASSWORD, TOWER_SSL_VERIFY
+        # - It may take some time for the ansible job to finish or timeout (300 seconds)
+        #
+        prof = cfg.pm.get_profile(Constants.HOST, s['profile'])
+        for psname in prof['settings']['post_starts']:
+            ps = cfg.get_poststart(psname)
+            if ps['type'] == 'ansible':
+                jt_name = ps['jobtemplate']
+                gateway = ps['gateway']
+                ipprot = ps['ipprot']
+                inf = ps['interface']
+                limit = ps['limit']
+                default_name= ps['container_name']
+                container_name= s.get('container_name', default_name)
+                ex_vars = f'{{"ipprot": "{ipprot}", "interface": "{inf}", "gateway": "{gateway}", "container": "{container_name}"}}'
+                job = AnsibleJob()
+                try:
+                    result = job.launch(job_template=jt_name, monitor=True, wait=True, timeout=600, extra_vars=ex_vars, limits=limit)
+                except Exception as e:
+                    error_svc(s, e)
+                    continue
 
     @httpauth.login_required
     @auth
@@ -539,13 +565,20 @@ class Start(Resource, QueryUser):
         for k,v in services.items():
             for s in v:
                 if not s['container_id']:
-                    log.debug("Skipping service with no container_id: {}".format(k))
+                    log.warn("Skipping service with no container_id: {}".format(k))
+                    error = True
                     continue
                 c = s['container_id']
                 node = dbase.get(ntable, name=k)
+                if not node:
+                    log.error("Container node {} not found for container_id: {}".format(k, c))
+                    return {"error": "Node not found: {}".format(k)}, 404
                 log.debug("Starting container {} on {}".format(c, k))
 
                 if not (cfg.dryrun):
+                    # Error acconting
+                    orig_errcnt = len(s.get('errors'))
+
                     try:
                         dapi.start_container(node['id'], c)
                         if s['qos']: # is not None and s['qos'].isinstance(dict)
@@ -561,30 +594,15 @@ class Start(Resource, QueryUser):
                         error = True
                         continue
 
-                #
-                # Ansible job is requested if configured
-                # - Enviroment variabls must be set to access Ansible Tower server:
-                #   TOWER_HOST, TOWER_USERNAME, TOWER_PASSWORD, TOWER_SSL_VERIFY
-                # - It may take some time for the ansible job to finish or timeout (300 seconds)
-                #
-                prof = cfg.pm.get_profile(Constants.HOST, s['profile'])
-                for psname in prof['settings']['post_starts']:
-                    ps = cfg.get_poststart(psname)
-                    if ps['type'] == 'ansible':
-                        jt_name = ps['jobtemplate']
-                        gateway = ps['gateway']
-                        ipprot = ps['ipprot']
-                        inf = ps['interface']
-                        limit = ps['limit']
-                        default_name= ps['container_name']
-                        container_name= s.get('container_name', default_name)
-                        ex_vars = f'{{"ipprot": "{ipprot}", "interface": "{inf}", "gateway": "{gateway}", "container": "{container_name}"}}'
-                        job = AnsibleJob()
-                        try:
-                            result = job.launch(job_template=jt_name, monitor=True, wait=True, timeout=600, extra_vars=ex_vars, limits=limit)
-                        except Exception as e:
-                            error_svc(s, e)
-                            continue
+                    # Handle post_start tasks
+                    self._do_poststart(s)
+
+                    # Trim logged errors
+                    errcnt = len(s.get('errors'))
+                    if not errcnt-orig_errcnt:
+                        s['errors'] = list()
+                    else:
+                        s['errors'] = s['errors'][orig_errcnt-errcnt:]
                 # End of Ansible job
         svc['state'] = State.MIXED.name if error else State.STARTED.name
         return commit_db(svc, id, realized=True)
@@ -620,10 +638,13 @@ class Stop(Resource, QueryUser):
         for k,v in svc['services'].items():
             for s in v:
                 if not s['container_id']:
-                    log.debug("Skipping service with no container_id: {}".format(k))
+                    log.warn("Skipping service with no container_id: {}".format(k))
                     continue
                 c = s['container_id']
                 node = dbase.get(ntable, name=k)
+                if not node:
+                    log.error("Container node {} not found for container_id: {}".format(k, c))
+                    return {"error": "Node not found: {}".format(k)}, 404
                 log.debug("Stopping container {} on {}".format(c, k))
                 if not (cfg.dryrun):
                     try:

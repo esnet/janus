@@ -1,7 +1,10 @@
 networks:
   bridge:
+    driver: bridge
   host:
+    driver: host
   none:
+    driver: "null"
   cms-xcache-anet:
    driver: macvlan
    ipam:
@@ -13,4 +16,5 @@ networks:
       subnet: 2001:400:2001:1191::/126
       gateway: 2001:400:2001:1191::1
    options:
-    - parent: enp0s3
+     parent: enp0s3
+     mtu: 9000
