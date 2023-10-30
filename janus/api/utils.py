@@ -269,7 +269,7 @@ def set_qos(url, qos):
             log.error(e)
             # return node, None
 
-def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs):
+def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, arguments, remove_container, **kwargs):
     srec = dict()
     nname = node.get('name')
     pname = prof.get('name')
@@ -282,8 +282,11 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs
     sysd = prof.get('systemd')
     pull = prof.get('pull_image')
     args = prof.get('arguments')
+    args_override = arguments
     cmd = None
-    if args:
+    if args_override:
+        cmd = shlex.split(args_override)
+    elif args:
         cmd = shlex.split(args)
 
     vfid = None
@@ -466,6 +469,11 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, **kwargs
                            'PathInContainer': d['devprefix'],
                            'CGroupPermissions': "rwm"}
                     docker_kwargs['HostConfig']['Devices'].append(dev)
+
+    if remove_container:
+        auto_remove = True
+        docker_kwargs["HostConfig"].update({"Autoremove": auto_remove})
+
 
     srec['mgmt_net'] = node['networks'].get(mnet.name, None)
     srec['mgmt_ipv4'] = mgmt_ipv4
