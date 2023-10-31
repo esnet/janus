@@ -120,7 +120,7 @@ class DBLayer():
         return ret
 
 
-def init_db(client, refresh=False):
+def init_db(client, nname=None, refresh=False):
     def parse_portainer_endpoints(res):
         ret = dict()
         for e in res:
@@ -221,6 +221,8 @@ def init_db(client, refresh=False):
         futures = list()
         tp = ThreadPoolExecutor(max_workers=8)
         for k, v in nodes.items():
+            if nname and k != nname:
+                continue
             futures.append(tp.submit(_get_endpoint_info, v['id'], v['public_url'], k, nodes))
         for future in futures:
             try:

@@ -20,10 +20,18 @@ from urllib.parse import urlsplit
 from janus import settings
 from janus.lib import AgentMonitor
 from janus.settings import cfg
-from janus.api.utils import create_service, commit_db, precommit_db, error_svc, handle_image, set_qos, Constants
 from janus.api.db import init_db, QueryUser
 from janus.api.validator import ContainerProfile as ProfileSchema
 from janus.api.ansible_job import AnsibleJob
+from janus.api.models import Network
+from janus.api.utils import (
+    create_service,
+    commit_db,
+    precommit_db,
+    error_svc,
+    handle_image,
+    set_qos,
+    Constants)
 
 # XXX: Portainer will eventually go behind an ABC interface
 # so we can support other provisioning backends
@@ -339,6 +347,46 @@ class NodeCollection(Resource, QueryUser):
 @ns.route('/create')
 class Create(Resource, QueryUser):
 
+    def _resolve_network(self, node, net_name, dapi):
+        if not net_name:
+            return
+        nname = node.get('name')
+        nprof = cfg.pm.get_profile(Constants.NET, net_name)
+        if not nprof:
+            raise Exception(f"Network profile {net_name} not found")
+        ninfo = node['networks'].get(net_name)
+        print (ninfo)
+        if not ninfo:
+            log.info(f"Network {net_name} not found on {nname}, attempting to create")
+            p = nprof.get('settings')
+            docker_kwargs = {
+                "Name": net_name,
+                "Driver": p.get('driver')
+            }
+            ipam = p.get('ipam')
+            if ipam:
+                docker_kwargs["IPAM"] = dict()
+                docker_kwargs["IPAM"]["Config"] = list()
+                for i in ipam.get('config'):
+                    docker_kwargs["IPAM"]["Config"].append({"Subnet": i.get('subnet'),
+                                                            "Gateway": i.get('gateway')})
+            opts = p.get('options')
+            if opts:
+                docker_kwargs["options"] = dict()
+                if "mtu" in opts and p.get('driver') == "bridge":
+                    docker_kwargs["options"].update({"com.docker.network.driver.mtu": opts.get('mtu')})
+                if "parent" in opts and p.get('driver') in ["macvlan", "ipvlan"]:
+                    docker_kwargs["options"].update({"parent": opts.get('mtu')})
+                if "macvlan_mode" in opts and p.get('driver') == "macvlan":
+                    docker_kwargs["options"].update({"macvlan_mode": opts.get('macvlan_mode')})
+                if "ipvlan_mode" in opts and p.get('driver') == "ipvlan":
+                    docker_kwargs["options"].update({"ipvlan_mode": opts.get('ipvlan_mode')})
+
+            dapi.create_network(node.get('id'), net_name, **docker_kwargs)
+            init_db(pclient, nname, refresh=True)
+        return ninfo
+
+
     @httpauth.login_required
     @auth
     def post(self):
@@ -358,6 +406,7 @@ class Create(Resource, QueryUser):
         ptable = dbase.get_table('profiles')
         itable = dbase.get_table('images')
 
+        dapi = PortainerDockerApi(pclient)
         # Do auth and resource availability checks first
         create = list()
         for r in req:
@@ -387,12 +436,20 @@ class Create(Resource, QueryUser):
                 if not img:
                     return {"error": f"Image {image} not found"}, 404
                 img = image
-            # Nodes
+            # Nodes and Networks
             for ep in instances:
                 query = self.query_builder(user, group, {"name": ep})
                 node = dbase.get(ntable, query=query)
                 if not node:
                     return {"error": f"Node {ep} not found"}, 404
+                try:
+                    p = prof.get('settings')
+                    self._resolve_network(node, Network(p.get('mgmt_net')).name, dapi)
+                    self._resolve_network(node, Network(p.get('data_net')).name, dapi)
+                except Exception as e:
+                    return {"error": f"Node {ep} has invalid network: {e}"}, 400
+                # refresh node from DB since node state may have been updated above
+                node = dbase.get(ntable, query=query)
                 create.append(
                     {"node": node,
                      "profile": prof,
@@ -429,7 +486,6 @@ class Create(Resource, QueryUser):
                   'state': State.INITIALIZED.name,
                   'allocations': dict()}
 
-        dapi = PortainerDockerApi(pclient)
         # get an ID from the DB
         Id = precommit_db()
         errs = False

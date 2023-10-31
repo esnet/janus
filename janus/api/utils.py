@@ -403,7 +403,6 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, argument
             dinfo = node['networks'][dnet.name]
         except:
             raise Exception("Network not found: {}".format(dnet.name))
-
         # Pin CPUs based on data net
         cpus = get_cpuset(node, dnet.name, prof)
         if cpus:

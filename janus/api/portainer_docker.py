@@ -110,10 +110,14 @@ class PortainerDockerApi(object):
         return json.loads(string)
 
     # Networks
-    def get_networks(self, pid, **kwargs):
+    def get_networks(self, pid, nid=None, **kwargs):
         kwargs['_return_http_data_only'] = True
-        res = self._call("/endpoints/{}/docker/networks".format(pid),
-                         "GET", None, **kwargs)
+        if nid:
+            res = self._call("/endpoints/{}/docker/networks/{}".format(pid, nid),
+                             "GET", None, **kwargs)
+        else:
+            res = self._call("/endpoints/{}/docker/networks".format(pid),
+                             "GET", None, **kwargs)
         string = res.read().decode('utf-8')
         return json.loads(string)
 
@@ -141,7 +145,7 @@ class PortainerDockerApi(object):
                 body[k] = v
         kwargs = dict()
         kwargs['_return_http_data_only'] = True
-        res = self._call("/endpoints/{}/docker/networks/{}/create".format(pid, name),
+        res = self._call("/endpoints/{}/docker/networks/create".format(pid),
                          "POST", body, **kwargs)
         string = res.read().decode('utf-8')
         if (res.status == 200):
