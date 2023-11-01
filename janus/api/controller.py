@@ -31,6 +31,7 @@ from janus.api.utils import (
     error_svc,
     handle_image,
     set_qos,
+    is_subset,
     Constants)
 
 # XXX: Portainer will eventually go behind an ABC interface
@@ -348,20 +349,12 @@ class NodeCollection(Resource, QueryUser):
 class Create(Resource, QueryUser):
 
     def _resolve_network(self, node, net_name, dapi):
-        if not net_name:
-            return
-        nname = node.get('name')
-        nprof = cfg.pm.get_profile(Constants.NET, net_name)
-        if not nprof:
-            raise Exception(f"Network profile {net_name} not found")
-        ninfo = node['networks'].get(net_name)
-        print (ninfo)
-        if not ninfo:
-            log.info(f"Network {net_name} not found on {nname}, attempting to create")
+        def _build_kwargs(nprof):
             p = nprof.get('settings')
             docker_kwargs = {
                 "Name": net_name,
-                "Driver": p.get('driver')
+                "Driver": p.get('driver'),
+                "EnableIPv6": p.get('enable_ipv6', True)
             }
             ipam = p.get('ipam')
             if ipam:
@@ -372,20 +365,39 @@ class Create(Resource, QueryUser):
                                                             "Gateway": i.get('gateway')})
             opts = p.get('options')
             if opts:
-                docker_kwargs["options"] = dict()
+                docker_kwargs["Options"] = dict()
                 if "mtu" in opts and p.get('driver') == "bridge":
-                    docker_kwargs["options"].update({"com.docker.network.driver.mtu": opts.get('mtu')})
+                    docker_kwargs["Options"].update({"com.docker.network.driver.mtu": opts.get('mtu')})
                 if "parent" in opts and p.get('driver') in ["macvlan", "ipvlan"]:
-                    docker_kwargs["options"].update({"parent": opts.get('mtu')})
+                    docker_kwargs["Options"].update({"parent": opts.get('parent')})
                 if "macvlan_mode" in opts and p.get('driver') == "macvlan":
-                    docker_kwargs["options"].update({"macvlan_mode": opts.get('macvlan_mode')})
+                    docker_kwargs["Options"].update({"macvlan_mode": opts.get('macvlan_mode')})
                 if "ipvlan_mode" in opts and p.get('driver') == "ipvlan":
-                    docker_kwargs["options"].update({"ipvlan_mode": opts.get('ipvlan_mode')})
+                    docker_kwargs["Options"].update({"ipvlan_mode": opts.get('ipvlan_mode')})
+            return docker_kwargs
 
-            dapi.create_network(node.get('id'), net_name, **docker_kwargs)
-            init_db(pclient, nname, refresh=True)
-        return ninfo
-
+        if not net_name:
+            return
+        nname = node.get('name')
+        nprof = cfg.pm.get_profile(Constants.NET, net_name)
+        if not nprof:
+            raise Exception(f"Network profile {net_name} not found")
+        kwargs = _build_kwargs(nprof)
+        ninfo = node['networks'].get(net_name)
+        # We are done if the node already has a network and it matches our profile
+        if ninfo and is_subset(kwargs, ninfo.get('_data')):
+            return
+        # Otherwise we need to either create or recreate the network
+        if not ninfo:
+            log.info(f"Network {net_name} not found on {nname}, attempting to create")
+        elif ninfo and not is_subset(kwargs, ninfo.get('_data')):
+            log.info(f"Network {net_name} found on {nname} but differs from profile, attempting to recreate")
+            try:
+                dapi.remove_network(node.get('id'), net_name)
+            except Exception as e:
+                log.warn(f"Removing network {net_name} on {nname} failed: {e}")
+        dapi.create_network(node.get('id'), net_name, **kwargs)
+        init_db(pclient, nname, refresh=True)
 
     @httpauth.login_required
     @auth
@@ -448,7 +460,7 @@ class Create(Resource, QueryUser):
                     self._resolve_network(node, Network(p.get('data_net')).name, dapi)
                 except Exception as e:
                     return {"error": f"Node {ep} has invalid network: {e}"}, 400
-                # refresh node from DB since node state may have been updated above
+                # refresh node from DB since node state llmay have been updated above
                 node = dbase.get(ntable, query=query)
                 create.append(
                     {"node": node,

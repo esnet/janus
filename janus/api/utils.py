@@ -19,6 +19,13 @@ class Constants:
     QOS = "qos"
     VOL = "volume"
 
+def is_subset(subset, superset):
+    if isinstance(subset, dict):
+        return all(key in superset and is_subset(val, superset[key]) for key, val in subset.items())
+    if isinstance(subset, list) or isinstance(subset, set):
+        return all(any(is_subset(subitem, superitem) for superitem in superset) for subitem in subset)
+    return subset == superset
+
 def precommit_db(Id=None, delete=False):
     dbase = cfg.db
     table = dbase.get_table('active')
@@ -149,21 +156,41 @@ def get_next_ipv4(net, curr=set()):
     alloced = list()
     for n in named_nets:
         alloced.extend(n['allocated_v4'])
+    ipnet = None
+    for sub in network['subnet']:
+        try:
+            ipnet = IPv4Network(sub['Subnet'])
+            gw = IPv4Address(sub.get('Gateway'))
+            if gw:
+                alloced.append(str(gw))
+            break
+        except:
+            pass
+
+    if net.ipv4 and not ipnet:
+        raise Exception(f"No IPv4 subnet found for network {net.name}")
+    # IPv4 is not configured
+    if not net.ipv4 and not ipnet:
+        return None
+
     set_alloced = set([IPv4Address(i) for i in alloced])
+    unavail = set.union(set_alloced, curr)
     if net.ipv4:
         if isinstance(net.ipv4, str):
-            avail = set([IPv4Address(net.ipv4)])
+            avail = [IPv4Address(net.ipv4)]
         elif isinstance(net.ipv4, list):
-            avail = set([IPv4Address(addr) for addr in net.ipv4])
+            avail = [IPv4Address(addr) for addr in net.ipv4]
     else:
-        ipnet = IPv4Network(network['subnet'][0]['Subnet'])
-        avail = set(ipnet.hosts())
-    # prune final avail set
-    avail = avail - set_alloced - curr
-    try:
-        ipv4 = next(iter(avail))
-    except:
-        raise Exception("No more ipv4 addresses available for network {}".format(net.name))
+        avail = ipnet.hosts()
+    aiter = iter(avail)
+    ipv4 = None
+    while not ipv4:
+        try:
+            test = next(aiter)
+            if test not in unavail:
+                ipv4 = test
+        except:
+            raise Exception("No more ipv4 addresses available for network {}".format(net.name))
     curr.add(ipv4)
     return str(ipv4)
 
@@ -179,11 +206,13 @@ def get_next_ipv6(net, curr=set()):
     alloced = list()
     for n in named_nets:
         alloced.extend(n['allocated_v6'])
-    set_alloced = set([IPv6Address(i) for i in alloced])
     ipnet = None
     for sub in network['subnet']:
         try:
             ipnet = IPv6Network(sub['Subnet'])
+            gw = IPv6Address(sub.get('Gateway'))
+            if gw:
+                alloced.append(str(gw))
             break
         except:
             pass
@@ -194,16 +223,17 @@ def get_next_ipv6(net, curr=set()):
     if not net.ipv6 and not ipnet:
         return None
 
-    ipv6 = None
+    set_alloced = set([IPv6Address(i) for i in alloced])
     unavail = set.union(set_alloced, curr)
     if net.ipv6:
         if isinstance(net.ipv6, str):
-            avail = set([IPv6Address(net.ipv6)])
+            avail = [IPv6Address(net.ipv6)]
         elif isinstance(net.ipv6, list):
-            avail = set([IPv6Address(addr) for addr in net.ipv6])
+            avail = [IPv6Address(addr) for addr in net.ipv6]
     else:
-        avail = set(ipnet.hosts())
+        avail = ipnet.hosts()
     aiter = iter(avail)
+    ipv6 = None
     while not ipv6:
         try:
             test = next(aiter)
@@ -411,7 +441,6 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, argument
         # Set data net layer 3
         data_ipv4 = get_next_ipv4(dnet, addrs_v4)
         data_ipv6 = get_next_ipv6(dnet, addrs_v6)
-        print (data_ipv4, data_ipv6)
         docker_kwargs["HostConfig"].update({"NetworkMode": dnet.name})
         docker_kwargs.update({"NetworkingConfig": {
             "EndpointsConfig": {

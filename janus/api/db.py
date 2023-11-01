@@ -130,7 +130,7 @@ def init_db(client, nname=None, refresh=False):
                 'id': e['Id'],
                 'gid': e['GroupId'],
                 'url': e['URL'],
-                'public_url': e['PublicURL'],
+                'public_url': e['PublicURL']
             }
         return ret
 
@@ -141,7 +141,8 @@ def init_db(client, nname=None, refresh=False):
             ret[key] = {
                 'id': e['Id'],
                 'driver': e['Driver'],
-                'subnet': e['IPAM']['Config']
+                'subnet': e['IPAM']['Config'],
+                '_data': e
             }
             if e["Options"]:
                 ret[key].update(e['Options'])

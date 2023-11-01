@@ -62,6 +62,7 @@ class ContainerProfile(BaseModel):
 
 class NetworkProfile(BaseModel):
     driver: str
+    enable_ipv6: bool = False
     ipam: Optional[create_model('config', config=list)] = None
     options: Optional[dict] = None
 
