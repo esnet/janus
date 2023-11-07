@@ -21,7 +21,10 @@ from janus import settings
 from janus.lib import AgentMonitor
 from janus.settings import cfg
 from janus.api.db import init_db, QueryUser
-from janus.api.validator import ContainerProfile as ProfileSchema
+from janus.api.validator import (
+    ContainerProfile as ProfileSchema,
+    NetworkProfile as NetworkSchema,
+    VolumeProfile as VolumeSchema)
 from janus.api.ansible_job import AnsibleJob
 from janus.api.models import Network
 from janus.api.utils import (
@@ -357,6 +360,7 @@ class Create(Resource, QueryUser):
                 "EnableIPv6": p.get('enable_ipv6', True)
             }
             ipam = p.get('ipam')
+            print(f"=======ipam in Create in controller.py========== {ipam}")
             if ipam:
                 docker_kwargs["IPAM"] = dict()
                 docker_kwargs["IPAM"]["Config"] = list()
@@ -374,6 +378,7 @@ class Create(Resource, QueryUser):
                     docker_kwargs["Options"].update({"macvlan_mode": opts.get('macvlan_mode')})
                 if "ipvlan_mode" in opts and p.get('driver') == "ipvlan":
                     docker_kwargs["Options"].update({"ipvlan_mode": opts.get('ipvlan_mode')})
+            print(f"====docker_kwargs in Create in controller.py ============= {docker_kwargs}")
             return docker_kwargs
 
         if not net_name:
@@ -421,6 +426,7 @@ class Create(Resource, QueryUser):
         dapi = PortainerDockerApi(pclient)
         # Do auth and resource availability checks first
         create = list()
+        print(f"==========req in post in create_service in controller.py=========== {req}")
         for r in req:
             instances = r.get("instances", None)
             profile = r.get("profile", None)
@@ -456,6 +462,7 @@ class Create(Resource, QueryUser):
                     return {"error": f"Node {ep} not found"}, 404
                 try:
                     p = prof.get('settings')
+                    print(f"==========p in post in create_service in controller.py=========== {p}")
                     self._resolve_network(node, Network(p.get('mgmt_net')).name, dapi)
                     self._resolve_network(node, Network(p.get('data_net')).name, dapi)
                 except Exception as e:
@@ -857,7 +864,9 @@ class Profile(Resource):
         try:
             if not resource or resource not in self.resources:
                 return {"error": f"Invalid resource path: {resource}"}, 404
+
             req = request.get_json()
+            print(f"=======req in POST in Profile in CONTROLLER.PY ==================== {req}")
             if (req is None) or (req and type(req) is not dict):
                 res = jsonify(error="Body is not json dictionary")
                 res.status_code = 400
@@ -868,14 +877,28 @@ class Profile(Resource):
                 res.status_code = 400
                 return res
 
-            configs = req["settings"]
-            res = cfg.pm.get_profile(resource, rname, inline=True)
-            if res:
-                return {"error": "Profile {} already exists!".format(rname)}, 400
+            if resource == Constants.HOST:
+                configs = req["settings"]
+                res = cfg.pm.get_profile(resource, rname, inline=True)
+                if res:
+                    return {"error": "Profile {} already exists!".format(rname)}, 400
+                default = cfg._base_profile.copy()
+                default.update((k, configs[k]) for k in default.keys() & configs.keys())
+                ProfileSchema(**default)
 
-            default = cfg._base_profile.copy()
-            default.update((k, configs[k]) for k in default.keys() & configs.keys())
-            ProfileSchema(**default)
+            elif resource == Constants.VOL:
+                default = req["settings"]
+                res = cfg.pm.get_profile(resource, rname, inline=True)
+                if res:
+                    return {"error": "Mount {} already exists!".format(rname)}, 400
+                VolumeSchema(**default)
+
+            elif resource == Constants.NET:
+                default = req["settings"]
+                res = cfg.pm.get_profile(resource, rname, inline=True)
+                if res:
+                    return {"error": "Network {} already exists!".format(rname)}, 400
+                #NetworkSchema(**default)
 
         except ValidationError as e:
             return str(e), 400
@@ -884,10 +907,9 @@ class Profile(Resource):
             return str(e), 500
 
         try:
-            #log.info("Creating profile {}".format(profile_tbl.insert({'name': rname, "settings": default})))
-            profile_tbl = cfg.db.get_table(resource)
+            tbl = cfg.db.get_table(resource)
             record = {'name': rname, "settings": default}
-            log.info("Creating profile {}".format(cfg.db.insert(profile_tbl, record)))
+            log.info("Creating {}".format(cfg.db.insert(tbl, record)))
         except Exception as e:
             return str(e), 500
 

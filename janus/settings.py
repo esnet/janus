@@ -79,6 +79,12 @@ class JanusConfig():
             }
         }
 
+        # self._volumes = {
+        #     "type": "volume",
+        #     "source": None,
+        #     "target": None,
+        #     "driver": None
+        # }
         self._volumes = dict()
         self._networks = dict()
         self._qos = dict()

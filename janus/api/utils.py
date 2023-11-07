@@ -416,17 +416,19 @@ def create_service(node, img, prof, addrs_v4, addrs_v6, cports, sports, argument
         docker_kwargs['Env'].append(e)
 
     for v in prof['volumes']:
-        vol = cfg.get_volume(v)
-        if vol:
-            readonly = True if "ReadOnly" in vol and vol['ReadOnly'] else False
-            mnt = {'Type': vol['type'],
-                   'Source': vol.get('source', None),
-                   'Target': vol.get('target', None),
+        vol = cfg.pm.get_profile(Constants.VOL, v)
+        #print(vol)
+        s = vol["settings"]
+        if s:
+            readonly = True if "ReadOnly" in s and s['ReadOnly'] else False
+            mnt = {'Type': s['type'],
+                   'Source': s.get('source', None),
+                   'Target': s.get('target', None),
                    'ReadOnly': readonly
                    }
             docker_kwargs['HostConfig']['Mounts'].append(mnt)
-            if "driver" in vol:
-                docker_kwargs['HostConfig']['VolumeDriver'] = vol['driver']
+            if "driver" in s:
+                docker_kwargs['HostConfig']['VolumeDriver'] = s['driver']
 
     if dnet.name and not mnet.is_host():
         try:
