@@ -1,17 +1,176 @@
 import six
+import time
 import json
 import logging
+from concurrent.futures.thread import ThreadPoolExecutor
+
 from portainer_api.api_client import ApiClient
 from portainer_api.rest import ApiException
+from portainer_api.configuration import Configuration as Config
+from portainer_api.api import AuthApi
+from portainer_api.models import AuthenticateUserRequest
+from .endpoints_api import EndpointsApi
+
+from janus.api.service import Service
+from janus.api.constants import EPType
 from janus.settings import REGISTRIES as iregs
+from janus.settings import cfg, IGNORE_EPS
 
 log = logging.getLogger(__name__)
 
-class PortainerDockerApi(object):
+
+def auth(func):
+    def wrapper(self, *args, **kwargs):
+        if self.auth_expire and self.client and (time.time() < self.auth_expire):
+            return func(self, *args, **kwargs)
+
+        pcfg = Config()
+        pcfg.host = cfg.PORTAINER_URI
+        pcfg.username = cfg.PORTAINER_USER
+        pcfg.password = cfg.PORTAINER_PASSWORD
+        pcfg.verify_ssl = cfg.PORTAINER_VERIFY_SSL
+
+        if not pcfg.username or not pcfg.password:
+            raise Exception("No Portainer username or password defined")
+
+        self.client = ApiClient(pcfg)
+        aa_api = AuthApi(self.client)
+        res = aa_api.authenticate_user(AuthenticateUserRequest(pcfg.username,
+                                                               pcfg.password))
+
+        pcfg.api_key = {'Authorization': res.jwt}
+        pcfg.api_key_prefix = {'Authorization': 'Bearer'}
+
+        log.debug("Authenticating with token: {}".format(res.jwt))
+        self.client.jwt = res.jwt
+        self.auth_expire = time.time() + 14400
+        return func(self, *args, **kwargs)
+    return wrapper
+
+
+class PortainerDockerApi(Service):
     def __init__(self, api_client=None):
-        if api_client is None:
-            api_client = ApiClient()
-        self.api_client = api_client
+        self.auth_expire = None
+        self.client = api_client
+
+    @property
+    @auth
+    def auth_token(self):
+        return self.client.jwt
+
+    def _parse_portainer_endpoints(self, res):
+        ret = dict()
+
+        for e in res:
+            ret[e['Name']] = {
+                'name': e['Name'],
+                'endpoint_status': e['Status'],
+                'endpoint_type': EPType.PORTAINER,
+                'id': e['Id'],
+                'gid': e['GroupId'],
+                'url': e['URL'],
+                'public_url': e['PublicURL']
+            }
+        return ret
+
+    def _parse_portainer_networks(self, res):
+        ret = dict()
+        for e in res:
+            key = e['Name']
+            ret[key] = {
+                'id': e['Id'],
+                'driver': e['Driver'],
+                'subnet': e['IPAM']['Config'],
+                '_data': e
+            }
+            if e["Options"]:
+                ret[key].update(e['Options'])
+        return ret
+
+    def _parse_portainer_images(self, res):
+        ret = list()
+        for e in res:
+            if not e['RepoDigests'] and not e['RepoTags']:
+                continue
+            if e['RepoTags']:
+                e['name'] = e['RepoTags'][0].split(":")[0]
+                ret.extend(e['RepoTags'])
+            elif e['RepoDigests']:
+                e['name'] = e['RepoDigests'][0].split("@")[0]
+                ret.extend(e['RepoDigests'])
+            if e['name'] == '<none>':
+                continue
+        return ret
+
+    def _get_endpoint_info(self, Id, url, nname, nodes, cb=None):
+        try:
+            nets = self.get_networks(Id)
+            imgs = self.get_images(Id)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            log.error("No response from {}: {}".format(url, e))
+            return nodes[nname]
+        nodes[nname]['networks'] = self._parse_portainer_networks(nets)
+        nodes[nname]['images'] = self._parse_portainer_images(imgs)
+        if cb:
+            cb(nodes[nname], nname, url)
+        return nodes[nname]
+
+    # Endpoints
+    @auth
+    def get_nodes(self, nname=None, cb=None, refresh=False):
+        try:
+            eapi = EndpointsApi(self.client)
+            res = eapi.endpoint_list()
+            # ignore some endpoints based on settings
+            for r in res:
+                if r['Name'] in IGNORE_EPS:
+                    res.remove(r)
+            nodes = self._parse_portainer_endpoints(res)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            log.error("Backend error: {}".format(e))
+            return
+
+        if refresh:
+            try:
+                futures = list()
+                tp = ThreadPoolExecutor(max_workers=8)
+                for k, v in nodes.items():
+                    if nname and k != nname:
+                        continue
+                    futures.append(tp.submit(self._get_endpoint_info, v['id'], v['public_url'], k, nodes, cb))
+                for future in futures:
+                    try:
+                        future.result(timeout=5)
+                    except Exception as e:
+                        log.error(f"Timeout waiting on endpoint query, continuing: {e}")
+                        continue
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                log.error("Backend error: {}".format(e))
+                return
+
+        return list(nodes.values())
+
+    @auth
+    def create_node(self, ep, **kwargs):
+        eapi = EndpointsApi(self.client)
+        eptype = 2 # We use Portainer Agent registration method
+        kwargs = {"url": ep['url'],
+                  "public_url": ep['public_url'],
+                  "tls": "true",
+                  "tls_skip_verify": "true",
+                  "tls_skip_client_verify": "true"}
+        return eapi.endpoint_create(ep.get('name'), eptype, **kwargs)
+
+    @auth
+    def remove_node(self, nid):
+        eapi = EndpointsApi(self.client)
+        return eapi.endpoint_delete(nid)
 
     # Images
     def get_images(self, pid, **kwargs):
@@ -84,6 +243,8 @@ class PortainerDockerApi(object):
         return json.loads(string)
 
     def stop_container(self, pid, cid, **kwargs):
+        nname = kwargs.get('name')
+        kwargs = dict()
         kwargs['_return_http_data_only'] = True
         status = 204
         try:
@@ -98,7 +259,8 @@ class PortainerDockerApi(object):
             else:
                 raise e
         return {'status': '{}'.format(status),
-                'node_id': pid, 'container_id': cid}
+                'node_id': pid, 'container_id': cid,
+                'node_name': nname}
 
     def remove_container(self, pid, cid, **kwargs):
         kwargs['_return_http_data_only'] = True
@@ -161,8 +323,8 @@ class PortainerDockerApi(object):
         string = res.read().decode('utf-8')
         return json.loads(string)
 
-    #Logs
-    def get_log(self, pid, cid, since=0, stderr=1, stdout=1, tail=100, timestamps=0):
+    # Logs
+    def get_logs(self, pid, cid, since=0, stderr=1, stdout=1, tail=100, timestamps=0):
         kwargs = dict()
         kwargs['_return_http_data_only'] = True
         kwargs['query'] = {
@@ -200,6 +362,7 @@ class PortainerDockerApi(object):
         string = res.read().decode('utf-8')
         return {"response": string}
 
+    @auth
     def _call(self, url, method, body, headers=[], **kwargs):
         all_params = ['body', 'query']  # noqa: E501
         all_params.append('async_req')
@@ -234,11 +397,11 @@ class PortainerDockerApi(object):
         if 'body' in params:
             body_params = params['body']
         # HTTP header `Accept`
-        header_params['Accept'] = self.api_client.select_header_accept(
+        header_params['Accept'] = self.client.select_header_accept(
             ['application/json'])  # noqa: E501
 
         # HTTP header `Content-Type`
-        header_params['Content-Type'] = self.api_client.select_header_content_type(  # noqa: E501
+        header_params['Content-Type'] = self.client.select_header_content_type(  # noqa: E501
             ['application/json'])  # noqa: E501
 
         for hdr in headers:
@@ -253,7 +416,7 @@ class PortainerDockerApi(object):
         log.debug("Query params: {}".format(query_params))
         log.debug("Header params: {}".format(header_params))
 
-        return self.api_client.call_api(
+        return self.client.call_api(
             url, method,
             path_params,
             query_params,

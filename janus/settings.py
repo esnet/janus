@@ -36,16 +36,12 @@ REGISTRIES = {
     }
 }
 
-# Controller will expose the following ENV VARS to containers:
-# - HOSTNAME
-# - CTRL_PORT
-# - DATA_IFACE
-# - DATA_PORTS
 
 class JanusConfig():
     def __init__(self):
         self._db = None
         self._pm = None
+        self._sm = None
         self._dbpath = None
         self._profile_path = None
         self._dry_run = False
@@ -133,9 +129,14 @@ class JanusConfig():
     def pm(self):
         return self._pm
 
-    def setdb(self, db, pm):
+    @property
+    def sm(self):
+        return self._sm
+
+    def setdb(self, db, pm, sm):
         self._db = db
         self._pm = pm
+        self._sm = sm
 
     def get_dbpath(self):
         return self._dbpath

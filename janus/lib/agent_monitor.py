@@ -8,14 +8,14 @@ from tinydb import TinyDB, Query
 from janus import settings
 from janus.settings import cfg
 from janus.api.utils import handle_image
-from janus.api.portainer_docker import PortainerDockerApi
+from janus.api.portainer import PortainerDockerApi
 from portainer_api.rest import ApiException
 
 
 log = logging.getLogger(__name__)
 
 class AgentMonitor(object):
-    def __init__(self, client):
+    def __init__(self, client=None):
         self._th = None
         self._stop = False
         self._client = client

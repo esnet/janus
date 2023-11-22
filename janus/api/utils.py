@@ -5,6 +5,7 @@ from ipaddress import IPv4Network, IPv4Address
 from ipaddress import IPv6Network, IPv6Address
 
 from janus import settings
+from janus.api.constants import Constants
 from janus.api.models import Network
 from janus.settings import cfg
 from tinydb import Query
@@ -13,11 +14,6 @@ import shlex
 
 log = logging.getLogger(__name__)
 
-class Constants:
-    NET = "network"
-    HOST = "host"
-    QOS = "qos"
-    VOL = "volume"
 
 def is_subset(subset, superset):
     if isinstance(subset, dict):
