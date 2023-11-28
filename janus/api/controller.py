@@ -23,7 +23,6 @@ from janus.api.validator import ContainerProfile as ProfileSchema
 from janus.api.ansible_job import AnsibleJob
 from janus.api.models import Network
 from janus.api.utils import (
-    create_service,
     commit_db,
     precommit_db,
     error_svc,
@@ -278,7 +277,7 @@ class Create(Resource, QueryUser):
                     docker_kwargs["Options"].update({"ipvlan_mode": opts.get('ipvlan_mode')})
             return docker_kwargs
 
-        if not net_name:
+        if not net_name or net_name in [Constants.NET_NONE, Constants.NET_HOST, Constants.NET_BRIDGE]:
             return
         nname = node.get('name')
         nprof = cfg.pm.get_profile(Constants.NET, net_name)
@@ -375,7 +374,6 @@ class Create(Resource, QueryUser):
                      "kwargs": r.get("kwargs", dict())
                      }
                 )
-
         svcs = dict()
         try:
             # keep a running set of addresses and ports allocated for this request
@@ -384,12 +382,15 @@ class Create(Resource, QueryUser):
             cports = set()
             sports = set()
             for r in create:
-                s = r['node']['name']
-                if s not in svcs:
-                    svcs[s] = list()
-                svcs[s].append(create_service(r['node'], r['image'], r['profile'], addrs_v4, addrs_v6,
-                                              cports, sports, r['arguments'], r['remove_container'], **r['kwargs']))
-
+                node = r.get('node')
+                nname = node.get('name')
+                if nname not in svcs:
+                    svcs[nname] = list()
+                handler = cfg.sm.get_handler(node)
+                rec = handler.create_service_record(node, r.get('image'), r.get('profile'), addrs_v4, addrs_v6,
+                                                    cports, sports, r.get('arguments'), r.get('remove_container'),
+                                                    **r.get('kwargs'))
+                svcs[nname].append(rec)
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -466,7 +467,8 @@ class Create(Resource, QueryUser):
                 if n['name'] not in record['allocations']:
                     record['allocations'].update({n['name']: list()})
                 record['allocations'][n['name']].append(ret['Id'])
-                if "node" in s:
+                # don't save node object in service record
+                if s.get("node"):
                     del s['node']
         # complete accounting
         record['id'] = Id

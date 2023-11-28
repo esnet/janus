@@ -6,6 +6,9 @@ class Constants:
     HOST = "host"
     QOS = "qos"
     VOL = "volume"
+    NET_BRIDGE = "bridge"
+    NET_NONE = "none"
+    NET_HOST = "host"
 
 class State(IntEnum):
     UNKNOWN = 0

@@ -48,3 +48,7 @@ class KubernetesApi(Service):
 
     def exec_start(self, node, eid):
         pass
+
+    def create_service_record(self, node, img, prof, addrs_v4, addrs_v6, cports, sports,
+                              arguments, remove_container, **kwargs):
+        pass

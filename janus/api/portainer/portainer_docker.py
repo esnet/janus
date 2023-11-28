@@ -13,8 +13,20 @@ from .endpoints_api import EndpointsApi
 
 from janus.api.service import Service
 from janus.api.constants import EPType
+from janus.api.models import Network
 from janus.settings import REGISTRIES as iregs
 from janus.settings import cfg, IGNORE_EPS
+from janus.api.utils import (
+    get_next_cport,
+    get_next_sport,
+    get_next_vf,
+    get_next_ipv4,
+    get_next_ipv6,
+    get_numa,
+    get_cpuset,
+    get_mem
+)
+
 
 log = logging.getLogger(__name__)
 
@@ -430,3 +442,231 @@ class PortainerDockerApi(Service):
             _preload_content=params.get('_preload_content', False),
             _request_timeout=params.get('_request_timeout'),
             collection_formats=collection_formats)
+
+    def create_service_record(self, node, img, prof, addrs_v4, addrs_v6, cports, sports,
+                              arguments, remove_container, **kwargs):
+        srec = dict()
+        nname = node.get('name')
+        pname = prof.get('name')
+        prof = prof.get('settings')
+        qos = cfg.get_qos(prof["qos"]) if "qos" in prof else dict()
+        dpr = prof['data_port_range']
+        dnet = Network(prof['data_net'], nname)
+        mnet = Network(prof['mgmt_net'], nname)
+        priv = prof.get('privileged')
+        sysd = prof.get('systemd')
+        pull = prof.get('pull_image')
+        args = prof.get('arguments')
+        args_override = arguments
+        cmd = None
+        if args_override:
+            cmd = shlex.split(args_override)
+        elif args:
+            cmd = shlex.split(args)
+
+        vfid = None
+        vfmac = None
+        mgmt_ipv4 = None
+        mgmt_ipv6 = None
+        data_ipv4 = None
+        data_ipv6 = None
+        cport = get_next_cport(node, prof, cports)
+        sport = get_next_sport(node, prof, sports)
+        internal_port = prof['internal_port'] or cport
+
+        if dpr:
+            dports = "{},{}".format(dpr[0],dpr[1])
+        else:
+            dports = ""
+
+        mnet_kwargs = {}
+        docker_kwargs = {
+            "HostName": nname[0:63], # truncate to 63 characters
+            "HostConfig": {
+                "PortBindings": dict(),
+                "NetworkMode": mnet.name,
+                "Mounts": list(),
+                "Devices": list(),
+                "CapAdd": list(),
+                "Ulimits": list(),
+                "Privileged": priv
+            },
+            "ExposedPorts": dict(),
+            "Env": [
+                "HOSTNAME={}".format(node['public_url']),
+                "CTRL_PORT={}".format(cport),
+                "SERV_PORT={}".format(sport),
+                "DATA_PORTS={}".format(dports),
+                "USER_NAME={}".format(kwargs.get("USER_NAME", "")),
+                "PUBLIC_KEY={}".format(kwargs.get("PUBLIC_KEY", ""))
+            ],
+            "Tty": True,
+            "StopSignal": "SIGRTMIN+3" if sysd else "SIGTERM",
+            "Cmd": cmd
+        }
+
+        if remove_container:
+            auto_remove = True
+            docker_kwargs["HostConfig"].update({"Autoremove": auto_remove})
+
+        if cport:
+            docker_kwargs["HostConfig"]["PortBindings"].update({
+                "{}/tcp".format(internal_port): [
+                    {"HostPort": "{}".format(cport)}]
+            })
+            docker_kwargs["ExposedPorts"].update({
+                "{}/tcp".format(internal_port): {}
+            })
+
+        if sport:
+            docker_kwargs["HostConfig"]["PortBindings"].update({
+                "{}/tcp".format(sport): [
+                    {"HostPort": "{}".format(sport)}]
+            })
+            docker_kwargs["ExposedPorts"].update({
+                "{}/tcp".format(sport): {}
+            })
+
+        if mnet.name and not mnet.is_host():
+            try:
+                minfo = node['networks'][mnet.name]
+            except:
+                raise Exception("Network not found: {}".format(mnet.name))
+            mnet_type = minfo['driver']
+            # Remove port mappings if control network requested is not bridge
+            if mnet_type != Constants.NET_BRIDGE:
+                del docker_kwargs["HostConfig"]["PortBindings"]
+                del docker_kwargs["ExposedPorts"]
+
+            if not mnet.is_host() and mnet_type != Constants.NET_BRIDGE:
+                # Set mgmt net layer 3
+                mgmt_ipv4 = get_next_ipv4(mnet, addrs_v4)
+                mgmt_ipv6 = get_next_ipv6(mnet, addrs_v6)
+                mnet_kwargs.update({"EndpointConfig": {
+                    "IPAMConfig": {
+                        "IPv4Address": mgmt_ipv4,
+                        "IPv6Address": mgmt_ipv6
+                    }
+                }
+                })
+
+            # Constrain container memory if requested
+            mem = get_mem(node, prof)
+            if mem:
+                docker_kwargs["HostConfig"].update({"Memory": mem})
+
+            for e in prof['environment']:
+                # XXX: do some sanity checking here
+                docker_kwargs['Env'].append(e)
+
+            for v in prof['volumes']:
+                vol = cfg.get_volume(v)
+                if vol:
+                    readonly = True if "ReadOnly" in vol and vol['ReadOnly'] else False
+                    mnt = {'Type': vol['type'],
+                           'Source': vol.get('source', None),
+                           'Target': vol.get('target', None),
+                           'ReadOnly': readonly
+                           }
+                    docker_kwargs['HostConfig']['Mounts'].append(mnt)
+                    if "driver" in vol:
+                        docker_kwargs['HostConfig']['VolumeDriver'] = vol['driver']
+
+            if dnet.name and not mnet.is_host():
+                try:
+                    dinfo = node['networks'][dnet.name]
+                except:
+                    raise Exception("Network not found: {}".format(dnet.name))
+            # Pin CPUs based on data net
+            cpus = get_cpuset(node, dnet.name, prof)
+            if cpus:
+                docker_kwargs["HostConfig"].update({"CpusetCpus": cpus})
+
+            # Set data net layer 3
+            data_ipv4 = get_next_ipv4(dnet, addrs_v4)
+            data_ipv6 = get_next_ipv6(dnet, addrs_v6)
+            docker_kwargs["HostConfig"].update({"NetworkMode": dnet.name})
+            docker_kwargs.update({"NetworkingConfig": {
+                "EndpointsConfig": {
+                    dnet.name: {
+                        "IPAMConfig": {
+                            "IPv4Address": data_ipv4,
+                            "IPv6Address": data_ipv6
+                        }
+                    }
+                }
+            }
+            })
+            docker_kwargs["Env"].append("DATA_IFACE={}".format(data_ipv4))
+
+            # Need to specify and track sriov vfs explicitly
+            ndrv = dinfo.get("driver", None)
+            if ndrv == "sriov":
+                (vfid, vfmac) = get_next_vf(node, dnet.name)
+                #docker_kwargs['NetworkingConfig']['EndpointsConfig'][dnet.name]['IPAMConfig']['MacAddress'] = vfmac
+        else:
+            docker_kwargs["Env"].append("DATA_IFACE={}".format(node['public_url']))
+            if not mnet.is_host() and dpr:
+                for p in range(dpr[0], dpr[1]+1):
+                    docker_kwargs["HostConfig"]["PortBindings"].update(
+                        {"{}/tcp".format(p):
+                         [{"HostPort": "{}".format(p)}]}
+                    )
+                    docker_kwargs["ExposedPorts"].update({"{}/tcp".format(p): {}})
+
+        # handle features enabled for this service
+        for f in prof['features']:
+            feat = cfg.get_feature(f)
+            if feat:
+                caps = feat.get('caps', list())
+                docker_kwargs['HostConfig']['CapAdd'].extend(caps)
+                limits = feat.get('limits', list())
+                docker_kwargs['HostConfig']['Ulimits'].extend(limits)
+
+                devices = feat.get('devices', list())
+                for d in devices:
+                    if dnet.name:
+                        if "rdma_cm" in d['names']:
+                            dev = {'PathOnHost': os.path.join(d['devprefix'], "rdma_cm"),
+                                   'PathInContainer': os.path.join(d['devprefix'], "rdma_cm"),
+                                   'CGroupPermissions': "rwm"}
+                            docker_kwargs['HostConfig']['Devices'].append(dev)
+                        if "uverbs" in d['names']:
+                            dev = node["networks"][dnet.name]["netdevice"]
+                            vfs = node["host"]["sriov"][dev]["vfs"]
+                            for iface in vfs:
+                                n = iface["ib_verbs_devs"][0]
+                                dev = {'PathOnHost': os.path.join(d['devprefix'], n),
+                                       'PathInContainer': os.path.join(d['devprefix'], n),
+                                       'CGroupPermissions': "rwm"}
+                                docker_kwargs['HostConfig']['Devices'].append(dev)
+                    else:
+                        dev = {'PathOnHost': d['devprefix'],
+                               'PathInContainer': d['devprefix'],
+                               'CGroupPermissions': "rwm"}
+                        docker_kwargs['HostConfig']['Devices'].append(dev)
+
+        srec['mgmt_net'] = node['networks'].get(mnet.name, None)
+        srec['mgmt_ipv4'] = mgmt_ipv4
+        srec['mgmt_ipv6'] = mgmt_ipv6
+        srec['data_net'] = node['networks'].get(dnet.name, None)
+        srec['data_net_name'] = dnet.name
+        srec['data_ipv4'] = data_ipv4
+        srec['data_ipv6'] = data_ipv6
+        srec['data_vfmac'] = vfmac
+        srec['data_vfid'] = vfid
+        srec['container_user'] = kwargs.get("USER_NAME", None)
+
+        srec['node'] = node
+        srec['node_id'] = node['id']
+        srec['serv_port'] = sport
+        srec['ctrl_port'] = cport
+        srec['ctrl_host'] = node['public_url']
+        srec['docker_kwargs'] = docker_kwargs
+        srec['net_kwargs'] = mnet_kwargs
+        srec['image'] = img
+        srec['profile'] = pname
+        srec['pull_image'] = pull
+        srec['qos'] = qos
+        srec['errors'] = list()
+        return srec

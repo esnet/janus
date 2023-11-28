@@ -6,6 +6,11 @@ class Service(ABC):
         pass
 
     @abstractmethod
+    def create_service_record(self, node, img, prof, addrs_v4, addrs_v6, cports, sports,
+                              arguments, remove_container, **kwargs):
+        pass
+
+    @abstractmethod
     def get_nodes(self, nname=None, cb=None, refresh=False):
         pass
 
