@@ -25,8 +25,6 @@ from janus.api.models import Network
 from janus.api.utils import (
     commit_db,
     precommit_db,
-    error_svc,
-    handle_image,
     set_qos,
     is_subset,
     Constants)
@@ -91,7 +89,7 @@ class ActiveCollection(Resource, QueryUser):
                     svc = res['services'][nname]
                     nid = svc[0]['node_id']
                     cid = svc[0]['container_id']
-                    handler = cfg.sm.get_handler(node_id=nid)
+                    handler = cfg.sm.get_handler(nname=nname)
                     return handler.get_logs(nid, cid, since, stderr, stdout, tail, ts)
                 except Exception as e:
                     return {"error": f"Could not retrieve container logs: {e}"}, 500
@@ -363,7 +361,7 @@ class Create(Resource, QueryUser):
                     import traceback
                     traceback.print_exc()
                     return {"error": f"Node {ep} has invalid network: {e}"}, 400
-                # refresh node from DB since node state llmay have been updated above
+                # refresh node from DB since node state may have been updated above
                 node = dbase.get(ntable, query=query)
                 create.append(
                     {"node": node,
@@ -390,6 +388,8 @@ class Create(Resource, QueryUser):
                 rec = handler.create_service_record(node, r.get('image'), r.get('profile'), addrs_v4, addrs_v6,
                                                     cports, sports, r.get('arguments'), r.get('remove_container'),
                                                     **r.get('kwargs'))
+                if not rec:
+                    raise Exception(f"No service record created for node {nname}")
                 svcs[nname].append(rec)
         except Exception as e:
             import traceback
@@ -406,71 +406,24 @@ class Create(Resource, QueryUser):
         # get an ID from the DB
         Id = precommit_db()
         errs = False
-        for k, v in svcs.items():
-            for s in svcs[k]:
-                # the node this service will start on
-                n = s['node']
-                handler = cfg.sm.get_handler(n)
+        for k, services in svcs.items():
+            for s in services:
                 if (cfg.dryrun):
                     ret = {'Id': str(uuid.uuid4())}
                     name = "janus_dryrun"
                 else:
-                    # Docker-specific v4 vs v6 image registry nonsense. Need to abstract this away.
                     try:
-                        img = s['image']
-                        handle_image(n, img, handler, s['pull_image'])
+                        aid, nname = cfg.sm.start_service(s, Id, errs)
                     except Exception as e:
-                        log.error("Could not pull image {} on node {}, {}: {}".format(img,
-                                                                                      n['name'],
-                                                                                      e.reason,
-                                                                                      e.body))
-                        errs = error_svc(s, e)
-                        try:
-                            v6img = f"registry.ipv6.docker.com/{s['image']}"
-                            handle_image(n, v6img, handler, s['pull_image'])
-                            s['image'] = v6img
-                        except Exception as e:
-                            log.error("Could not pull image {} on node {}, {}: {}".format(v6img,
-                                                                                          n['name'],
-                                                                                          e.reason,
-                                                                                          e.body))
-                            errs = error_svc(s, e)
-                            continue
-                    # clear any errors if image resolved
-                    s['errors'] = list()
-                    errs = False
-                    try:
-                        name = f"janus_{Id}" if Id else None
-                        ret = handler.create_container(n['id'], s['image'], name, **s['docker_kwargs'])
-                    except Exception as e:
-                        log.error("Could not create container on {}: {}: {}".format(n['name'],
-                                                                                    e.reason,
-                                                                                    e.body))
-                        errs = error_svc(s, e)
+                        import traceback
+                        traceback.print_exc()
+                        log.error(f"Could not start service: {e}")
                         continue
 
-                if not (cfg.dryrun):
-                    try:
-                        # if specified, connect the management network to this created container
-                        if s['mgmt_net']:
-                            handler.connect_network(n['id'], s['mgmt_net']['id'], ret['Id'],
-                                                    **s['net_kwargs'])
-                    except Exception as e:
-                        log.error("Could not connect network on {}: {}: {}".format(n['name'],
-                                                                                   e.reason,
-                                                                                   e.body))
-                        errs = error_svc(s, e)
-                        continue
-
-                s['container_id'] = ret['Id']
-                s['container_name'] = name
-                if n['name'] not in record['allocations']:
-                    record['allocations'].update({n['name']: list()})
-                record['allocations'][n['name']].append(ret['Id'])
-                # don't save node object in service record
-                if s.get("node"):
-                    del s['node']
         # complete accounting
+        if nname not in record['allocations']:
+            record['allocations'].update({nname: list()})
+        record['allocations'][nname].append(aid)
         record['id'] = Id
         record['services'] = svcs
         record['request'] = req

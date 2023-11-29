@@ -16,27 +16,41 @@ class KubernetesApi(Service):
 
     def get_nodes(self, nname=None, cb=None, refresh=False):
         ret = list()
+        if not refresh:
+            return ret
         contexts, active_context = config.list_kube_config_contexts()
         if not contexts:
             log.error("Cannot find any context in kube-config file.")
             return
 
         node_count = 0
-        cnodes = dict()
         for ctx in contexts:
+            host_info = {
+                "cpu": {
+                    "brand_raw": str(),
+                    "count": 0,
+                },
+                "mem": {
+                    "total": 0
+                }
+            }
+            cnodes = list()
             ctx_name = ctx.get('name')
+            archs = set()
             api_client = config.new_client_from_config(context=ctx_name)
             v1 = client.CoreV1Api(api_client)
             res = v1.list_node(watch=False)
-            cnodes[ctx_name] = list()
             for i in res.items:
                 cnode = {
                     "name": i.metadata.name,
                     "addresses": [ a.to_dict() for a in i.status.addresses ]
                 }
-                cnodes[ctx_name].append(cnode)
+                host_info['cpu']['count'] += int(i.status.capacity.get('cpu'))
+                archs.add(i.status.node_info.architecture)
+                cnodes.append(cnode)
                 node_count += 1
 
+            host_info['cpu']['brand_raw'] = " ".join(archs)
             cnets = dict()
             try:
                 capi = client.CustomObjectsApi(api_client)
@@ -46,16 +60,27 @@ class KubernetesApi(Service):
                     name = meta.get('name')
                     spec = json.loads(i.get('spec').get('config'))
                     plugins = spec.get('plugins')[0]
+                    snets = list()
+                    if plugins.get('ipam') and plugins.get('ipam').get('addresses'):
+                        for a in plugins.get('ipam').get('addresses'):
+                            snets.append({
+                                'Subnet': a.get('address'),
+                                'Gateway': a.get('gateway')
+                            })
                     cnets[name] = {
                         'name': meta.get('name'),
                         'id': meta.get('uid'),
                         'namespace': meta.get('namespace'),
                         'driver': plugins.get('type'),
-                        'subnet': dict(),
+                        'parent': plugins.get('master'),
+                        'mode': plugins.get('mode'),
+                        'vlan': plugins.get('vlanId'),
+                        'mtu': plugins.get('mtu'),
+                        'subnet': snets,
                         '_data': i
                     }
             except ApiException as e:
-                log.warn("Exception when calling ApiextensionsV1Api->read_custom_resource_definition: {e}")
+                log.warn(f"Could not find network attachement definitions on cluster {ctx_name}: {e}")
 
             ret.append({
                 "name": ctx_name,
@@ -65,6 +90,7 @@ class KubernetesApi(Service):
                 "cluster_node_count": node_count,
                 "cluster_nodes": cnodes,
                 "networks": cnets,
+                "host": host_info,
                 "public_url": KUBE_CONFIG_DEFAULT_LOCATION,
                 "url": KUBE_CONFIG_DEFAULT_LOCATION
             })
@@ -111,4 +137,5 @@ class KubernetesApi(Service):
 
     def create_service_record(self, node, img, prof, addrs_v4, addrs_v6, cports, sports,
                               arguments, remove_container, **kwargs):
+        
         pass

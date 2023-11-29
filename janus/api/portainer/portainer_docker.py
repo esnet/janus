@@ -12,7 +12,7 @@ from portainer_api.models import AuthenticateUserRequest
 from .endpoints_api import EndpointsApi
 
 from janus.api.service import Service
-from janus.api.constants import EPType
+from janus.api.constants import Constants, EPType
 from janus.api.models import Network
 from janus.settings import REGISTRIES as iregs
 from janus.settings import cfg, IGNORE_EPS
@@ -572,11 +572,11 @@ class PortainerDockerApi(Service):
                     if "driver" in vol:
                         docker_kwargs['HostConfig']['VolumeDriver'] = vol['driver']
 
-            if dnet.name and not mnet.is_host():
-                try:
-                    dinfo = node['networks'][dnet.name]
-                except:
-                    raise Exception("Network not found: {}".format(dnet.name))
+        if dnet.name and not mnet.is_host():
+            try:
+                dinfo = node['networks'][dnet.name]
+            except:
+                raise Exception("Network not found: {}".format(dnet.name))
             # Pin CPUs based on data net
             cpus = get_cpuset(node, dnet.name, prof)
             if cpus:
