@@ -12,6 +12,7 @@ from tinydb import TinyDB, Query, where
 
 from janus import settings
 from janus.settings import cfg
+from janus.api.models import Network
 from .utils import Constants
 
 
@@ -142,14 +143,9 @@ def init_db(nname=None, refresh=False):
     data_nets = list()
     profs = cfg.pm.get_profiles(Constants.HOST)
     for p in profs:
-        for nname in ["data_net", "mgmt_net"]:
-            net = p["settings"][nname]
-            if isinstance(net, str):
-                if net not in data_nets:
-                    data_nets.append(net)
-            elif isinstance(net, dict):
-                if net['name'] not in data_nets:
-                    data_nets.append(net['name'])
+        for net in [Network(p.settings.mgmt_net), Network(p.settings.data_net)]:
+            if net.name not in data_nets:
+                data_nets.append(net.name)
 
     # simple IPAM for data networks
     net_table = dbase.get_table('networks')

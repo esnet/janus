@@ -69,7 +69,7 @@ class ServiceManager():
         return self.service_map[ntype].auth_token
 
 
-    def start_service(self, s, dbid, errs=False):
+    def init_service(self, s, dbid, errs=False):
         n = s.get('node')
         nname = n.get('name')
         img = s.get('image')

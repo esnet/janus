@@ -5,6 +5,17 @@ from kubernetes.config import KUBE_CONFIG_DEFAULT_LOCATION
 from kubernetes.client.rest import ApiException
 from janus.api.service import Service
 from janus.api.constants import EPType
+from janus.api.models import Network, ContainerProfile
+from janus.api.utils import (
+    get_next_cport,
+    get_next_sport,
+    get_next_vf,
+    get_next_ipv4,
+    get_next_ipv6,
+    get_numa,
+    get_cpuset,
+    get_mem
+)
 
 
 log = logging.getLogger(__name__)
@@ -25,6 +36,9 @@ class KubernetesApi(Service):
 
         node_count = 0
         for ctx in contexts:
+            ctx_name = ctx.get('name')
+            if nname and nname != ctx_name:
+                continue
             host_info = {
                 "cpu": {
                     "brand_raw": str(),
@@ -35,7 +49,6 @@ class KubernetesApi(Service):
                 }
             }
             cnodes = list()
-            ctx_name = ctx.get('name')
             archs = set()
             api_client = config.new_client_from_config(context=ctx_name)
             v1 = client.CoreV1Api(api_client)
@@ -91,8 +104,8 @@ class KubernetesApi(Service):
                 "cluster_nodes": cnodes,
                 "networks": cnets,
                 "host": host_info,
-                "public_url": KUBE_CONFIG_DEFAULT_LOCATION,
-                "url": KUBE_CONFIG_DEFAULT_LOCATION
+                "url": api_client.configuration.host,
+                "public_url": KUBE_CONFIG_DEFAULT_LOCATION
             })
         return ret
 
@@ -135,7 +148,26 @@ class KubernetesApi(Service):
     def exec_start(self, node, eid):
         pass
 
-    def create_service_record(self, node, img, prof, addrs_v4, addrs_v6, cports, sports,
-                              arguments, remove_container, **kwargs):
-        
+    def resolve_networks(self, node, prof):
         pass
+
+    def create_service_record(self, node, img, prof: ContainerProfile,
+                              addrs_v4, addrs_v6, cports, sports,
+                              arguments, remove_container, **kwargs):
+        srec = dict()
+        nname = node.get('name')
+        prof = ContainerProfile(**prof.get('settings'))
+        dnet = Network(prof.data_net, nname)
+        mnet = Network(prof.mgmt_net, nname)
+        args_override = arguments
+        cmd = None
+        if args_override:
+            cmd = shlex.split(args_override)
+        elif prof.args:
+            cmd = shlex.split(prof.args)
+
+        data_ipv6 = None
+        cport = get_next_cport(node, prof, cports)
+        sport = get_next_sport(node, prof, sports)
+
+        return srec

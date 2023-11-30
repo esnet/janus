@@ -13,7 +13,7 @@ from .endpoints_api import EndpointsApi
 
 from janus.api.service import Service
 from janus.api.constants import Constants, EPType
-from janus.api.models import Network
+from janus.api.models import Network, ContainerProfile
 from janus.settings import REGISTRIES as iregs
 from janus.settings import cfg, IGNORE_EPS
 from janus.api.utils import (
@@ -24,7 +24,8 @@ from janus.api.utils import (
     get_next_ipv6,
     get_numa,
     get_cpuset,
-    get_mem
+    get_mem,
+    is_subset
 )
 
 
@@ -443,20 +444,74 @@ class PortainerDockerApi(Service):
             _request_timeout=params.get('_request_timeout'),
             collection_formats=collection_formats)
 
-    def create_service_record(self, node, img, prof, addrs_v4, addrs_v6, cports, sports,
+
+    def resolve_networks(self, node, prof):
+        def _build_kwargs(p):
+            docker_kwargs = {
+                "Name": p.name,
+                "Driver": p.settings.driver,
+                "EnableIPv6": p.settings.enable_ipv6
+            }
+            ipam = p.settings.ipam
+            if ipam:
+                docker_kwargs["IPAM"] = dict()
+                docker_kwargs["IPAM"]["Config"] = list()
+                for i in ipam.get('config'):
+                    docker_kwargs["IPAM"]["Config"].append({"Subnet": i.get('subnet'),
+                                                            "Gateway": i.get('gateway')})
+            opts = p.settings.options
+            if opts:
+                docker_kwargs["Options"] = dict()
+                if "mtu" in opts and p.settings.driver == "bridge":
+                    docker_kwargs["Options"].update({"com.docker.network.driver.mtu": opts.get('mtu')})
+                if "parent" in opts and p.settings.driver in ["macvlan", "ipvlan"]:
+                    docker_kwargs["Options"].update({"parent": opts.get('parent')})
+                if "macvlan_mode" in opts and p.settings.driver == "macvlan":
+                    docker_kwargs["Options"].update({"macvlan_mode": opts.get('macvlan_mode')})
+                if "ipvlan_mode" in opts and p.settings.driver == "ipvlan":
+                    docker_kwargs["Options"].update({"ipvlan_mode": opts.get('ipvlan_mode')})
+            return docker_kwargs
+
+        created = False
+        for net in [Network(prof.settings.mgmt_net), Network(prof.settings.data_net)]:
+            if not net.name or net.name in [Constants.NET_NONE, Constants.NET_HOST, Constants.NET_BRIDGE]:
+                continue
+            nname = node.get('name')
+            nprof = cfg.pm.get_profile(Constants.NET, net.name)
+            if not nprof:
+                raise Exception(f"Network profile {net.name} not found")
+            kwargs = _build_kwargs(nprof)
+            ninfo = node.get('networks').get(net.name)
+            # We are done if the node already has a network and it matches our profile
+            if ninfo and is_subset(kwargs, ninfo.get('_data')):
+                continue
+            # Otherwise we need to either create or recreate the network
+            if not ninfo:
+                log.info(f"Network {net.name} not found on {nname}, attempting to create")
+            elif ninfo and not is_subset(kwargs, ninfo.get('_data')):
+                log.info(f"Network {net.name} found on {nname} but differs from profile, attempting to recreate")
+                try:
+                    self.remove_network(node.get('id'), net.name)
+                except Exception as e:
+                    log.warn(f"Removing network {net.name} on {nname} failed: {e}")
+            self.create_network(node.get('id'), net.name, **kwargs)
+            created = True
+        return created
+
+
+    def create_service_record(self, node, img, prof: ContainerProfile,
+                              addrs_v4, addrs_v6, cports, sports,
                               arguments, remove_container, **kwargs):
         srec = dict()
         nname = node.get('name')
-        pname = prof.get('name')
-        prof = prof.get('settings')
         qos = cfg.get_qos(prof["qos"]) if "qos" in prof else dict()
-        dpr = prof['data_port_range']
-        dnet = Network(prof['data_net'], nname)
-        mnet = Network(prof['mgmt_net'], nname)
-        priv = prof.get('privileged')
-        sysd = prof.get('systemd')
-        pull = prof.get('pull_image')
-        args = prof.get('arguments')
+        dpr = prof.settings.data_port_range
+        dnet = Network(prof.settings.data_net, nname)
+        mnet = Network(prof.settings.mgmt_net, nname)
+        priv = prof.settings.privileged
+        sysd = prof.settings.systemd
+        pull = prof.settings.pull_image
+        args = prof.settings.arguments
         args_override = arguments
         cmd = None
         if args_override:
@@ -472,7 +527,7 @@ class PortainerDockerApi(Service):
         data_ipv6 = None
         cport = get_next_cport(node, prof, cports)
         sport = get_next_sport(node, prof, sports)
-        internal_port = prof['internal_port'] or cport
+        internal_port = prof.settings.internal_port or cport
 
         if dpr:
             dports = "{},{}".format(dpr[0],dpr[1])
@@ -555,11 +610,11 @@ class PortainerDockerApi(Service):
             if mem:
                 docker_kwargs["HostConfig"].update({"Memory": mem})
 
-            for e in prof['environment']:
+            for e in prof.settings.environment:
                 # XXX: do some sanity checking here
                 docker_kwargs['Env'].append(e)
 
-            for v in prof['volumes']:
+            for v in prof.settings.volumes:
                 vol = cfg.get_volume(v)
                 if vol:
                     readonly = True if "ReadOnly" in vol and vol['ReadOnly'] else False
@@ -615,7 +670,7 @@ class PortainerDockerApi(Service):
                     docker_kwargs["ExposedPorts"].update({"{}/tcp".format(p): {}})
 
         # handle features enabled for this service
-        for f in prof['features']:
+        for f in prof.settings.features:
             feat = cfg.get_feature(f)
             if feat:
                 caps = feat.get('caps', list())
@@ -665,7 +720,7 @@ class PortainerDockerApi(Service):
         srec['docker_kwargs'] = docker_kwargs
         srec['net_kwargs'] = mnet_kwargs
         srec['image'] = img
-        srec['profile'] = pname
+        srec['profile'] = prof.name
         srec['pull_image'] = pull
         srec['qos'] = qos
         srec['errors'] = list()

@@ -109,11 +109,11 @@ def get_next_vf(node, dnet):
     return vf
 
 def get_next_cport(node, prof, curr=set()):
-    if not prof['ctrl_port_range']:
+    if not prof.settings.ctrl_port_range:
         return None
     # make a set out of the port range
-    avail = set(range(prof['ctrl_port_range'][0],
-                      prof['ctrl_port_range'][1]+1))
+    avail = set(range(prof.settings.ctrl_port_range[0],
+                      prof.settings.ctrl_port_range[1]+1))
     alloced = node['allocated_ports']
     avail = avail - set(alloced) - curr
     try:
@@ -124,11 +124,11 @@ def get_next_cport(node, prof, curr=set()):
     return str(port)
 
 def get_next_sport(node, prof, curr=set()):
-    if not prof['serv_port_range']:
+    if not prof.settings.serv_port_range:
         return None
     # make a set out of the port range
-    avail = set(range(prof['serv_port_range'][0],
-                      prof['serv_port_range'][1]+1))
+    avail = set(range(prof.settings.serv_port_range[0],
+                      prof.settings.serv_port_range[1]+1))
     alloced = node['allocated_ports']
     avail = avail - set(alloced) - curr
     try:
@@ -248,7 +248,7 @@ def get_numa(node, net, prof):
     return None
 
 def get_mem(node, prof):
-    return prof['mem']
+    return prof.settings.memory
 
 def error_svc(s, e):
     try:

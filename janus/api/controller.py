@@ -19,14 +19,13 @@ from janus.lib import AgentMonitor
 from janus.settings import cfg
 from janus.api.constants import State, EPType
 from janus.api.db import init_db, QueryUser
-from janus.api.validator import ContainerProfile as ProfileSchema
+from janus.api.models import Network, ContainerProfile
 from janus.api.ansible_job import AnsibleJob
-from janus.api.models import Network
 from janus.api.utils import (
     commit_db,
     precommit_db,
     set_qos,
-    is_subset,
+    error_svc,
     Constants)
 
 
@@ -247,58 +246,6 @@ class NodeCollection(Resource, QueryUser):
 @ns.route('/create')
 class Create(Resource, QueryUser):
 
-    def _resolve_network(self, node, net_name, handler):
-        def _build_kwargs(nprof):
-            p = nprof.get('settings')
-            docker_kwargs = {
-                "Name": net_name,
-                "Driver": p.get('driver'),
-                "EnableIPv6": p.get('enable_ipv6', True)
-            }
-            ipam = p.get('ipam')
-            if ipam:
-                docker_kwargs["IPAM"] = dict()
-                docker_kwargs["IPAM"]["Config"] = list()
-                for i in ipam.get('config'):
-                    docker_kwargs["IPAM"]["Config"].append({"Subnet": i.get('subnet'),
-                                                            "Gateway": i.get('gateway')})
-            opts = p.get('options')
-            if opts:
-                docker_kwargs["Options"] = dict()
-                if "mtu" in opts and p.get('driver') == "bridge":
-                    docker_kwargs["Options"].update({"com.docker.network.driver.mtu": opts.get('mtu')})
-                if "parent" in opts and p.get('driver') in ["macvlan", "ipvlan"]:
-                    docker_kwargs["Options"].update({"parent": opts.get('parent')})
-                if "macvlan_mode" in opts and p.get('driver') == "macvlan":
-                    docker_kwargs["Options"].update({"macvlan_mode": opts.get('macvlan_mode')})
-                if "ipvlan_mode" in opts and p.get('driver') == "ipvlan":
-                    docker_kwargs["Options"].update({"ipvlan_mode": opts.get('ipvlan_mode')})
-            return docker_kwargs
-
-        if not net_name or net_name in [Constants.NET_NONE, Constants.NET_HOST, Constants.NET_BRIDGE]:
-            return
-        nname = node.get('name')
-        nprof = cfg.pm.get_profile(Constants.NET, net_name)
-        if not nprof:
-            raise Exception(f"Network profile {net_name} not found")
-        kwargs = _build_kwargs(nprof)
-        ninfo = node['networks'].get(net_name)
-        # We are done if the node already has a network and it matches our profile
-        if ninfo and is_subset(kwargs, ninfo.get('_data')):
-            return
-        # Otherwise we need to either create or recreate the network
-        if not ninfo:
-            log.info(f"Network {net_name} not found on {nname}, attempting to create")
-        elif ninfo and not is_subset(kwargs, ninfo.get('_data')):
-            log.info(f"Network {net_name} found on {nname} but differs from profile, attempting to recreate")
-            try:
-                handler.remove_network(node.get('id'), net_name)
-            except Exception as e:
-                log.warn(f"Removing network {net_name} on {nname} failed: {e}")
-        handler.create_network(node.get('id'), net_name, **kwargs)
-        init_db(nname, refresh=True)
-
-
     @httpauth.login_required
     def post(self):
         """
@@ -354,9 +301,11 @@ class Create(Resource, QueryUser):
                     return {"error": f"Node {ep} not found"}, 404
                 try:
                     handler = cfg.sm.get_handler(node)
-                    p = prof.get('settings')
-                    self._resolve_network(node, Network(p.get('mgmt_net')).name, handler)
-                    self._resolve_network(node, Network(p.get('data_net')).name, handler)
+                    init_db(node.get('name'), refresh=True)
+                    ret = handler.resolve_networks(node, prof)
+                    if ret:
+                        # Networks were updated by the handler, refresh Node DB
+                        init_db(node.get('name'), refresh=True)
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
@@ -413,11 +362,11 @@ class Create(Resource, QueryUser):
                     name = "janus_dryrun"
                 else:
                     try:
-                        aid, nname = cfg.sm.start_service(s, Id, errs)
+                        aid, nname = cfg.sm.init_service(s, Id, errs)
                     except Exception as e:
                         import traceback
                         traceback.print_exc()
-                        log.error(f"Could not start service: {e}")
+                        log.error(f"Could not initialize service: {e}")
                         continue
 
         # complete accounting
@@ -449,7 +398,7 @@ class Start(Resource, QueryUser):
         # - It may take some time for the ansible job to finish or timeout (300 seconds)
         #
         prof = cfg.pm.get_profile(Constants.HOST, s['profile'])
-        for psname in prof['settings']['post_starts']:
+        for psname in prof.settings.post_starts:
             ps = cfg.get_poststart(psname)
             if ps['type'] == 'ansible':
                 jt_name = ps['jobtemplate']
@@ -703,10 +652,10 @@ class Profile(Resource):
             res = cfg.pm.get_profile(resource, rname, user, group, inline=True)
             if not res:
                 return {"error": "Profile not found: {}".format(rname)}, 404
-            return res
+            return res.dict()
         else:
             log.debug("Returning all profiles")
-            ret = cfg.pm.get_profiles(resource, user, group, inline=True)
+            ret = [ p.dict() for p in cfg.pm.get_profiles(resource, user, group, inline=True) ]
             return ret if ret else list()
 
     @httpauth.login_required
@@ -732,7 +681,7 @@ class Profile(Resource):
 
             default = cfg._base_profile.copy()
             default.update((k, configs[k]) for k in default.keys() & configs.keys())
-            ProfileSchema(**default)
+            ContainerProfile(**default)
 
         except ValidationError as e:
             return str(e), 400
@@ -748,7 +697,7 @@ class Profile(Resource):
         except Exception as e:
             return str(e), 500
 
-        return cfg.pm.get_profile(resource, rname), 200
+        return cfg.pm.get_profile(resource, rname).dict(), 200
 
     @httpauth.login_required
     def put(self, resource=None, rname=None):
@@ -770,13 +719,13 @@ class Profile(Resource):
             if rname == "default":
                 return {"error": "Cannot update default profile!"}, 400
 
-            res = cfg.pm.get_profile(resource, rname, user, group, inline=True)
+            res = cfg.pm.get_profile(resource, rname, user, group, inline=True).dict()
             if not res:
                 return {"error": "Profile not found: {}".format(rname)}, 404
 
             default = res.copy()
             default['settings'].update(configs)
-            ProfileSchema(**default)
+            ContainerProfile(**default)
 
         except ValidationError as e:
             return {"error" : str(e)}, 400
@@ -790,7 +739,7 @@ class Profile(Resource):
         except Exception as e:
             return str(e), 500
 
-        return cfg.pm.get_profile(resource, rname), 200
+        return cfg.pm.get_profile(resource, rname).dict(), 200
 
     @httpauth.login_required
     def delete(self, resource=None, rname=None):

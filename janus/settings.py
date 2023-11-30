@@ -88,7 +88,7 @@ class JanusConfig():
             "pull_image": False,
             "auto_tune": False,
             "cpu": 4,
-            "mem": 8589934592,
+            "memory": 8589934592,
             "affinity": "network",
             "arguments": None,
             "cpu_set": None,

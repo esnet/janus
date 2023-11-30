@@ -5,12 +5,18 @@ from .utils import Constants
 from janus import settings
 from janus.settings import cfg
 from janus.api.db import QueryUser
-from janus.api.validator import QoS_Controller, ContainerProfile, NetworkProfile, VolumeProfile
+from janus.api.models import QoS_Controller, ContainerProfile, NetworkProfile, VolumeProfile
 
 
 log = logging.getLogger(__name__)
 
 class ProfileManager(QueryUser):
+    CLSMAP = {
+        Constants.HOST: ContainerProfile,
+        Constants.NET: NetworkProfile,
+        Constants.VOL: VolumeProfile
+    }
+
     def __init__(self, db, profile_path = None):
         self._db = db
         self._profile_path = profile_path
@@ -27,11 +33,11 @@ class ProfileManager(QueryUser):
         return ret
 
     def get_profile(self, ptype, p, user=None, group=None, inline=False):
-        return self.get_profile_from_db(ptype, p, user, group)
+        ret = self.get_profile_from_db(ptype, p, user, group)
+        return self.CLSMAP[ptype](**ret) if ret else None
 
     def get_profiles(self, ptype, user=None, group=None, inline=False):
-        ret = dict()
-        profiles = self.get_profile_from_db(ptype, user=user, group=group)
+        profiles = [ self.CLSMAP[ptype](**p) for p in self.get_profile_from_db(ptype, user=user, group=group) ]
         nprofs = len(profiles) if profiles else 0
         log.info(f"total profiles: {nprofs}")
         return profiles
@@ -65,27 +71,30 @@ class ProfileManager(QueryUser):
                                 if (k == "networks"):
                                     for key, value in v.items():
                                         try:
-                                            NetworkProfile(**value)
+                                            prof = {"name": key, "settings": value}
+                                            NetworkProfile(**prof)
                                             cfg._networks[key] = value
-                                            self._db.upsert(net_tbl, {"name": key, "settings": value}, 'name', key)
+                                            self._db.upsert(net_tbl, prof, 'name', key)
                                         except Exception as e:
                                             log.error("Error reading networks: {}".format(e))
 
                                 if (k == "volumes"):
                                     for key, value in v.items():
                                         try:
-                                            VolumeProfile(**value)
+                                            prof = {"name": key, "settings": value}
+                                            VolumeProfile(**prof)
                                             cfg._volumes[key] = value
-                                            self._db.upsert(vol_tbl, {"name": key, "settings": value}, 'name', key)
+                                            self._db.upsert(vol_tbl, prof, 'name', key)
                                         except Exception as e:
                                             log.error("Error reading volumes: {}".format(e))
 
                                 if (k == "qos"):
                                     for key, value in v.items():
                                         try:
-                                            QoS_Controller(**value)
+                                            prof = {"name": key, "settings": value}
+                                            QoS_Controller(**prof)
                                             cfg._qos[key] = value
-                                            self._db.upsert(qos_tbl, {"name": key, "settings": value}, 'name', key)
+                                            self._db.upsert(qos_tbl, prof, 'name', key)
                                         except Exception as e:
                                             log.error("Error reading qos: {}".format(e))
 
@@ -94,9 +103,10 @@ class ProfileManager(QueryUser):
                                         try:
                                             temp = cfg._base_profile.copy()
                                             temp.update(value)
-                                            ContainerProfile(**temp)
+                                            prof = {"name": key, "settings": temp}
+                                            ContainerProfile(**prof)
                                             cfg._profiles[key] = temp
-                                            self._db.upsert(host_tbl, {"name": key, "settings": temp}, 'name', key)
+                                            self._db.upsert(host_tbl, prof, 'name', key)
                                         except Exception as e:
                                             log.error("Error reading profiles: {}".format(e))
 
