@@ -74,31 +74,33 @@ class ServiceManager():
         nname = n.get('name')
         img = s.get('image')
         handler = self.get_handler(n)
-        # Docker-specific v4 vs v6 image registry nonsense. Need to abstract this away.
-        try:
-            handle_image(n, img, handler, s.get('pull_image'))
-        except Exception as e:
-            log.error(f"Could not pull image {img} on node {nname}: {e}")
-            errs = error_svc(s, e)
+
+        if handler.type == EPType.PORTAINER:
+            # Docker-specific v4 vs v6 image registry nonsense. Need to abstract this away.
             try:
-                v6img = f"registry.ipv6.docker.com/{img}"
-                handle_image(n, v6img, handler, s.get('pull_image'))
-                s['image'] = v6img
+                handle_image(n, img, handler, s.get('pull_image'))
             except Exception as e:
-                log.error(f"Could not pull image {v6img} on node {nname}: {e}")
+                log.error(f"Could not pull image {img} on node {nname}: {e}")
                 errs = error_svc(s, e)
-                return
+                try:
+                    v6img = f"registry.ipv6.docker.com/{img}"
+                    handle_image(n, v6img, handler, s.get('pull_image'))
+                    s['image'] = v6img
+                except Exception as e:
+                    log.error(f"Could not pull image {v6img} on node {nname}: {e}")
+                    errs = error_svc(s, e)
+                    return None, None
 
         # clear any errors if image resolved
         s['errors'] = list()
         errs = False
         try:
             name = f"janus_{dbid}" if dbid else None
-            ret = handler.create_container(n['id'], img, name, **s['docker_kwargs'])
+            ret = handler.create_container(n.get('id'), img, name, **s['kwargs'])
         except Exception as e:
             log.error(f"Could not create container on {nname}: {e}")
             errs = error_svc(s, e)
-            return
+            return None, None
 
         if not (cfg.dryrun):
             try:
@@ -109,7 +111,7 @@ class ServiceManager():
             except Exception as e:
                 log.error("Could not connect network on {nname}: {e}")
                 errs = error_svc(s, e)
-                return
+                return None, None
 
         s['container_id'] = ret['Id']
         s['container_name'] = name

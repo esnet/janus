@@ -6,6 +6,10 @@ class Service(ABC):
         pass
 
     @abstractmethod
+    def type(self):
+        pass
+
+    @abstractmethod
     def resolve_networks(self, node, prof):
         pass
 

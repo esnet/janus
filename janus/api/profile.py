@@ -14,7 +14,8 @@ class ProfileManager(QueryUser):
     CLSMAP = {
         Constants.HOST: ContainerProfile,
         Constants.NET: NetworkProfile,
-        Constants.VOL: VolumeProfile
+        Constants.VOL: VolumeProfile,
+        Constants.QOS: QoS_Controller
     }
 
     def __init__(self, db, profile_path = None):

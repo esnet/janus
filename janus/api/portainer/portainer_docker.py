@@ -71,6 +71,10 @@ class PortainerDockerApi(Service):
     def auth_token(self):
         return self.client.jwt
 
+    @property
+    def type(self):
+        return EPType.PORTAINER
+
     def _parse_portainer_endpoints(self, res):
         ret = dict()
 
@@ -717,7 +721,7 @@ class PortainerDockerApi(Service):
         srec['serv_port'] = sport
         srec['ctrl_port'] = cport
         srec['ctrl_host'] = node['public_url']
-        srec['docker_kwargs'] = docker_kwargs
+        srec['kwargs'] = docker_kwargs
         srec['net_kwargs'] = mnet_kwargs
         srec['image'] = img
         srec['profile'] = prof.name

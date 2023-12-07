@@ -2,7 +2,7 @@ from pydantic import BaseModel, root_validator, create_model
 from typing import List, Optional, Union
 
 
-class QoS_Controller(BaseModel):
+class QoSProfileSettings(BaseModel):
     delay: Optional[str] = None
     loss: Optional[str] = None
     rate: Optional[str] = None
@@ -12,6 +12,9 @@ class QoS_Controller(BaseModel):
     dport: Optional[str] = None
     ip: Optional[str] = None
 
+class QoS_Controller(BaseModel):
+    name: str
+    settings: QoSProfileSettings
 
 class QoS_Agent(BaseModel):
     interface: Optional[str] = None
