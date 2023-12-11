@@ -1,9 +1,6 @@
 import logging
 import uuid
-import time
-import json
-from enum import Enum
-from tinydb import Query, where
+from tinydb import where
 import concurrent
 from concurrent.futures.thread import ThreadPoolExecutor
 from operator import eq
@@ -20,63 +17,35 @@ from urllib.parse import urlsplit
 from janus import settings
 from janus.lib import AgentMonitor
 from janus.settings import cfg
+from janus.api.constants import State, EPType
 from janus.api.db import init_db, QueryUser
-from janus.api.validator import (
-    ContainerProfile as ProfileSchema,
-    NetworkProfile as NetworkSchema,
-    VolumeProfile as VolumeSchema)
+# <<<<<<< HEAD
+# from janus.api.validator import (
+#     ContainerProfile as ProfileSchema,
+#     NetworkProfile as NetworkSchema,
+#     VolumeProfile as VolumeSchema)
+# =======
+from janus.api.models import Network, ContainerProfile, NetworkProfile, VolumeProfile
+# >>>>>>> netvol-profiles
 from janus.api.ansible_job import AnsibleJob
-from janus.api.models import Network
 from janus.api.utils import (
-    create_service,
     commit_db,
     precommit_db,
-    error_svc,
-    handle_image,
     set_qos,
-    is_subset,
+    error_svc,
     Constants)
-
-# XXX: Portainer will eventually go behind an ABC interface
-# so we can support other provisioning backends
-from portainer_api.configuration import Configuration as Config
-from portainer_api.api_client import ApiClient
-from portainer_api.api import AuthApi
-from portainer_api.models import AuthenticateUserRequest
-from portainer_api.rest import ApiException
-from janus.api.portainer_docker import PortainerDockerApi
-from janus.api.endpoints_api import EndpointsApi
-
-
-class State(Enum):
-    UNKNOWN = 0
-    INITIALIZED = 1
-    STARTED = 2
-    STOPPED = 3
-    MIXED = 4
-    STALE = 5
-
-class EPType(Enum):
-    UNKNOWN = 0,
-    PORTAINER = 1
-    KUBERNETES = 2
-    DOCKER = 3
 
 
 # Basic auth
 httpauth = HTTPBasicAuth()
-
 log = logging.getLogger(__name__)
-
 ns = Namespace('janus/controller', description='Operations for Janus on-demand container provisioning')
 
-pclient = None
-auth_expire = None
-db_init = False
 
 @httpauth.error_handler
 def auth_error(status):
     return jsonify(error="Unauthorized"), status
+
 
 @httpauth.verify_password
 def verify_password(username, password):
@@ -84,6 +53,7 @@ def verify_password(username, password):
     if username in users and \
        check_password_hash(users.get(username), password):
         return username
+
 
 def get_authinfo(request):
     api_user = httpauth.current_user()
@@ -94,57 +64,8 @@ def get_authinfo(request):
         user = api_user
         group = None
     log.debug(f"User: {user}, Group: {group}")
-    return (user,group)
+    return (user, group)
 
-class auth(object):
-    def __init__(self, func):
-        self.func = func
-
-    def __call__(self, *args, **kwargs):
-        global db_init
-        if cfg.dryrun:
-            db_init = True
-            return self.func(*args, **kwargs)
-        try:
-            client = self.do_auth()
-
-            # also setup testing DB
-            # could also update DB on some interval...
-            if not db_init:
-                init_db(client, refresh=True)
-                db_init = True
-        except Exception as e:
-            return json.loads(e.body), 500
-        return self.func(*args, **kwargs)
-
-    def do_auth(self):
-        global pclient
-        global auth_expire
-        if auth_expire and pclient and (time.time() < auth_expire):
-            return pclient
-
-        pcfg = Config()
-        pcfg.host = cfg.PORTAINER_URI
-        pcfg.username = cfg.PORTAINER_USER
-        pcfg.password = cfg.PORTAINER_PASSWORD
-        pcfg.verify_ssl = cfg.PORTAINER_VERIFY_SSL
-
-        if not pcfg.username or not pcfg.password:
-            raise Exception("No Portainer username or password defined")
-
-        pclient = ApiClient(pcfg)
-        aa_api = AuthApi(pclient)
-        res = aa_api.authenticate_user(AuthenticateUserRequest(pcfg.username,
-                                                               pcfg.password))
-
-        pcfg.api_key = {'Authorization': res.jwt}
-        pcfg.api_key_prefix = {'Authorization': 'Bearer'}
-
-        log.debug("Authenticating with token: {}".format(res.jwt))
-        pclient.jwt = res.jwt
-        auth_expire = time.time() + 14400
-
-        return pclient
 
 @ns.route('/active')
 @ns.route('/active/<int:aid>')
@@ -152,12 +73,11 @@ class auth(object):
 class ActiveCollection(Resource, QueryUser):
 
     @httpauth.login_required
-    @auth
     def get(self, aid=None, nname=None):
         """
         Returns active sessions
         """
-        (user,group) = get_authinfo(request)
+        (user, group) = get_authinfo(request)
         query = self.query_builder(user, group, {"id": aid})
         dbase = cfg.db
         table = dbase.get_table('active')
@@ -175,10 +95,10 @@ class ActiveCollection(Resource, QueryUser):
                     svc = res['services'][nname]
                     nid = svc[0]['node_id']
                     cid = svc[0]['container_id']
-                    dapi = PortainerDockerApi(pclient)
-                    return dapi.get_log(nid, cid, since, stderr, stdout, tail, ts)
+                    handler = cfg.sm.get_handler(nname=nname)
+                    return handler.get_logs(nid, cid, since, stderr, stdout, tail, ts)
                 except Exception as e:
-                    return {"error": f"Could not retrieve container logs: {e}"}
+                    return {"error": f"Could not retrieve container logs: {e}"}, 500
             else:
                 return res
         elif query:
@@ -190,7 +110,6 @@ class ActiveCollection(Resource, QueryUser):
     @ns.response(404, 'Not found.')
     @ns.response(500, 'Internal server error')
     @httpauth.login_required
-    @auth
     def delete(self, aid):
         """
         Deletes an active allocation (e.g. stops containers)
@@ -205,7 +124,6 @@ class ActiveCollection(Resource, QueryUser):
             return {"error": "Not found", "id": aid}, 404
 
         force = request.args.get('force', None)
-        dapi = PortainerDockerApi(pclient)
         futures = list()
 
         allocations = doc.get("allocations", dict())
@@ -213,9 +131,10 @@ class ActiveCollection(Resource, QueryUser):
             for k, v in allocations.items():
                 try:
                     n = dbase.search(nodes, name=k)[0]
+                    handler = cfg.sm.get_handler(n)
                     if not (cfg.dryrun):
                         for alloc in v:
-                            futures.append(executor.submit(dapi.stop_container, n['id'], alloc))
+                            futures.append(executor.submit(handler.stop_container, n['id'], alloc, **n))
                 except Exception as e:
                     log.error("Could not find node/container to stop, or already stopped: {}".format(k))
         if not (cfg.dryrun):
@@ -224,7 +143,8 @@ class ActiveCollection(Resource, QueryUser):
                     res = future.result()
                     if "container_id" in res:
                         log.debug(f"Removing container {res['container_id']}")
-                        dapi.remove_container(res['node_id'], res['container_id'])
+                        handler = cfg.sm.get_handler(nname=res['node_name'])
+                        handler.remove_container(res['node_id'], res['container_id'])
                 except Exception as e:
                     log.error("Could not remove container on remote node: {}".format(e))
                     if not force:
@@ -241,7 +161,6 @@ class ActiveCollection(Resource, QueryUser):
 class NodeCollection(Resource, QueryUser):
 
     @httpauth.login_required
-    @auth
     def get(self, node: str = None, id: int = None):
         """
         Returns list of existing nodes
@@ -250,10 +169,9 @@ class NodeCollection(Resource, QueryUser):
         refresh = request.args.get('refresh', None)
         if refresh and refresh.lower() == 'true':
             log.info("Refreshing endpoint DB...")
-            global pclient
-            init_db(pclient, refresh=True)
+            init_db(refresh=True)
         else:
-            init_db(pclient, refresh=False)
+            init_db(refresh=False)
         dbase = cfg.db
         table = dbase.get_table('nodes')
         query = self.query_builder(user, group, {"id": id, "name": node})
@@ -270,7 +188,6 @@ class NodeCollection(Resource, QueryUser):
     @ns.response(204, 'Node successfully deleted.')
     @ns.response(404, 'Not found.')
     @httpauth.login_required
-    @auth
     def delete(self, node: str = None, id: int = None):
         """
         Deletes a node (endpoint)
@@ -284,16 +201,14 @@ class NodeCollection(Resource, QueryUser):
         doc = dbase.get(nodes, query=query)
         if doc == None:
             return {"error": "Not found"}, 404
-        eapi = EndpointsApi(pclient)
         try:
-            eapi.endpoint_delete(doc.get('id'))
+            cfg.sm.remove_node(doc)
         except Exception as e:
-            log.info("Could not remove portainer endpoint, ignoring...")
+            log.info(f"Could not remove node, ignoring: {e}")
         dbase.remove(nodes, ids=doc.doc_id)
         return None, 204
 
     @httpauth.login_required
-    @auth
     def post(self):
         """
         Handle the creation of a new endpoint (Node)
@@ -318,29 +233,16 @@ class NodeCollection(Resource, QueryUser):
             br.data = f"error decoding request: {e}"
             raise br
 
-        eapi = EndpointsApi(pclient)
         try:
             for ep in eps:
-                if ep['type'] == EPType.PORTAINER:
-                    eptype = 2 # We use Portainer Agent registration method
-                else:
-                    raise BadRequest("Unsupported endpoint type")
-                kwargs = {"url": ep['url'],
-                          "public_url": ep['public_url'],
-                          "tls": "true",
-                          "tls_skip_verify": "true",
-                          "tls_skip_client_verify": "true"}
-                ret = eapi.endpoint_create(name=ep['name'], endpoint_type=eptype, **kwargs)
-                # Tune remote endpoints after addition if requested
-                if settings.AGENT_AUTO_TUNE:
-                    am = AgentMonitor(pclient)
-                    am.tune(ep, post=True)
+                kwargs = {}
+                ret = cfg.sm.add_node(ep, **kwargs)
         except Exception as e:
             return {"error": "{}".format(e)}, 500
 
         try:
             log.info("New Node added, refreshing endpoint DB...")
-            init_db(pclient, refresh=True)
+            init_db(refresh=True)
         except Exception as e:
             return {"error": "Refresh DB failed"}, 500
         return None, 204
@@ -351,61 +253,63 @@ class NodeCollection(Resource, QueryUser):
 @ns.route('/create')
 class Create(Resource, QueryUser):
 
-    def _resolve_network(self, node, net_name, dapi):
-        def _build_kwargs(nprof):
-            p = nprof.get('settings')
-            docker_kwargs = {
-                "Name": net_name,
-                "Driver": p.get('driver'),
-                "EnableIPv6": p.get('enable_ipv6', True)
-            }
-            ipam = p.get('ipam')
-            print(f"=======ipam in Create in controller.py========== {ipam}")
-            if ipam:
-                docker_kwargs["IPAM"] = dict()
-                docker_kwargs["IPAM"]["Config"] = list()
-                for i in ipam.get('config'):
-                    docker_kwargs["IPAM"]["Config"].append({"Subnet": i.get('subnet'),
-                                                            "Gateway": i.get('gateway')})
-            opts = p.get('options')
-            if opts:
-                docker_kwargs["Options"] = dict()
-                if "mtu" in opts and p.get('driver') == "bridge":
-                    docker_kwargs["Options"].update({"com.docker.network.driver.mtu": opts.get('mtu')})
-                if "parent" in opts and p.get('driver') in ["macvlan", "ipvlan"]:
-                    docker_kwargs["Options"].update({"parent": opts.get('parent')})
-                if "macvlan_mode" in opts and p.get('driver') == "macvlan":
-                    docker_kwargs["Options"].update({"macvlan_mode": opts.get('macvlan_mode')})
-                if "ipvlan_mode" in opts and p.get('driver') == "ipvlan":
-                    docker_kwargs["Options"].update({"ipvlan_mode": opts.get('ipvlan_mode')})
-            print(f"====docker_kwargs in Create in controller.py ============= {docker_kwargs}")
-            return docker_kwargs
-
-        if not net_name:
-            return
-        nname = node.get('name')
-        nprof = cfg.pm.get_profile(Constants.NET, net_name)
-        if not nprof:
-            raise Exception(f"Network profile {net_name} not found")
-        kwargs = _build_kwargs(nprof)
-        ninfo = node['networks'].get(net_name)
-        # We are done if the node already has a network and it matches our profile
-        if ninfo and is_subset(kwargs, ninfo.get('_data')):
-            return
-        # Otherwise we need to either create or recreate the network
-        if not ninfo:
-            log.info(f"Network {net_name} not found on {nname}, attempting to create")
-        elif ninfo and not is_subset(kwargs, ninfo.get('_data')):
-            log.info(f"Network {net_name} found on {nname} but differs from profile, attempting to recreate")
-            try:
-                dapi.remove_network(node.get('id'), net_name)
-            except Exception as e:
-                log.warn(f"Removing network {net_name} on {nname} failed: {e}")
-        dapi.create_network(node.get('id'), net_name, **kwargs)
-        init_db(pclient, nname, refresh=True)
-
+# <<<<<<< HEAD
+#     def _resolve_network(self, node, net_name, dapi):
+#         def _build_kwargs(nprof):
+#             p = nprof.get('settings')
+#             docker_kwargs = {
+#                 "Name": net_name,
+#                 "Driver": p.get('driver'),
+#                 "EnableIPv6": p.get('enable_ipv6', True)
+#             }
+#             ipam = p.get('ipam')
+#             print(f"=======ipam in Create in controller.py========== {ipam}")
+#             if ipam:
+#                 docker_kwargs["IPAM"] = dict()
+#                 docker_kwargs["IPAM"]["Config"] = list()
+#                 for i in ipam.get('config'):
+#                     docker_kwargs["IPAM"]["Config"].append({"Subnet": i.get('subnet'),
+#                                                             "Gateway": i.get('gateway')})
+#             opts = p.get('options')
+#             if opts:
+#                 docker_kwargs["Options"] = dict()
+#                 if "mtu" in opts and p.get('driver') == "bridge":
+#                     docker_kwargs["Options"].update({"com.docker.network.driver.mtu": opts.get('mtu')})
+#                 if "parent" in opts and p.get('driver') in ["macvlan", "ipvlan"]:
+#                     docker_kwargs["Options"].update({"parent": opts.get('parent')})
+#                 if "macvlan_mode" in opts and p.get('driver') == "macvlan":
+#                     docker_kwargs["Options"].update({"macvlan_mode": opts.get('macvlan_mode')})
+#                 if "ipvlan_mode" in opts and p.get('driver') == "ipvlan":
+#                     docker_kwargs["Options"].update({"ipvlan_mode": opts.get('ipvlan_mode')})
+#             print(f"====docker_kwargs in Create in controller.py ============= {docker_kwargs}")
+#             return docker_kwargs
+#
+#         if not net_name:
+#             return
+#         nname = node.get('name')
+#         nprof = cfg.pm.get_profile(Constants.NET, net_name)
+#         if not nprof:
+#             raise Exception(f"Network profile {net_name} not found")
+#         kwargs = _build_kwargs(nprof)
+#         ninfo = node['networks'].get(net_name)
+#         # We are done if the node already has a network and it matches our profile
+#         if ninfo and is_subset(kwargs, ninfo.get('_data')):
+#             return
+#         # Otherwise we need to either create or recreate the network
+#         if not ninfo:
+#             log.info(f"Network {net_name} not found on {nname}, attempting to create")
+#         elif ninfo and not is_subset(kwargs, ninfo.get('_data')):
+#             log.info(f"Network {net_name} found on {nname} but differs from profile, attempting to recreate")
+#             try:
+#                 dapi.remove_network(node.get('id'), net_name)
+#             except Exception as e:
+#                 log.warn(f"Removing network {net_name} on {nname} failed: {e}")
+#         dapi.create_network(node.get('id'), net_name, **kwargs)
+#         init_db(pclient, nname, refresh=True)
+#
+# =======
+# >>>>>>> netvol-profiles
     @httpauth.login_required
-    @auth
     def post(self):
         """
         Handle the creation of a container service
@@ -423,7 +327,6 @@ class Create(Resource, QueryUser):
         ptable = dbase.get_table('profiles')
         itable = dbase.get_table('images')
 
-        dapi = PortainerDockerApi(pclient)
         # Do auth and resource availability checks first
         create = list()
         print(f"==========req in post in create_service in controller.py=========== {req}")
@@ -461,13 +364,24 @@ class Create(Resource, QueryUser):
                 if not node:
                     return {"error": f"Node {ep} not found"}, 404
                 try:
-                    p = prof.get('settings')
-                    print(f"==========p in post in create_service in controller.py=========== {p}")
-                    self._resolve_network(node, Network(p.get('mgmt_net')).name, dapi)
-                    self._resolve_network(node, Network(p.get('data_net')).name, dapi)
+# <<<<<<< HEAD
+#                     p = prof.get('settings')
+#                     print(f"==========p in post in create_service in controller.py=========== {p}")
+#                     self._resolve_network(node, Network(p.get('mgmt_net')).name, dapi)
+#                     self._resolve_network(node, Network(p.get('data_net')).name, dapi)
+# =======
+                    handler = cfg.sm.get_handler(node)
+                    init_db(node.get('name'), refresh=True)
+                    ret = handler.resolve_networks(node, prof)
+                    if ret:
+                        # Networks were updated by the handler, refresh Node DB
+                        init_db(node.get('name'), refresh=True)
+# >>>>>>> netvol-profiles
                 except Exception as e:
+                    import traceback
+                    traceback.print_exc()
                     return {"error": f"Node {ep} has invalid network: {e}"}, 400
-                # refresh node from DB since node state llmay have been updated above
+                # refresh node from DB since node state may have been updated above
                 node = dbase.get(ntable, query=query)
                 create.append(
                     {"node": node,
@@ -478,7 +392,6 @@ class Create(Resource, QueryUser):
                      "kwargs": r.get("kwargs", dict())
                      }
                 )
-
         svcs = dict()
         try:
             # keep a running set of addresses and ports allocated for this request
@@ -487,12 +400,17 @@ class Create(Resource, QueryUser):
             cports = set()
             sports = set()
             for r in create:
-                s = r['node']['name']
-                if s not in svcs:
-                    svcs[s] = list()
-                svcs[s].append(create_service(r['node'], r['image'], r['profile'], addrs_v4, addrs_v6,
-                                              cports, sports, r['arguments'], r['remove_container'], **r['kwargs']))
-
+                node = r.get('node')
+                nname = node.get('name')
+                if nname not in svcs:
+                    svcs[nname] = list()
+                handler = cfg.sm.get_handler(node)
+                rec = handler.create_service_record(node, r.get('image'), r.get('profile'), addrs_v4, addrs_v6,
+                                                    cports, sports, r.get('arguments'), r.get('remove_container'),
+                                                    **r.get('kwargs'))
+                if not rec:
+                    raise Exception(f"No service record created for node {nname}")
+                svcs[nname].append(rec)
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -508,69 +426,24 @@ class Create(Resource, QueryUser):
         # get an ID from the DB
         Id = precommit_db()
         errs = False
-        for k, v in svcs.items():
-            for s in svcs[k]:
-                # the portainer node this service will start on
-                n = s['node']
+        for k, services in svcs.items():
+            for s in services:
                 if (cfg.dryrun):
                     ret = {'Id': str(uuid.uuid4())}
                     name = "janus_dryrun"
                 else:
-                    # Docker-specific v4 vs v6 image registry nonsense. Need to abstract this away.
                     try:
-                        img = s['image']
-                        handle_image(n, img, dapi, s['pull_image'])
+                        aid, nname = cfg.sm.init_service(s, Id, errs)
                     except Exception as e:
-                        log.error("Could not pull image {} on node {}, {}: {}".format(img,
-                                                                                      n['name'],
-                                                                                      e.reason,
-                                                                                      e.body))
-                        errs = error_svc(s, e)
-                        try:
-                            v6img = f"registry.ipv6.docker.com/{s['image']}"
-                            handle_image(n, v6img, dapi, s['pull_image'])
-                            s['image'] = v6img
-                        except Exception as e:
-                            log.error("Could not pull image {} on node {}, {}: {}".format(v6img,
-                                                                                          n['name'],
-                                                                                          e.reason,
-                                                                                          e.body))
-                            errs = error_svc(s, e)
-                            continue
-                    # clear any errors if image resolved
-                    s['errors'] = list()
-                    errs = False
-                    try:
-                        name = f"janus_{Id}" if Id else None
-                        ret = dapi.create_container(n['id'], s['image'], name, **s['docker_kwargs'])
-                    except ApiException as e:
-                        log.error("Could not create container on {}: {}: {}".format(n['name'],
-                                                                                    e.reason,
-                                                                                    e.body))
-                        errs = error_svc(s, e)
+                        import traceback
+                        traceback.print_exc()
+                        log.error(f"Could not initialize service: {e}")
                         continue
 
-                if not (cfg.dryrun):
-                    try:
-                        # if specified, connect the management network to this created container
-                        if s['mgmt_net']:
-                            dapi.connect_network(n['id'], s['mgmt_net']['id'], ret['Id'],
-                                                 **s['net_kwargs'])
-                    except ApiException as e:
-                        log.error("Could not connect network on {}: {}: {}".format(n['name'],
-                                                                                   e.reason,
-                                                                                   e.body))
-                        errs = error_svc(s, e)
-                        continue
-
-                s['container_id'] = ret['Id']
-                s['container_name'] = name
-                if n['name'] not in record['allocations']:
-                    record['allocations'].update({n['name']: list()})
-                record['allocations'][n['name']].append(ret['Id'])
-                if "node" in s:
-                    del s['node']
         # complete accounting
+        if nname not in record['allocations']:
+            record['allocations'].update({nname: list()})
+        record['allocations'][nname].append(aid)
         record['id'] = Id
         record['services'] = svcs
         record['request'] = req
@@ -596,7 +469,7 @@ class Start(Resource, QueryUser):
         # - It may take some time for the ansible job to finish or timeout (300 seconds)
         #
         prof = cfg.pm.get_profile(Constants.HOST, s['profile'])
-        for psname in prof['settings']['post_starts']:
+        for psname in prof.settings.post_starts:
             ps = cfg.get_poststart(psname)
             if ps['type'] == 'ansible':
                 jt_name = ps['jobtemplate']
@@ -615,7 +488,6 @@ class Start(Resource, QueryUser):
                     continue
 
     @httpauth.login_required
-    @auth
     def put(self, id=None):
         """
         Handle the starting of container services
@@ -635,7 +507,6 @@ class Start(Resource, QueryUser):
 
         # start the services
         error = False
-        dapi = PortainerDockerApi(pclient)
         services = svc.get("services", dict())
         for k,v in services.items():
             for s in v:
@@ -645,6 +516,7 @@ class Start(Resource, QueryUser):
                     continue
                 c = s['container_id']
                 node = dbase.get(ntable, name=k)
+                handler = cfg.sm.get_handler(node)
                 if not node:
                     log.error("Container node {} not found for container_id: {}".format(k, c))
                     return {"error": "Node not found: {}".format(k)}, 404
@@ -655,13 +527,13 @@ class Start(Resource, QueryUser):
                     orig_errcnt = len(s.get('errors'))
 
                     try:
-                        dapi.start_container(node['id'], c)
+                        handler.start_container(node['id'], c)
                         if s['qos']: # is not None and s['qos'].isinstance(dict)
                             qos = s["qos"]
                             qos["container"] = c
                             set_qos(node["public_url"], qos)
 
-                    except ApiException as e:
+                    except Exception as e:
                         log.error("Could not start container on {}: {}: {}".format(k,
                                                                                    e.reason,
                                                                                    e.body))
@@ -689,7 +561,6 @@ class Start(Resource, QueryUser):
 class Stop(Resource, QueryUser):
 
     @httpauth.login_required
-    @auth
     def put(self, id=None):
         """
         Handle the stopping of container services
@@ -709,7 +580,6 @@ class Stop(Resource, QueryUser):
 
         # stop the services
         error = False
-        dapi = PortainerDockerApi(pclient)
         for k,v in svc['services'].items():
             for s in v:
                 if not s['container_id']:
@@ -717,14 +587,15 @@ class Stop(Resource, QueryUser):
                     continue
                 c = s['container_id']
                 node = dbase.get(ntable, name=k)
+                handler = cfg.sm.get_handler(node)
                 if not node:
                     log.error("Container node {} not found for container_id: {}".format(k, c))
                     return {"error": "Node not found: {}".format(k)}, 404
                 log.debug("Stopping container {} on {}".format(c, k))
                 if not (cfg.dryrun):
                     try:
-                        dapi.stop_container(node['id'], c)
-                    except ApiException as e:
+                        handler.stop_container(node['id'], c)
+                    except Exception as e:
                         log.error("Could not stop container on {}: {}: {}".format(k,
                                                                                   e.reason,
                                                                                   e.body))
@@ -740,7 +611,6 @@ class Stop(Resource, QueryUser):
 class Exec(Resource):
 
     @httpauth.login_required
-    @auth
     def post(self):
         """
         Handle the execution of a container command inside Service
@@ -777,7 +647,6 @@ class Exec(Resource):
         container = req["container"]
         cmd = req["Cmd"]
 
-        dapi = PortainerDockerApi(pclient)
         kwargs = {'AttachStdin': False,
                   'AttachStdout': attach,
                   'AttachStderr': attach,
@@ -785,10 +654,11 @@ class Exec(Resource):
                   'Cmd': cmd
                   }
         try:
-            ret = dapi.exec_create(node["id"], container, **kwargs)
+            handler = cfg.sm.get_handler(node)
+            ret = handler.exec_create(node["id"], container, **kwargs)
             if start:
-                ret = dapi.exec_start(node["id"], ret["Id"])
-        except ApiException as e:
+                ret = handler.exec_start(node["id"], ret["Id"])
+        except Exception as e:
             log.error("Could not exec in container on {}: {}: {}".format(nname,
                                                                          e.reason,
                                                                          e.body))
@@ -853,10 +723,10 @@ class Profile(Resource):
             res = cfg.pm.get_profile(resource, rname, user, group, inline=True)
             if not res:
                 return {"error": "Profile not found: {}".format(rname)}, 404
-            return res
+            return res.dict()
         else:
             log.debug("Returning all profiles")
-            ret = cfg.pm.get_profiles(resource, user, group, inline=True)
+            ret = [ p.dict() for p in cfg.pm.get_profiles(resource, user, group, inline=True) ]
             return ret if ret else list()
 
     @httpauth.login_required
@@ -884,21 +754,27 @@ class Profile(Resource):
                     return {"error": "Profile {} already exists!".format(rname)}, 400
                 default = cfg._base_profile.copy()
                 default.update((k, configs[k]) for k in default.keys() & configs.keys())
-                ProfileSchema(**default)
+                ContainerProfile(**default)
 
+# <<<<<<< HEAD
             elif resource == Constants.VOL:
                 default = req["settings"]
                 res = cfg.pm.get_profile(resource, rname, inline=True)
                 if res:
                     return {"error": "Mount {} already exists!".format(rname)}, 400
-                VolumeSchema(**default)
+                VolumeProfile(**default)
 
             elif resource == Constants.NET:
                 default = req["settings"]
                 res = cfg.pm.get_profile(resource, rname, inline=True)
                 if res:
                     return {"error": "Network {} already exists!".format(rname)}, 400
-                #NetworkSchema(**default)
+                NetworkProfile(**default)
+# =======
+#             default = cfg._base_profile.copy()
+#             default.update((k, configs[k]) for k in default.keys() & configs.keys())
+#             ContainerProfile(**default)
+# >>>>>>> netvol-profiles
 
         except ValidationError as e:
             return str(e), 400
@@ -913,7 +789,7 @@ class Profile(Resource):
         except Exception as e:
             return str(e), 500
 
-        return cfg.pm.get_profile(resource, rname), 200
+        return cfg.pm.get_profile(resource, rname).dict(), 200
 
     @httpauth.login_required
     def put(self, resource=None, rname=None):
@@ -935,13 +811,13 @@ class Profile(Resource):
             if rname == "default":
                 return {"error": "Cannot update default profile!"}, 400
 
-            res = cfg.pm.get_profile(resource, rname, user, group, inline=True)
+            res = cfg.pm.get_profile(resource, rname, user, group, inline=True).dict()
             if not res:
                 return {"error": "Profile not found: {}".format(rname)}, 404
 
             default = res.copy()
             default['settings'].update(configs)
-            ProfileSchema(**default)
+            ContainerProfile(**default)
 
         except ValidationError as e:
             return {"error" : str(e)}, 400
@@ -955,7 +831,7 @@ class Profile(Resource):
         except Exception as e:
             return str(e), 500
 
-        return cfg.pm.get_profile(resource, rname), 200
+        return cfg.pm.get_profile(resource, rname).dict(), 200
 
     @httpauth.login_required
     def delete(self, resource=None, rname=None):
@@ -1021,14 +897,12 @@ class JanusAuth(Resource):
         return reduce(lambda a, b: a & b, qs)
 
     @httpauth.login_required
-    @auth
     def get(self, resource, rid=None, rname=None):
         if resource not in self.resources and resource not in self.get_resources:
             return {"error": f"Invalid resource path: {resource}"}, 404
         # Returns active token for backend client (e.g. Portainer)
         if resource in self.get_resources:
-            global plient
-            return {"jwt": pclient.jwt}, 200
+            return {"jwt": cfg.sm.get_auth_token()}, 200
         query = self.query_builder(rid, rname)
         table = cfg.db.get_table(resource)
         res = cfg.db.get(table, query=query)

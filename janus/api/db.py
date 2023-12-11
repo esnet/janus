@@ -4,7 +4,6 @@ import queue
 import concurrent
 import os
 import yaml
-from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Lock
 
 from functools import reduce
@@ -13,11 +12,8 @@ from tinydb import TinyDB, Query, where
 
 from janus import settings
 from janus.settings import cfg
-from janus.lib import AgentMonitor
+from janus.api.models import Network
 from .utils import Constants
-
-from .portainer_docker import PortainerDockerApi
-from .endpoints_api import EndpointsApi
 
 
 log = logging.getLogger(__name__)
@@ -120,90 +116,16 @@ class DBLayer():
         return ret
 
 
-def init_db(client, nname=None, refresh=False):
-    def parse_portainer_endpoints(res):
-        ret = dict()
-        for e in res:
-            ret[e['Name']] = {
-                'name': e['Name'],
-                'endpoint_status': e['Status'],
-                'id': e['Id'],
-                'gid': e['GroupId'],
-                'url': e['URL'],
-                'public_url': e['PublicURL']
-            }
-        return ret
-
-    def parse_portainer_networks(res):
-        ret = dict()
-        for e in res:
-            key = e['Name']
-            ret[key] = {
-                'id': e['Id'],
-                'driver': e['Driver'],
-                'subnet': e['IPAM']['Config'],
-                '_data': e
-            }
-            if e["Options"]:
-                ret[key].update(e['Options'])
-        return ret
-
-    def parse_portainer_images(res):
-        ret = list()
-        Q = Query()
-        table = dbase.get_table('images')
-        for e in res:
-            if not e['RepoDigests'] and not e['RepoTags']:
-                continue
-            if e['RepoTags']:
-                e['name'] = e['RepoTags'][0].split(":")[0]
-                ret.extend(e['RepoTags'])
-            elif e['RepoDigests']:
-                e['name'] = e['RepoDigests'][0].split("@")[0]
-            if e['name'] == '<none>':
-                continue
-            dbase.upsert(table, e, 'name', e['name'])
-        return ret
-
-    def _get_endpoint_info(Id, url, nname, nodes):
-        try:
-            nets = dapi.get_networks(Id)
-            imgs = dapi.get_images(Id)
-        except Exception as e:
-            log.error("No response from {}".format(url))
-            return nodes[nname]
-
-        nodes[nname]['networks'] = parse_portainer_networks(nets)
-        nodes[nname]['images'] = parse_portainer_images(imgs)
-
-        try:
-            (n, ret) = am.check_agent(nname, url)
-            nodes[nname]['host'] = ret.json()
-            (n, ret) = am.tune(nname, url)
-            nodes[nname]['host']['tuning'] = ret.json()
-        except Exception as e:
-            log.error("Could not fetch agent info from {}: {}".format(url, e))
-            am.start_agent(nodes[nname])
-        return nodes[nname]
-
-    if not client:
-        log.warning("init_db called with no active client, returning")
-        return
+def init_db(nname=None, refresh=False):
     Node = Query()
     dbase = cfg.db
     node_table = dbase.get_table('nodes')
-    eapi = EndpointsApi(client)
     res = None
     nodes = None
     try:
-        res = eapi.endpoint_list()
-        # ignore some endpoints based on settings
-        for r in res:
-            if r['Name'] in settings.IGNORE_EPS:
-                res.remove(r)
-        nodes = parse_portainer_endpoints(res)
-        for k,v in nodes.items():
-            dbase.upsert(node_table, v, 'name', k)
+        nodes = cfg.sm.get_nodes(nname, refresh)
+        for n in nodes:
+            dbase.upsert(node_table, n, 'name', n['name'])
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -216,45 +138,19 @@ def init_db(client, nname=None, refresh=False):
     else:
         assert(nodes is not None)
 
-    try:
-        dapi = PortainerDockerApi(client)
-        am   = AgentMonitor(client)
-        futures = list()
-        tp = ThreadPoolExecutor(max_workers=8)
-        for k, v in nodes.items():
-            if nname and k != nname:
-                continue
-            futures.append(tp.submit(_get_endpoint_info, v['id'], v['public_url'], k, nodes))
-        for future in futures:
-            try:
-                item = future.result(timeout=5)
-            except Exception as e:
-                log.error(f"Timeout waiting on endpoint query, continuing")
-                continue
-            dbase.upsert(node_table, item, 'name', item['name'])
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        log.error("Backend error: {}".format(e))
-        return
-
     # setup some profile accounting
     # these are the data plane networks we care about
     data_nets = list()
     profs = cfg.pm.get_profiles(Constants.HOST)
     for p in profs:
-        for nname in ["data_net", "mgmt_net"]:
-            net = p["settings"][nname]
-            if isinstance(net, str):
-                if net not in data_nets:
-                    data_nets.append(net)
-            elif isinstance(net, dict):
-                if net['name'] not in data_nets:
-                    data_nets.append(net['name'])
+        for net in [Network(p.settings.mgmt_net), Network(p.settings.data_net)]:
+            if net.name not in data_nets:
+                data_nets.append(net.name)
 
     # simple IPAM for data networks
     net_table = dbase.get_table('networks')
-    for k, v in nodes.items():
+    for node in nodes:
+        k = node.get('name')
         # simple accounting for allocated ports (in node table)
         res = dbase.search(node_table, query=((Node.name == k) & (Node.allocated_ports.exists())))
         if not len(res):

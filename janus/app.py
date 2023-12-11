@@ -22,6 +22,7 @@ from janus import settings
 from janus.settings import cfg
 from janus.api.db import DBLayer
 from janus.api.profile import ProfileManager
+from janus.api.manager import ServiceManager
 
 
 app = Flask(__name__)
@@ -108,8 +109,10 @@ def main():
             db = DBLayer(path=args.database)
             # Setup the Profile Manager
             pm = ProfileManager(db, args.profiles)
+            # Setup the Service Manager
+            sm = ServiceManager(db)
             # Save handles to these in our global config class
-            cfg.setdb(db, pm)
+            cfg.setdb(db, pm, sm)
             # Read all profiles at startup
             cfg.pm.read_profiles()
         except Exception as e:
