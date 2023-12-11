@@ -14,7 +14,7 @@ class Service(ABC):
         pass
 
     @abstractmethod
-    def create_service_record(self, node, img, prof, addrs_v4, addrs_v6, cports, sports,
+    def create_service_record(self, sid, node, img, prof, addrs_v4, addrs_v6, cports, sports,
                               arguments, remove_container, **kwargs):
         pass
 
@@ -64,6 +64,14 @@ class Service(ABC):
 
     @abstractmethod
     def connect_network(self, node, network, container):
+        pass
+
+    @abstractmethod
+    def remove_network(self, node, network, **kwargs):
+        pass
+
+    @abstractmethod
+    def start_container(self, node, container, service=None, **kwargs):
         pass
 
     @abstractmethod

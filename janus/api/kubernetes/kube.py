@@ -1,3 +1,4 @@
+import time
 import json
 import logging
 from kubernetes import client, config
@@ -5,7 +6,7 @@ from kubernetes.config import KUBE_CONFIG_DEFAULT_LOCATION
 from kubernetes.client.rest import ApiException
 from janus.api.service import Service
 from janus.api.constants import EPType
-from janus.api.models import Network, ContainerProfile
+from janus.api.models import Network, ContainerProfile, Node
 from janus.api.constants import Constants
 from janus.settings import cfg
 from janus.api.utils import (
@@ -17,6 +18,7 @@ from janus.api.utils import (
     get_numa,
     get_cpuset,
     get_mem,
+    cname_from_id,
     is_subset
 )
 
@@ -140,8 +142,22 @@ class KubernetesApi(Service):
     def create_node(self, nname, eptype, **kwargs):
         pass
 
-    def create_container(self, node, image, name=None, **kwargs):
-        raise Exception("Not implemented")
+    def create_container(self, node: str, image: str, name: str = None, **kwargs):
+        return {"Id": name}
+
+    def start_container(self, node: str, container: str, service=None, **kwargs):
+        api_client = self._get_client(node)
+        v1 = client.CoreV1Api(api_client)
+        print (service['kwargs'])
+        resp = v1.create_namespaced_pod(body=service['kwargs'],
+                                        namespace=self.NS)
+        resp = v1.read_namespaced_pod(name=container,
+                                      namespace='default')
+        log.info(f"Pod transitioned to state: {resp.status.phase}")
+
+    def stop_container(self, node, container):
+        api = client.CoreV1Api(node)
+        res = api.delete_namespaced_pod(container, self.NS)
 
     def create_network(self, nname, net_name, **kwargs):
         api_client = self._get_client(nname)
@@ -170,6 +186,18 @@ class KubernetesApi(Service):
     def exec_start(self, node, eid):
         pass
 
+    def remove_network(self, node, network, **kwargs):
+        api_client = self._get_client(node)
+        api = client.CustomObjectsApi(api_client)
+        api.delete_namespaced_custom_object(
+            group="k8s.cni.cncf.io",
+            version="v1",
+            name=network,
+            plural="network-attachment-definitions",
+            namespace=self.NS
+        )
+        log.info(f"Removed network {network} on {node}")
+
     def resolve_networks(self, node, prof):
         def _build_net(p):
             cfg = {
@@ -177,9 +205,9 @@ class KubernetesApi(Service):
                 "plugins": [
                     {
                         "type": p.settings.driver,
-                        "vlanId": p.settings.options.get('vlan'),
+                        "vlanId": int(p.settings.options.get('vlan')) if p.settings.options.get('vlan') else 1,
                         "master": p.settings.options.get('parent'),
-                        "mtu": p.settings.options.get('mtu') if p.settings.options.get('mtu') else "1500",
+                        "mtu": int(p.settings.options.get('mtu')) if p.settings.options.get('mtu') else 1500,
                         "ipam": {
                             "type": "static"
                         }
@@ -224,11 +252,12 @@ class KubernetesApi(Service):
             created = True
         return created
 
-    def create_service_record(self, node, img, prof: ContainerProfile,
+    def create_service_record(self, sid, node, img, prof: ContainerProfile,
                               addrs_v4, addrs_v6, cports, sports,
                               arguments, remove_container, **kwargs):
         srec = dict()
         nname = node.get('name')
+        cname = cname_from_id(sid)
         dnet = Network(prof.settings.data_net, nname)
         mnet = Network(prof.settings.mgmt_net, nname)
         args_override = arguments
@@ -242,6 +271,38 @@ class KubernetesApi(Service):
         cport = get_next_cport(node, prof, cports)
         sport = get_next_sport(node, prof, sports)
 
+        dnet_conf = [
+            {
+                "name": dnet.name,
+                "ips": [ "10.1.1.101/24" ]
+            }
+        ]
+
+        kwargs = {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": cname,
+                "annotations": {
+                    "k8s.v1.cni.cncf.io/networks": json.dumps(dnet_conf)
+                }
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "name": cname,
+                        "command": ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"],
+                        "image": "dtnaas/tools",
+                        "ports": [
+                            {
+                                "containerPort": 80
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+
         srec['mgmt_net'] = node['networks'].get(mnet.name, None)
         #srec['mgmt_ipv4'] = mgmt_ipv4
         #srec['mgmt_ipv6'] = mgmt_ipv6
@@ -251,7 +312,7 @@ class KubernetesApi(Service):
         #srec['data_ipv6'] = data_ipv6
         srec['container_user'] = kwargs.get("USER_NAME", None)
 
-        srec['kwargs'] = {}
+        srec['kwargs'] = kwargs
         srec['node'] = node
         srec['node_id'] = node['id']
         srec['serv_port'] = sport

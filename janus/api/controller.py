@@ -26,6 +26,7 @@ from janus.api.utils import (
     precommit_db,
     set_qos,
     error_svc,
+    cname_from_id,
     Constants)
 
 
@@ -72,6 +73,7 @@ class ActiveCollection(Resource, QueryUser):
         """
         (user, group) = get_authinfo(request)
         query = self.query_builder(user, group, {"id": aid})
+        fields = request.args.get('fields')
         dbase = cfg.db
         table = dbase.get_table('active')
         if query and aid:
@@ -93,11 +95,23 @@ class ActiveCollection(Resource, QueryUser):
                 except Exception as e:
                     return {"error": f"Could not retrieve container logs: {e}"}, 500
             else:
-                return res
+                if (fields):
+                    return {k: v for k,v in res.items() if k in fields.split(',')}
+                else:
+                    return res
         elif query:
             return dbase.search(table, query=query)
         else:
-            return dbase.all(table)
+            res = dbase.all(table)
+            if (fields):
+                ret = list()
+                for r in res:
+                    if not r:
+                        continue
+                    ret.append({k: v for k,v in r.items() if k in fields.split(',')})
+                return ret
+            else:
+                return res
 
     @ns.response(204, 'Allocation successfully deleted.')
     @ns.response(404, 'Not found.')
@@ -129,6 +143,8 @@ class ActiveCollection(Resource, QueryUser):
                         for alloc in v:
                             futures.append(executor.submit(handler.stop_container, n['id'], alloc, **n))
                 except Exception as e:
+                    import traceback
+                    traceback.print_exc()
                     log.error("Could not find node/container to stop, or already stopped: {}".format(k))
         if not (cfg.dryrun):
             for future in concurrent.futures.as_completed(futures):
@@ -321,6 +337,9 @@ class Create(Resource, QueryUser):
                      "kwargs": r.get("kwargs", dict())
                      }
                 )
+
+        # get an ID from the DB
+        Id = precommit_db()
         svcs = dict()
         try:
             # keep a running set of addresses and ports allocated for this request
@@ -334,7 +353,7 @@ class Create(Resource, QueryUser):
                 if nname not in svcs:
                     svcs[nname] = list()
                 handler = cfg.sm.get_handler(node)
-                rec = handler.create_service_record(node, r.get('image'), r.get('profile'), addrs_v4, addrs_v6,
+                rec = handler.create_service_record(Id, node, r.get('image'), r.get('profile'), addrs_v4, addrs_v6,
                                                     cports, sports, r.get('arguments'), r.get('remove_container'),
                                                     **r.get('kwargs'))
                 if not rec:
@@ -352,8 +371,6 @@ class Create(Resource, QueryUser):
                   'state': State.INITIALIZED.name,
                   'allocations': dict()}
 
-        # get an ID from the DB
-        Id = precommit_db()
         errs = False
         for k, services in svcs.items():
             for s in services:
@@ -456,16 +473,15 @@ class Start(Resource, QueryUser):
                     orig_errcnt = len(s.get('errors'))
 
                     try:
-                        handler.start_container(node['id'], c)
-                        if s['qos']: # is not None and s['qos'].isinstance(dict)
+                        handler.start_container(node.get('name'), c, s)
+                        if s.get('qos'): # is not None and s['qos'].isinstance(dict)
                             qos = s["qos"]
                             qos["container"] = c
                             set_qos(node["public_url"], qos)
-
                     except Exception as e:
-                        log.error("Could not start container on {}: {}: {}".format(k,
-                                                                                   e.reason,
-                                                                                   e.body))
+                        import traceback
+                        traceback.print_exc()
+                        log.error("Could not start container on {}: {}".format(k,e))
                         error_svc(s, e)
                         error = True
                         continue
@@ -525,9 +541,7 @@ class Stop(Resource, QueryUser):
                     try:
                         handler.stop_container(node['id'], c)
                     except Exception as e:
-                        log.error("Could not stop container on {}: {}: {}".format(k,
-                                                                                  e.reason,
-                                                                                  e.body))
+                        log.error("Could not stop container on {}: {}".format(k,e))
                         error_svc(s, e)
                         error = True
                         continue
