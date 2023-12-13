@@ -156,8 +156,9 @@ class KubernetesApi(Service):
         log.info(f"Pod transitioned to state: {resp.status.phase}")
 
     def stop_container(self, node, container):
-        api = client.CoreV1Api(node)
-        res = api.delete_namespaced_pod(container, self.NS)
+        api_client = self._get_client(node)
+        v1 = client.CoreV1Api(api_client)
+        res = v1.delete_namespaced_pod(str(container), self.NS)
 
     def create_network(self, nname, net_name, **kwargs):
         api_client = self._get_client(nname)
