@@ -253,62 +253,6 @@ class NodeCollection(Resource, QueryUser):
 @ns.route('/create')
 class Create(Resource, QueryUser):
 
-# <<<<<<< HEAD
-#     def _resolve_network(self, node, net_name, dapi):
-#         def _build_kwargs(nprof):
-#             p = nprof.get('settings')
-#             docker_kwargs = {
-#                 "Name": net_name,
-#                 "Driver": p.get('driver'),
-#                 "EnableIPv6": p.get('enable_ipv6', True)
-#             }
-#             ipam = p.get('ipam')
-#             print(f"=======ipam in Create in controller.py========== {ipam}")
-#             if ipam:
-#                 docker_kwargs["IPAM"] = dict()
-#                 docker_kwargs["IPAM"]["Config"] = list()
-#                 for i in ipam.get('config'):
-#                     docker_kwargs["IPAM"]["Config"].append({"Subnet": i.get('subnet'),
-#                                                             "Gateway": i.get('gateway')})
-#             opts = p.get('options')
-#             if opts:
-#                 docker_kwargs["Options"] = dict()
-#                 if "mtu" in opts and p.get('driver') == "bridge":
-#                     docker_kwargs["Options"].update({"com.docker.network.driver.mtu": opts.get('mtu')})
-#                 if "parent" in opts and p.get('driver') in ["macvlan", "ipvlan"]:
-#                     docker_kwargs["Options"].update({"parent": opts.get('parent')})
-#                 if "macvlan_mode" in opts and p.get('driver') == "macvlan":
-#                     docker_kwargs["Options"].update({"macvlan_mode": opts.get('macvlan_mode')})
-#                 if "ipvlan_mode" in opts and p.get('driver') == "ipvlan":
-#                     docker_kwargs["Options"].update({"ipvlan_mode": opts.get('ipvlan_mode')})
-#             print(f"====docker_kwargs in Create in controller.py ============= {docker_kwargs}")
-#             return docker_kwargs
-#
-#         if not net_name:
-#             return
-#         nname = node.get('name')
-#         nprof = cfg.pm.get_profile(Constants.NET, net_name)
-#         if not nprof:
-#             raise Exception(f"Network profile {net_name} not found")
-#         kwargs = _build_kwargs(nprof)
-#         ninfo = node['networks'].get(net_name)
-#         # We are done if the node already has a network and it matches our profile
-#         if ninfo and is_subset(kwargs, ninfo.get('_data')):
-#             return
-#         # Otherwise we need to either create or recreate the network
-#         if not ninfo:
-#             log.info(f"Network {net_name} not found on {nname}, attempting to create")
-#         elif ninfo and not is_subset(kwargs, ninfo.get('_data')):
-#             log.info(f"Network {net_name} found on {nname} but differs from profile, attempting to recreate")
-#             try:
-#                 dapi.remove_network(node.get('id'), net_name)
-#             except Exception as e:
-#                 log.warn(f"Removing network {net_name} on {nname} failed: {e}")
-#         dapi.create_network(node.get('id'), net_name, **kwargs)
-#         init_db(pclient, nname, refresh=True)
-#
-# =======
-# >>>>>>> netvol-profiles
     @httpauth.login_required
     def post(self):
         """
@@ -329,7 +273,6 @@ class Create(Resource, QueryUser):
 
         # Do auth and resource availability checks first
         create = list()
-        print(f"==========req in post in create_service in controller.py=========== {req}")
         for r in req:
             instances = r.get("instances", None)
             profile = r.get("profile", None)
@@ -364,19 +307,12 @@ class Create(Resource, QueryUser):
                 if not node:
                     return {"error": f"Node {ep} not found"}, 404
                 try:
-# <<<<<<< HEAD
-#                     p = prof.get('settings')
-#                     print(f"==========p in post in create_service in controller.py=========== {p}")
-#                     self._resolve_network(node, Network(p.get('mgmt_net')).name, dapi)
-#                     self._resolve_network(node, Network(p.get('data_net')).name, dapi)
-# =======
                     handler = cfg.sm.get_handler(node)
                     init_db(node.get('name'), refresh=True)
                     ret = handler.resolve_networks(node, prof)
                     if ret:
                         # Networks were updated by the handler, refresh Node DB
                         init_db(node.get('name'), refresh=True)
-# >>>>>>> netvol-profiles
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
@@ -736,7 +672,6 @@ class Profile(Resource):
                 return {"error": f"Invalid resource path: {resource}"}, 404
 
             req = request.get_json()
-            print(f"=======req in POST in Profile in CONTROLLER.PY ==================== {req}")
             if (req is None) or (req and type(req) is not dict):
                 res = jsonify(error="Body is not json dictionary")
                 res.status_code = 400
@@ -747,34 +682,28 @@ class Profile(Resource):
                 res.status_code = 400
                 return res
 
-            if resource == Constants.HOST:
-                configs = req["settings"]
-                res = cfg.pm.get_profile(resource, rname, inline=True)
-                if res:
-                    return {"error": "Profile {} already exists!".format(rname)}, 400
-                default = cfg._base_profile.copy()
-                default.update((k, configs[k]) for k in default.keys() & configs.keys())
-                ContainerProfile(**default)
+            configs = req["settings"]
+            res = cfg.pm.get_profile(resource, rname, inline=True)
+            if res:
+                return {"error": "'{}' already exists!".format(rname)}, 400
 
-# <<<<<<< HEAD
+            if resource == Constants.HOST:
+                default = cfg._base_profile.copy()
+
             elif resource == Constants.VOL:
-                default = req["settings"]
-                res = cfg.pm.get_profile(resource, rname, inline=True)
-                if res:
-                    return {"error": "Mount {} already exists!".format(rname)}, 400
-                VolumeProfile(**default)
+                default = cfg._base_volumes.copy()
 
             elif resource == Constants.NET:
-                default = req["settings"]
-                res = cfg.pm.get_profile(resource, rname, inline=True)
-                if res:
-                    return {"error": "Network {} already exists!".format(rname)}, 400
-                NetworkProfile(**default)
-# =======
-#             default = cfg._base_profile.copy()
-#             default.update((k, configs[k]) for k in default.keys() & configs.keys())
-#             ContainerProfile(**default)
-# >>>>>>> netvol-profiles
+                default = cfg._base_networks.copy()
+
+            default.update((k, configs[k]) for k in default.keys() & configs.keys())
+            prof = {"name": rname, "settings": default}
+            if resource == Constants.HOST:
+                ContainerProfile(**prof)
+            elif resource == Constants.VOL:
+                VolumeProfile(**prof)
+            elif resource == Constants.NET:
+                NetworkProfile(**prof)
 
         except ValidationError as e:
             return str(e), 400
@@ -784,6 +713,7 @@ class Profile(Resource):
 
         try:
             tbl = cfg.db.get_table(resource)
+            # default = req["settings"]
             record = {'name': rname, "settings": default}
             log.info("Creating {}".format(cfg.db.insert(tbl, record)))
         except Exception as e:
@@ -798,7 +728,6 @@ class Profile(Resource):
         try:
             (user,group) = get_authinfo(request)
             req = request.get_json()
-
             if (req is None) or (req and type(req) is not dict):
                 res = jsonify(error="Body is not json dictionary")
                 raise BadRequest(res)
@@ -817,7 +746,13 @@ class Profile(Resource):
 
             default = res.copy()
             default['settings'].update(configs)
-            ContainerProfile(**default)
+
+            if resource == Constants.HOST:
+                ContainerProfile(**default)
+            elif resource == Constants.NET:
+                NetworkProfile(**default)
+            elif resource == Constants.VOL:
+                VolumeProfile(**default)
 
         except ValidationError as e:
             return {"error" : str(e)}, 400

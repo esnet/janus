@@ -76,7 +76,20 @@ class JanusConfig():
         }
 
         self._volumes = dict()
+        self._base_volumes = {
+            "type": "bind",
+            "driver": None,
+            "source": None,
+            "target": None,
+        }
         self._networks = dict()
+        self._base_networks = {
+            "driver": "bridge",
+            "mode": None,
+            "enable_ipv6": False,
+            "ipam": dict(),
+            "options": dict()
+        }
         self._qos = dict()
         self._profiles = dict()
         self._post_starts = dict()

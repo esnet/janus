@@ -72,13 +72,8 @@ class ProfileManager(QueryUser):
                                 if (k == "networks"):
                                     for key, value in v.items():
                                         try:
-# <<<<<<< HEAD
-#                                             print("=====RUNNING READ_PROFILES IN PROFILE.PY===========")
-#                                             NetworkProfile(**value)
-# =======
                                             prof = {"name": key, "settings": value}
                                             NetworkProfile(**prof)
-# >>>>>>> netvol-profiles
                                             cfg._networks[key] = value
                                             self._db.upsert(net_tbl, prof, 'name', key)
                                         except Exception as e:
@@ -127,7 +122,6 @@ class ProfileManager(QueryUser):
                     yfile.close()
 
         log.info("qos: {}".format(cfg._qos.keys()))
-        #log.info("volumes: {}".format(cfg._volumes.keys()))
         log.info("volumes: {}".format(cfg._volumes.keys()))
         log.info("features: {}".format(cfg._features.keys()))
         log.info("profiles: {}".format(cfg._profiles.keys()))
