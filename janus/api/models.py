@@ -73,7 +73,7 @@ class ContainerProfile(BaseModel):
 
 class NetworkProfileSettings(BaseModel):
     driver: str
-    mode: Optional[str]
+    mode: Optional[str] = None
     enable_ipv6: bool = False
     ipam: Optional[dict] = None
     options: Optional[dict] = None

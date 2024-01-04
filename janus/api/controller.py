@@ -19,14 +19,7 @@ from janus.lib import AgentMonitor
 from janus.settings import cfg
 from janus.api.constants import State, EPType
 from janus.api.db import init_db, QueryUser
-# <<<<<<< HEAD
-# from janus.api.validator import (
-#     ContainerProfile as ProfileSchema,
-#     NetworkProfile as NetworkSchema,
-#     VolumeProfile as VolumeSchema)
-# =======
 from janus.api.models import Network, ContainerProfile, NetworkProfile, VolumeProfile
-# >>>>>>> netvol-profiles
 from janus.api.ansible_job import AnsibleJob
 from janus.api.utils import (
     commit_db,
