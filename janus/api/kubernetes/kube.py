@@ -1,3 +1,4 @@
+import os
 import time
 import json
 import logging
@@ -31,22 +32,38 @@ class KubernetesApi(Service):
     NS = "default"
 
     def __init__(self):
-        pass
+        self.api_key = os.getenv('KUBE_API_KEY')
+        self.api_cluster_url = os.getenv('KUBE_CLUSTER_URL')
+        self.api_cluster_name = os.getenv('KUBE_CLUSTER_NAME')
+        self.config = None
 
     @property
     def type(self):
         return EPType.KUBERNETES
 
     def _get_client(self, ctx_name):
+        if self.config:
+            return client.ApiClient(self.config)
         return config.new_client_from_config(context=ctx_name)
+
+    def _get_contexts(self):
+        if self.api_key and self.api_cluster_name and self.api_cluster_url:
+            self.config = client.Configuration()
+            self.config.host = self.api_cluster_url
+            self.config.api_key['authorization'] = self.api_key
+            self.config.api_key_prefix['authorization'] = 'Bearer'
+            self.config.verify_ssl = False
+            return [{'name': self.api_cluster_name, 'host': self.api_cluster_url}], None
+        else:
+            return config.list_kube_config_contexts()
 
     def get_nodes(self, nname=None, cb=None, refresh=False):
         ret = list()
         if not refresh:
             return ret
-        contexts, active_context = config.list_kube_config_contexts()
+        contexts, active_context = self._get_contexts()
         if not contexts:
-            log.error("Cannot find any context in kube-config file.")
+            log.error("Cannot find any contexts in current configuration.")
             return
 
         node_count = 0
