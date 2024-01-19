@@ -4,7 +4,7 @@ from janus.api.portainer import PortainerDockerApi
 from janus.api.kubernetes import KubernetesApi
 from janus.api.constants import State, EPType
 from janus.lib import AgentMonitor
-from janus.api.utils import error_svc, handle_image
+from janus.api.utils import error_svc, handle_image, cname_from_id
 from janus.settings import cfg, AGENT_AUTO_TUNE
 
 
@@ -95,9 +95,11 @@ class ServiceManager():
         s['errors'] = list()
         errs = False
         try:
-            name = f"janus_{dbid}" if dbid else None
+            name = cname_from_id(dbid)
             ret = handler.create_container(n.get('id'), img, name, **s['kwargs'])
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             log.error(f"Could not create container on {nname}: {e}")
             errs = error_svc(s, e)
             return None, None

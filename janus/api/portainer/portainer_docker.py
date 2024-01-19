@@ -13,7 +13,7 @@ from .endpoints_api import EndpointsApi
 
 from janus.api.service import Service
 from janus.api.constants import Constants, EPType
-from janus.api.models import Network, ContainerProfile
+from janus.api.models import Network, ContainerProfile, Node
 from janus.settings import REGISTRIES as iregs
 from janus.settings import cfg, IGNORE_EPS
 from janus.api.utils import (
@@ -250,7 +250,7 @@ class PortainerDockerApi(Service):
         string = res.read().decode('utf-8')
         return json.loads(string)
 
-    def start_container(self, pid, cid, **kwargs):
+    def start_container(self, pid, cid, service=None, **kwargs):
         kwargs['_return_http_data_only'] = True
         res = self._call("/endpoints/{}/docker/containers/{}/start".format(pid, cid),
                          "POST", None, **kwargs)
@@ -503,7 +503,7 @@ class PortainerDockerApi(Service):
         return created
 
 
-    def create_service_record(self, node, img, prof: ContainerProfile,
+    def create_service_record(self, sid, node, img, prof: ContainerProfile,
                               addrs_v4, addrs_v6, cports, sports,
                               arguments, remove_container, **kwargs):
         srec = dict()

@@ -13,6 +13,8 @@ import shlex
 
 log = logging.getLogger(__name__)
 
+def cname_from_id(sid):
+    return f"janus-{sid}"
 
 def is_subset(subset, superset):
     if isinstance(subset, dict):
@@ -39,20 +41,20 @@ def commit_db_realized(record, node_table, net_table, delete=False):
             node = dbase.get(node_table, name=k)
             if delete:
                 try:
-                    if s['ctrl_port']:
+                    if s.get('ctrl_port'):
                         node['allocated_ports'].remove(int(s['ctrl_port']))
-                    if s['data_vfid']:
+                    if s.get('data_vfid'):
                         node['allocated_vfs'].remove(s['data_vfid'])
                 except Exception as e:
                     pass
             else:
-                if s['ctrl_port']:
+                if s.get('ctrl_port'):
                     node['allocated_ports'].append(int(s['ctrl_port']))
-                if s['data_vfid']:
+                if s.get('data_vfid'):
                     node['allocated_vfs'].append(s['data_vfid'])
             dbase.update(node_table, node, name=k)
 
-            if (s['data_net']):
+            if s.get('data_net'):
                 nobj = Network(s['data_net_name'], k)
                 net = dbase.get(net_table, key=nobj.key)
                 if delete:
@@ -65,9 +67,9 @@ def commit_db_realized(record, node_table, net_table, delete=False):
                     except Exception as e:
                         pass
                 else:
-                    if s['data_ipv4']:
+                    if s.get('data_ipv4'):
                         net['allocated_v4'].append(s['data_ipv4'])
-                    if s['data_ipv6']:
+                    if s.get('data_ipv6'):
                         net['allocated_v6'].append(s['data_ipv6'])
                 dbase.update(net_table, net, key=nobj.key)
 
