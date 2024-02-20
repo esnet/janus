@@ -652,7 +652,7 @@ class Profile(Resource):
         (user,group) = get_authinfo(request)
         if refresh and refresh.lower() == 'true':
             try:
-                cfg.pm.read_profiles()
+                cfg.pm.read_profiles(refresh=True)
             except Exception as e:
                 return {"error": str(e)}, 500
 

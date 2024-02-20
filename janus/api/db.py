@@ -13,7 +13,7 @@ from tinydb import TinyDB, Query, where
 from janus import settings
 from janus.settings import cfg
 from janus.api.models import Network
-from .utils import Constants
+from .utils import Constants, keys_lower
 
 
 log = logging.getLogger(__name__)
@@ -122,13 +122,12 @@ def init_db(nname=None, refresh=False):
     node_table = dbase.get_table('nodes')
     res = None
     nodes = None
+    log.debug(f"Initializing database, refresh={refresh}")
     try:
         nodes = cfg.sm.get_nodes(nname, refresh)
         for n in nodes:
             dbase.upsert(node_table, n, 'name', n['name'])
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         log.error("Backend error: {}".format(e))
         return
 
@@ -165,9 +164,17 @@ def init_db(nname=None, refresh=False):
         res = dbase.get(node_table, name=k)
         nets = res.get('networks', dict())
         for n, w in nets.items():
-            subnet = w['subnet']
-            if len(subnet) and n in data_nets:
-                # otherwise create default record for net
+            subnet = w.get('subnet', [])
+            # try to get subnet information from profile if not tracked in endpoint
+            if not subnet:
+                pnet = cfg.pm.get_profile(Constants.NET, n)
+                try:
+                    subnet = pnet.settings.ipam.get('config') if pnet else []
+                except Exception as e:
+                    pass
+            subnet = [keys_lower(x) for x in subnet]
+            if True:
+            #if n in data_nets:
                 key = f"{k}-{n}"
                 net = {'name': n,
                        'key': key,

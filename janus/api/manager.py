@@ -40,8 +40,13 @@ class ServiceManager():
     def get_nodes(self, nname=None, refresh=False):
         nodes = list()
         for k, s in self.service_map.items():
-            ns = s.get_nodes(nname, cb=self._add_node_cb, refresh=refresh)
-            nodes.extend(ns)
+            try:
+                ns = s.get_nodes(nname, cb=self._add_node_cb, refresh=refresh)
+                nodes.extend(ns)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                log.error(f"Error retrieving nodes from {k}: {e}")
         return nodes
 
     def add_node(self, ep, **kwargs):

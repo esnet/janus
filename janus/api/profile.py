@@ -43,11 +43,13 @@ class ProfileManager(QueryUser):
         log.info(f"total profiles: {nprofs}")
         return profiles
 
-    def read_profiles(self, path=None, reset=False):
+    def read_profiles(self, path=None, reset=False, refresh=False):
         image_tbl = self._db.get_table('images')
         for img in settings.SUPPORTED_IMAGES:
             ni = {"name": img}
             self._db.upsert(image_tbl, ni, 'name', img)
+        if not refresh:
+            return
         host_tbl = self._db.get_table(Constants.HOST)
         vol_tbl = self._db.get_table(Constants.VOL)
         net_tbl = self._db.get_table(Constants.NET)
