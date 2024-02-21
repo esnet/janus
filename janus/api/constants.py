@@ -1,5 +1,9 @@
 from enum import IntEnum
 
+class WSType(IntEnum):
+    EXEC_STREAM = 0
+    EP_STATUS = 1
+    CONTAINER_STATUS = 2
 
 class Constants:
     NET = "network"
@@ -17,7 +21,6 @@ class State(IntEnum):
     STOPPED = 3
     MIXED = 4
     STALE = 5
-
 
 class EPType(IntEnum):
     UNKNOWN = 0,

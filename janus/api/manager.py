@@ -4,6 +4,7 @@ from janus.api.portainer import PortainerDockerApi
 from janus.api.kubernetes import KubernetesApi
 from janus.api.constants import State, EPType
 from janus.lib import AgentMonitor
+from janus.api.models import Node
 from janus.api.utils import error_svc, handle_image, cname_from_id
 from janus.settings import cfg, AGENT_AUTO_TUNE
 
@@ -101,7 +102,7 @@ class ServiceManager():
         errs = False
         try:
             name = cname_from_id(dbid)
-            ret = handler.create_container(n.get('id'), img, name, **s['kwargs'])
+            ret = handler.create_container(Node(**n), img, name, **s['kwargs'])
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -113,7 +114,7 @@ class ServiceManager():
             try:
                 # if specified, connect the management network to this created container
                 if s['mgmt_net']:
-                    handler.connect_network(n['id'], s['mgmt_net']['id'], ret['Id'],
+                    handler.connect_network(Node(**n), s['mgmt_net']['id'], ret['Id'],
                                             **s['net_kwargs'])
             except Exception as e:
                 log.error("Could not connect network on {nname}: {e}")

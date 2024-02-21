@@ -15,6 +15,7 @@ flask.helpers._endpoint_from_view_func = flask.scaffold._endpoint_from_view_func
 
 from flask_restplus import Api
 from flask import Flask, Blueprint
+from flask_sock import Sock
 
 from janus.api.controller import ns as controller_ns
 from janus.api.agent import ns as agent_ns
@@ -23,9 +24,11 @@ from janus.settings import cfg
 from janus.api.db import DBLayer
 from janus.api.profile import ProfileManager
 from janus.api.manager import ServiceManager
+from janus.api.sockets import handle_websocket
 
 
 app = Flask(__name__)
+sock = Sock(app)
 
 try:
     logging.config.fileConfig(settings.LOG_CFG_PATH)
@@ -78,6 +81,10 @@ def init(app):
         api.add_namespace(agent_ns)
     if (cfg.is_controller):
         api.add_namespace(controller_ns)
+
+    @sock.route("/ws")
+    def WebSocket(sock):
+        handle_websocket(sock)
 
 def main():
     parser = argparse.ArgumentParser(description='Janus Controller/Agent')

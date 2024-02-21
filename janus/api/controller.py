@@ -19,15 +19,24 @@ from janus.lib import AgentMonitor
 from janus.settings import cfg
 from janus.api.constants import State, EPType
 from janus.api.db import init_db, QueryUser
-from janus.api.models import Network, ContainerProfile, NetworkProfile, VolumeProfile
 from janus.api.ansible_job import AnsibleJob
+from janus.api.models import (
+    Node,
+    Network,
+    ContainerProfile,
+    NetworkProfile,
+    VolumeProfile,
+    SessionRequest,
+    SessionConstraints
+)
 from janus.api.utils import (
     commit_db,
     precommit_db,
     set_qos,
     error_svc,
     cname_from_id,
-    Constants)
+    Constants
+)
 
 
 # Basic auth
@@ -88,11 +97,13 @@ class ActiveCollection(Resource, QueryUser):
                     since = request.args.get('since', 0)
                     tail = request.args.get('tail', 100)
                     svc = res['services'][nname]
-                    nid = svc[0]['node_id']
                     cid = svc[0]['container_id']
+                    n = Node(id=svc[0]['node_id'], name=nname)
                     handler = cfg.sm.get_handler(nname=nname)
-                    return handler.get_logs(nid, cid, since, stderr, stdout, tail, ts)
+                    return handler.get_logs(n, cid, since, stderr, stdout, tail, ts)
                 except Exception as e:
+                    import traceback
+                    traceback.print_exc()
                     return {"error": f"Could not retrieve container logs: {e}"}, 500
             else:
                 if (fields):
@@ -141,7 +152,7 @@ class ActiveCollection(Resource, QueryUser):
                     handler = cfg.sm.get_handler(n)
                     if not (cfg.dryrun):
                         for alloc in v:
-                            futures.append(executor.submit(handler.stop_container, n['id'], alloc, **n))
+                            futures.append(executor.submit(handler.stop_container, Node(**n), alloc, **n))
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
@@ -309,12 +320,22 @@ class Create(Resource, QueryUser):
                 if not img:
                     return {"error": f"Image {image} not found"}, 404
                 img = image
-            # Nodes and Networks
+            # Endpoints and Networks
             for ep in instances:
-                query = self.query_builder(user, group, {"name": ep})
+                c = dict()
+                if isinstance(ep, dict):
+                    c = SessionConstraints(**ep)
+                    ename = ep.get('name', None)
+                elif isinstance(ep, str):
+                    ename = ep
+                else:
+                    return {"error": f"Invalid endpoint type: {ep}"}, 400
+                if not ename:
+                    return {"error": f"Invalid endpoint name: {ename}"}, 400
+                query = self.query_builder(user, group, {"name": ename})
                 node = dbase.get(ntable, query=query)
                 if not node:
-                    return {"error": f"Node {ep} not found"}, 404
+                    return {"error": f"Endpoint {ename} not found"}, 404
                 try:
                     handler = cfg.sm.get_handler(node)
                     init_db(node.get('name'), refresh=True)
@@ -325,18 +346,16 @@ class Create(Resource, QueryUser):
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
-                    return {"error": f"Node {ep} has invalid network: {e}"}, 400
-                # refresh node from DB since node state may have been updated above
+                    return {"error": f"Endpoint {ename} has invalid network: {e}"}, 400
+                # refresh node handle from DB since node state may have been updated above
                 node = dbase.get(ntable, query=query)
-                create.append(
-                    {"node": node,
-                     "profile": prof,
-                     "image": img,
-                     "arguments": arguments,
-                     "remove_container": remove_container,
-                     "kwargs": r.get("kwargs", dict())
-                     }
-                )
+                create.append(SessionRequest(node=node,
+                                             profile=prof,
+                                             image=img,
+                                             arguments=arguments,
+                                             remove_container=remove_container,
+                                             constraints=c,
+                                             kwargs=r.get("kwargs", dict())))
 
         # get an ID from the DB
         Id = precommit_db()
@@ -347,15 +366,12 @@ class Create(Resource, QueryUser):
             addrs_v6 = set()
             cports = set()
             sports = set()
-            for r in create:
-                node = r.get('node')
-                nname = node.get('name')
+            for s in create:
+                nname = s.node.get('name')
                 if nname not in svcs:
                     svcs[nname] = list()
-                handler = cfg.sm.get_handler(node)
-                rec = handler.create_service_record(Id, node, r.get('image'), r.get('profile'), addrs_v4, addrs_v6,
-                                                    cports, sports, r.get('arguments'), r.get('remove_container'),
-                                                    **r.get('kwargs'))
+                handler = cfg.sm.get_handler(s.node)
+                rec = handler.create_service_record(Id, s, addrs_v4, addrs_v6, cports, sports)
                 if not rec:
                     raise Exception(f"No service record created for node {nname}")
                 svcs[nname].append(rec)
@@ -473,8 +489,8 @@ class Start(Resource, QueryUser):
                     orig_errcnt = len(s.get('errors'))
 
                     try:
-                        handler.start_container(node.get('name'), c, s)
-                        if s.get('qos'): # is not None and s['qos'].isinstance(dict)
+                        handler.start_container(Node(**node), c, s)
+                        if s.get('qos'):
                             qos = s["qos"]
                             qos["container"] = c
                             set_qos(node["public_url"], qos)
@@ -527,7 +543,7 @@ class Stop(Resource, QueryUser):
         error = False
         for k,v in svc['services'].items():
             for s in v:
-                if not s['container_id']:
+                if not s.get('container_id'):
                     log.warn("Skipping service with no container_id: {}".format(k))
                     continue
                 c = s['container_id']
@@ -539,7 +555,7 @@ class Stop(Resource, QueryUser):
                 log.debug("Stopping container {} on {}".format(c, k))
                 if not (cfg.dryrun):
                     try:
-                        handler.stop_container(node['id'], c)
+                        handler.stop_container(Node(**node), c)
                     except Exception as e:
                         log.error("Could not stop container on {}: {}".format(k,e))
                         error_svc(s, e)
@@ -598,9 +614,9 @@ class Exec(Resource):
                   }
         try:
             handler = cfg.sm.get_handler(node)
-            ret = handler.exec_create(node["id"], container, **kwargs)
+            ret = handler.exec_create(Node(**node), container, **kwargs)
             if start:
-                ret = handler.exec_start(node["id"], ret["Id"])
+                ret = handler.exec_start(Node(**node), ret)
         except Exception as e:
             log.error("Could not exec in container on {}: {}: {}".format(nname,
                                                                          e.reason,

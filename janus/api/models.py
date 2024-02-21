@@ -102,6 +102,29 @@ class VolumeProfile(BaseModel):
     settings: VolumeProfileSettings
 
 
+class SessionConstraints(BaseModel):
+    cpu: Optional[int]
+    memory: Optional[int]
+    nodeName: Optional[str]
+    nodeCount: Optional[int]
+    time: Optional[int]
+
+
+class SessionRequest(BaseModel):
+    node: dict
+    image: str
+    profile: ContainerProfile
+    constraints: SessionConstraints
+    arguments: Optional[str]
+    remove_container: Optional[bool]
+    kwargs: Optional[dict]
+
+
+class Node(BaseModel):
+    id: Union[int, str]
+    name: str
+
+
 class Network(object):
     def __init__(self, net, node=None):
         self.name = None
@@ -124,11 +147,6 @@ class Network(object):
         if self.name and self.name == "host":
             return True
         return False
-
-
-class Node(object):
-    def __init__(self, node_dict):
-        pass
 
 
 class ServiceRecord(object):

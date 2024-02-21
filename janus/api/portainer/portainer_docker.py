@@ -13,7 +13,12 @@ from .endpoints_api import EndpointsApi
 
 from janus.api.service import Service
 from janus.api.constants import Constants, EPType
-from janus.api.models import Network, ContainerProfile, Node
+from janus.api.models import (
+    Node,
+    Network,
+    ContainerProfile,
+    SessionRequest
+)
 from janus.settings import REGISTRIES as iregs
 from janus.settings import cfg, IGNORE_EPS
 from janus.api.utils import (
@@ -121,8 +126,8 @@ class PortainerDockerApi(Service):
 
     def _get_endpoint_info(self, Id, url, nname, nodes, cb=None):
         try:
-            nets = self.get_networks(Id)
-            imgs = self.get_images(Id)
+            nets = self.get_networks(Node(id=Id, name=nname))
+            imgs = self.get_images(Node(id=Id, name=nname))
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -190,14 +195,14 @@ class PortainerDockerApi(Service):
         return eapi.endpoint_delete(nid)
 
     # Images
-    def get_images(self, pid, **kwargs):
+    def get_images(self, node: Node, **kwargs):
         kwargs['_return_http_data_only'] = True
-        res = self._call("/endpoints/{}/docker/images/json".format(pid),
+        res = self._call("/endpoints/{}/docker/images/json".format(node.id),
                          "GET", None, **kwargs)
         string = res.read().decode('utf-8')
         return json.loads(string)
 
-    def pull_image(self, pid, img, tag):
+    def pull_image(self, node: Node, img, tag):
         kwargs = dict()
         headers = list()
         kwargs['_return_http_data_only'] = True
@@ -209,7 +214,7 @@ class PortainerDockerApi(Service):
             if not auth:
                 raise ApiException("503", f"Authentication not configured for registry {parts[0]}")
             headers.append(f"X-Registry-Auth: {auth}")
-        res = self._call("/endpoints/{}/docker/images/create".format(pid),
+        res = self._call("/endpoints/{}/docker/images/create".format(node.id),
                          "POST", None, headers, **kwargs)
         string = res.read().decode('utf-8')
         ret = {"status": res.status}
@@ -218,21 +223,21 @@ class PortainerDockerApi(Service):
         return ret
 
     # Containers
-    def get_containers(self, pid, **kwargs):
+    def get_containers(self, node: Node, **kwargs):
         kwargs['_return_http_data_only'] = True
-        res = self._call("/endpoints/{}/docker/containers/json".format(pid),
+        res = self._call("/endpoints/{}/docker/containers/json".format(node.id),
                          "GET", None, **kwargs)
         string = res.read().decode('utf-8')
         return json.loads(string)
 
-    def inspect_container(self, pid, cid, **kwargs):
+    def inspect_container(self, node: Node, cid, **kwargs):
         kwargs['_return_http_data_only'] = True
-        res = self._call("/endpoints/{}/docker/containers/{}/json".format(pid, cid),
+        res = self._call("/endpoints/{}/docker/containers/{}/json".format(node.id, cid),
                          "GET", None, **kwargs)
         string = res.read().decode('utf-8')
         return json.loads(string)
 
-    def create_container(self, pid, image, name=None, **kwargs):
+    def create_container(self, node: Node, image, name=None, **kwargs):
         body = {'Image': image}
         params = ['HostName', 'HostConfig', 'NetworkingConfig', 'ExposedPorts',
                   'Env', 'Tty', "MacAddress", 'StopSignal', 'Cmd']
@@ -243,29 +248,29 @@ class PortainerDockerApi(Service):
         kwargs['_return_http_data_only'] = True
         if name:
             kwargs['query'] = {"name": name}
-        res = self._call("/endpoints/{}/docker/containers/create".format(pid),
+        res = self._call("/endpoints/{}/docker/containers/create".format(node.id),
                          "POST", body, **kwargs)
         if (res.status == 502):
             return {'status': '{} Bad gateway'.format(res.status)}
         string = res.read().decode('utf-8')
         return json.loads(string)
 
-    def start_container(self, pid, cid, service=None, **kwargs):
+    def start_container(self, node: Node, cid, service=None, **kwargs):
         kwargs['_return_http_data_only'] = True
-        res = self._call("/endpoints/{}/docker/containers/{}/start".format(pid, cid),
+        res = self._call("/endpoints/{}/docker/containers/{}/start".format(node.id, cid),
                          "POST", None, **kwargs)
         if (res.status == 200 or res.status == 204):
             return {'status': '{} OK'.format(res.status)}
         string = res.read().decode('utf-8')
         return json.loads(string)
 
-    def stop_container(self, pid, cid, **kwargs):
+    def stop_container(self, node: Node, cid, **kwargs):
         nname = kwargs.get('name')
         kwargs = dict()
         kwargs['_return_http_data_only'] = True
         status = 204
         try:
-            res = self._call("/endpoints/{}/docker/containers/{}/stop".format(pid, cid),
+            res = self._call("/endpoints/{}/docker/containers/{}/stop".format(node.id, cid),
                              "POST", None, **kwargs)
             status = res.status
         except ApiException as e:
@@ -276,12 +281,12 @@ class PortainerDockerApi(Service):
             else:
                 raise e
         return {'status': '{}'.format(status),
-                'node_id': pid, 'container_id': cid,
+                'node_id': node.id, 'container_id': cid,
                 'node_name': nname}
 
-    def remove_container(self, pid, cid, **kwargs):
+    def remove_container(self, node: Node, cid, **kwargs):
         kwargs['_return_http_data_only'] = True
-        res = self._call("/endpoints/{}/docker/containers/{}".format(pid, cid),
+        res = self._call("/endpoints/{}/docker/containers/{}".format(node.id, cid),
                          "DELETE", None, **kwargs)
         if (res.status == 204):
             return {'status': '{} OK'.format(res.status)}
@@ -289,18 +294,18 @@ class PortainerDockerApi(Service):
         return json.loads(string)
 
     # Networks
-    def get_networks(self, pid, nid=None, **kwargs):
+    def get_networks(self, node: Node, nid=None, **kwargs):
         kwargs['_return_http_data_only'] = True
         if nid:
-            res = self._call("/endpoints/{}/docker/networks/{}".format(pid, nid),
+            res = self._call("/endpoints/{}/docker/networks/{}".format(node.id, nid),
                              "GET", None, **kwargs)
         else:
-            res = self._call("/endpoints/{}/docker/networks".format(pid),
+            res = self._call("/endpoints/{}/docker/networks".format(node.id),
                              "GET", None, **kwargs)
         string = res.read().decode('utf-8')
         return json.loads(string)
 
-    def connect_network(self, pid, nid, cid, **kwargs):
+    def connect_network(self, node: Node, nid, cid, **kwargs):
         body = {'Container': cid}
         params = ['EndpointConfig']
         for k, v in six.iteritems(kwargs):
@@ -308,14 +313,14 @@ class PortainerDockerApi(Service):
                 body[k] = v
         kwargs = dict()
         kwargs['_return_http_data_only'] = True
-        res = self._call("/endpoints/{}/docker/networks/{}/connect".format(pid, nid),
+        res = self._call("/endpoints/{}/docker/networks/{}/connect".format(node.id, nid),
                          "POST", body, **kwargs)
         string = res.read().decode('utf-8')
         if (res.status == 200):
             return {'status': '200 OK'}
         return json.loads(string)
 
-    def create_network(self, pid, name, **kwargs):
+    def create_network(self, node: Node, name, **kwargs):
         body = {'Name': name}
         params = ['CheckDuplicate', 'Driver', 'Internal', 'Attachable',
                   'Ingress', 'IPAM', 'EnableIPv6', 'Options', 'Labels']
@@ -324,16 +329,16 @@ class PortainerDockerApi(Service):
                 body[k] = v
         kwargs = dict()
         kwargs['_return_http_data_only'] = True
-        res = self._call("/endpoints/{}/docker/networks/create".format(pid),
+        res = self._call("/endpoints/{}/docker/networks/create".format(node.id),
                          "POST", body, **kwargs)
         string = res.read().decode('utf-8')
         if (res.status == 200):
             return {'status': '200 OK'}
         return json.loads(string)
 
-    def remove_network(self, pid, nid, **kwargs):
+    def remove_network(self, node: Node, nid, **kwargs):
         kwargs['_return_http_data_only'] = True
-        res = self._call("/endpoints/{}/docker/networks/{}".format(pid, nid),
+        res = self._call("/endpoints/{}/docker/networks/{}".format(node.id, nid),
                          "DELETE", None, **kwargs)
         if (res.status == 204):
             return {'status': '{} OK'.format(res.status)}
@@ -341,7 +346,7 @@ class PortainerDockerApi(Service):
         return json.loads(string)
 
     # Logs
-    def get_logs(self, pid, cid, since=0, stderr=1, stdout=1, tail=100, timestamps=0):
+    def get_logs(self, node: Node, cid, since=0, stderr=1, stdout=1, tail=100, timestamps=0):
         kwargs = dict()
         kwargs['_return_http_data_only'] = True
         kwargs['query'] = {
@@ -351,13 +356,13 @@ class PortainerDockerApi(Service):
             'tail': tail,
             'timestamps': timestamps
         }
-        res = self._call("/endpoints/{}/docker/containers/{}/logs".format(pid, cid),
+        res = self._call("/endpoints/{}/docker/containers/{}/logs".format(node.id, cid),
                          "GET", None, **kwargs)
         string = res.read().decode('utf-8')
         return {"response": string}
 
     # Exec
-    def exec_create(self, pid, cid, **kwargs):
+    def exec_create(self, node: Node, cid, **kwargs):
         body = dict()
         params = ['AttachStdin', 'AttachStdout', 'AttachStderr', 'DetachKeys', 'Cmd', 'Env', 'Tty']
         for k, v in six.iteritems(kwargs):
@@ -365,19 +370,23 @@ class PortainerDockerApi(Service):
                 body[k] = v
         kwargs = dict()
         kwargs['_return_http_data_only'] = True
-        res = self._call("/endpoints/{}/docker/containers/{}/exec".format(pid, cid),
+        res = self._call("/endpoints/{}/docker/containers/{}/exec".format(node.id, cid),
                          "POST", body, **kwargs)
         string = res.read().decode('utf-8')
         return json.loads(string)
 
-    def exec_start(self, pid, eid, **kwargs):
+    def exec_start(self, node: Node, ectx, **kwargs):
+        eid = ectx.get('Id')
         kwargs['_return_http_data_only'] = True
         body = {"Detach": False,
                 "Tty": True}
-        res = self._call("/endpoints/{}/docker/exec/{}/start".format(pid, eid),
+        res = self._call("/endpoints/{}/docker/exec/{}/start".format(node.id, eid),
                          "POST", body, **kwargs)
         string = res.read().decode('utf-8')
         return {"response": string}
+
+    def exec_stream(self, node: Node, eid, **kwargs):
+        pass
 
     @auth
     def _call(self, url, method, body, headers=[], **kwargs):
@@ -449,7 +458,7 @@ class PortainerDockerApi(Service):
             collection_formats=collection_formats)
 
 
-    def resolve_networks(self, node, prof):
+    def resolve_networks(self, node: Node, prof):
         def _build_kwargs(p):
             docker_kwargs = {
                 "Name": p.name,
@@ -503,11 +512,12 @@ class PortainerDockerApi(Service):
         return created
 
 
-    def create_service_record(self, sid, node, img, prof: ContainerProfile,
-                              addrs_v4, addrs_v6, cports, sports,
-                              arguments, remove_container, **kwargs):
+    def create_service_record(self, sid, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
         srec = dict()
-        nname = node.get('name')
+        node = sreq.node
+        prof = sreq.profile
+        nname = sreq.node.get('name')
+        kwargs = sreq.kwargs
         qos = cfg.get_qos(prof["qos"]) if "qos" in prof else dict()
         dpr = prof.settings.data_port_range
         dnet = Network(prof.settings.data_net, nname)
@@ -516,7 +526,7 @@ class PortainerDockerApi(Service):
         sysd = prof.settings.systemd
         pull = prof.settings.pull_image
         args = prof.settings.arguments
-        args_override = arguments
+        args_override = sreq.arguments
         cmd = None
         if args_override:
             cmd = shlex.split(args_override)
@@ -564,7 +574,7 @@ class PortainerDockerApi(Service):
             "Cmd": cmd
         }
 
-        if remove_container:
+        if sreq.remove_container:
             auto_remove = True
             docker_kwargs["HostConfig"].update({"Autoremove": auto_remove})
 
@@ -723,7 +733,7 @@ class PortainerDockerApi(Service):
         srec['ctrl_host'] = node['public_url']
         srec['kwargs'] = docker_kwargs
         srec['net_kwargs'] = mnet_kwargs
-        srec['image'] = img
+        srec['image'] = sreq.image
         srec['profile'] = prof.name
         srec['pull_image'] = pull
         srec['qos'] = qos

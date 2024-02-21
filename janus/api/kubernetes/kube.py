@@ -5,11 +5,17 @@ import logging
 from kubernetes import client, config
 from kubernetes.config import KUBE_CONFIG_DEFAULT_LOCATION
 from kubernetes.client.rest import ApiException
+from kubernetes.stream import stream
 from janus.api.service import Service
 from janus.api.constants import EPType
-from janus.api.models import Network, ContainerProfile, Node
 from janus.api.constants import Constants
 from janus.settings import cfg
+from janus.api.models import (
+    Node,
+    Network,
+    ContainerProfile,
+    SessionRequest
+)
 from janus.api.utils import (
     get_next_cport,
     get_next_sport,
@@ -40,6 +46,7 @@ class KubernetesApi(Service):
         self.api_cluster_name = os.getenv('KUBE_CLUSTER_NAME')
         self.api_namespace = os.getenv('KUBE_NAMESPACE')
         self.config = None
+        self._exec_map = dict()
 
     @property
     def type(self):
@@ -101,7 +108,11 @@ class KubernetesApi(Service):
             archs = set()
             api_client = self._get_client(ctx_name)
             v1 = client.CoreV1Api(api_client)
-            res = v1.list_node(watch=False)
+            try:
+                res = v1.list_node(watch=False)
+            except Exception as e:
+                log.error(f"Could not list nodes on cluster {ctx_name}: {e}")
+                continue
             for i in res.items:
                 cnode = {
                     "name": i.metadata.name,
@@ -162,81 +173,113 @@ class KubernetesApi(Service):
             })
         return ret
 
-    def get_images(self, node):
+    def get_images(self, node: Node):
         pass
 
-    def get_networks(self, node):
+    def get_networks(self, node: Node):
         pass
 
-    def get_containers(self, node):
+    def get_containers(self, node: Node):
         pass
 
-    def get_logs(self, node, container, since=0, stderr=1, stdout=1, tail=100, timestamps=0):
-        pass
+    def get_logs(self, node: Node, container, since=0, stderr=1, stdout=1, tail=100, timestamps=0):
+        api_client = self._get_client(node.name)
+        api = client.CoreV1Api(api_client)
+        ret = api.read_namespaced_pod_log(
+            name=container,
+            namespace=self._get_namespace(node.name),
+            tail_lines=tail,
+            pretty='true',
+        )
+        return {"response": ret}
 
-    def pull_image(self, node, image, tag):
+    def pull_image(self, node: Node, image, tag):
         pass
 
     def create_node(self, nname, eptype, **kwargs):
         pass
 
-    def create_container(self, node: str, image: str, name: str = None, **kwargs):
+    def create_container(self, node: Node, image: str, name: str = None, **kwargs):
         return {"Id": name}
 
-    def start_container(self, node: str, container: str, service=None, **kwargs):
-        api_client = self._get_client(node)
+    def start_container(self, node: Node, container: str, service=None, **kwargs):
+        api_client = self._get_client(node.name)
         v1 = client.CoreV1Api(api_client)
         resp = v1.create_namespaced_pod(body=service['kwargs'],
-                                        namespace=self._get_namespace(node))
+                                        namespace=self._get_namespace(node.name))
         resp = v1.read_namespaced_pod(name=container,
-                                      namespace=self._get_namespace(node))
+                                      namespace=self._get_namespace(node.name))
         log.info(f"Pod transitioned to state: {resp.status.phase}")
 
-    def stop_container(self, node, container):
-        api_client = self._get_client(node)
-        v1 = client.CoreV1Api(api_client)
-        res = v1.delete_namespaced_pod(str(container), self._get_namespace(node))
+    def stop_container(self, node: Node, container):
+        api_client = self._get_client(node.name)
+        api = client.CoreV1Api(api_client)
+        res = api.delete_namespaced_pod(str(container), self._get_namespace(node.name))
 
-    def create_network(self, node, net_name, **kwargs):
-        api_client = self._get_client(node)
+    def create_network(self, node: Node, net_name, **kwargs):
+        api_client = self._get_client(node.name)
         api = client.CustomObjectsApi(api_client)
         created_resource = api.create_namespaced_custom_object(
             group="k8s.cni.cncf.io",
             version="v1",
             plural="network-attachment-definitions",
-            namespace=self._get_namespace(node),
+            namespace=self._get_namespace(node.name),
             body=kwargs
         )
         log.info(f"Created network {net_name} on {node}")
 
-    def inspect_container(self, node, container):
+    def inspect_container(self, node: Node, container):
         pass
 
-    def remove_container(self, node, container):
+    def remove_container(self, node: Node, container):
         pass
 
-    def connect_network(self, node, network, container):
+    def connect_network(self, node: Node, network, container):
         pass
 
-    def exec_create(self, node, container, **kwargs):
-        pass
+    def exec_create(self, node: Node, container, **kwargs):
+        api_client = self._get_client(node.name)
+        api = client.CoreV1Api(api_client)
+        res = stream(api.connect_get_namespaced_pod_exec,
+                     name=container,
+                     namespace=self._get_namespace(node.name),
+                     command=kwargs.get("Cmd"),
+                     container=container,
+                     stderr=kwargs.get("AttachStderr"),
+                     #stdin=kwargs.get("AttachStdin"),
+                     stdin=True,
+                     stdout=kwargs.get("AttachStdout"),
+                     #tty=kwargs.get("Tty"),
+                     tty=False,
+                     _preload_content=False
+                     )
+        if not self._exec_map.get(node.name):
+            self._exec_map[node.name] = dict()
+            self._exec_map[node.name][container] = res
+        else:
+            self._exec_map[node.name][container] = res
+        return {"response": "websocket created"}
 
-    def exec_start(self, node, eid):
-        pass
+    def exec_start(self, node: Node, ectx, **kwargs):
+        return ectx
 
-    def remove_network(self, node, network, **kwargs):
-        api_client = self._get_client(node)
+    def exec_stream(self, node: Node, eid, **kwargs):
+        print (node.name, eid)
+        return self._exec_map.get(node.name).get(eid)
+
+    def remove_network(self, node: Node, network, **kwargs):
+        api_client = self._get_client(node.name)
         api = client.CustomObjectsApi(api_client)
         api.delete_namespaced_custom_object(
             group="k8s.cni.cncf.io",
             version="v1",
             name=network,
             plural="network-attachment-definitions",
-            namespace=self._get_namespace(node)
+            namespace=self._get_namespace(node.name)
         )
-        log.info(f"Removed network {network} on {node}")
+        log.info(f"Removed network {network} on {node.name}")
 
-    def resolve_networks(self, node, prof):
+    def resolve_networks(self, node: dict, prof):
         def _build_net(p):
             addrs = list()
             if p.settings.ipam:
@@ -297,15 +340,16 @@ class KubernetesApi(Service):
             created = True
         return created
 
-    def create_service_record(self, sid, node, img, prof: ContainerProfile,
-                              addrs_v4, addrs_v6, cports, sports,
-                              arguments, remove_container, **kwargs):
+    def create_service_record(self, sid, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
         srec = dict()
+        node = sreq.node
+        prof = sreq.profile
+        constraints = sreq.constraints
         nname = node.get('name')
         cname = cname_from_id(sid)
         dnet = Network(prof.settings.data_net, nname)
         mnet = Network(prof.settings.mgmt_net, nname)
-        args_override = arguments
+        args_override = sreq.arguments
         cmd = None
         if args_override:
             cmd = shlex.split(args_override)
@@ -332,18 +376,19 @@ class KubernetesApi(Service):
                 "name": cname,
             },
             "spec": {
-                "nodeName": "sdn-dtn-2-09.ultralight.org",
                 "containers": [
                     {
                         "name": cname,
-                        "command": ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"],
-                        "image": "dtnaas/tools",
+                        "image": sreq.image,
                         "resources": {"limits": limits},
                         "tty": True
                     }
                 ]
             }
         }
+
+        if constraints.nodeName:
+            kwargs['spec'].update({"nodeName": constraints.nodeName})
 
         if (dnet.name):
             ips = []
@@ -381,7 +426,7 @@ class KubernetesApi(Service):
         srec['serv_port'] = sport
         srec['ctrl_port'] = cport
         srec['ctrl_host'] = node['public_url']
-        srec['image'] = img
+        srec['image'] = sreq.image
         srec['profile'] = prof.name
         srec['pull_image'] = prof.settings.pull_image
         #srec['qos'] = qos
