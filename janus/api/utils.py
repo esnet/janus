@@ -16,8 +16,8 @@ log = logging.getLogger(__name__)
 def keys_lower(in_dict):
     return {k.lower(): keys_lower(v) if isinstance(v, dict) else v for k, v in in_dict.items()}
 
-def cname_from_id(sid):
-    return f"janus-{sid}"
+def cname_from_id(sid, idx=1):
+    return f"janus-{sid}-{idx}"
 
 def is_subset(subset, superset):
     if isinstance(subset, dict):

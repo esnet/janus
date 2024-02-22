@@ -83,5 +83,5 @@ class Service(ABC):
         pass
 
     @abstractmethod
-    def exec_stream(self, node: Node, eid, **kwargs):
+    def exec_stream(self, node: Node, container, eid, **kwargs):
         pass

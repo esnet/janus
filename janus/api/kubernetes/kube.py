@@ -2,6 +2,8 @@ import os
 import time
 import json
 import logging
+import queue
+from threading import Thread
 from kubernetes import client, config
 from kubernetes.config import KUBE_CONFIG_DEFAULT_LOCATION
 from kubernetes.client.rest import ApiException
@@ -26,7 +28,6 @@ from janus.api.utils import (
     get_cpu,
     get_cpuset,
     get_mem,
-    cname_from_id,
     is_subset
 )
 
@@ -246,26 +247,35 @@ class KubernetesApi(Service):
                      command=kwargs.get("Cmd"),
                      container=container,
                      stderr=kwargs.get("AttachStderr"),
-                     #stdin=kwargs.get("AttachStdin"),
-                     stdin=True,
+                     stdin=kwargs.get("AttachStdin"),
                      stdout=kwargs.get("AttachStdout"),
-                     #tty=kwargs.get("Tty"),
-                     tty=False,
+                     tty=kwargs.get("Tty"),
                      _preload_content=False
                      )
+
+        def _get_stream(res, q):
+            while res.is_open():
+                res.update(1)
+                q.put({"msg": res.read_all(), "eof": False})
+            q.put({"msg": None, "eof": True})
+
+        q = queue.Queue()
+        t = Thread(target=_get_stream, args=(res, q))
+        t.start()
+
         if not self._exec_map.get(node.name):
             self._exec_map[node.name] = dict()
-            self._exec_map[node.name][container] = res
+            self._exec_map[node.name][container] = q
         else:
-            self._exec_map[node.name][container] = res
+            self._exec_map[node.name][container] = q
+
         return {"response": "websocket created"}
 
     def exec_start(self, node: Node, ectx, **kwargs):
         return ectx
 
-    def exec_stream(self, node: Node, eid, **kwargs):
-        print (node.name, eid)
-        return self._exec_map.get(node.name).get(eid)
+    def exec_stream(self, node: Node, container, eid, **kwargs):
+        return self._exec_map.get(node.name).get(container)
 
     def remove_network(self, node: Node, network, **kwargs):
         api_client = self._get_client(node.name)
@@ -340,13 +350,13 @@ class KubernetesApi(Service):
             created = True
         return created
 
-    def create_service_record(self, sid, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
+    def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
         srec = dict()
         node = sreq.node
         prof = sreq.profile
         constraints = sreq.constraints
         nname = node.get('name')
-        cname = cname_from_id(sid)
+        cname = sname
         dnet = Network(prof.settings.data_net, nname)
         mnet = Network(prof.settings.mgmt_net, nname)
         args_override = sreq.arguments
@@ -421,6 +431,7 @@ class KubernetesApi(Service):
         srec['container_user'] = kwargs.get("USER_NAME", None)
 
         srec['kwargs'] = kwargs
+        srec['sname'] = sname
         srec['node'] = node
         srec['node_id'] = node['id']
         srec['serv_port'] = sport

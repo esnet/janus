@@ -11,6 +11,7 @@ log = logging.getLogger(__name__)
 
 def handle_websocket(sock):
     data = sock.receive()
+    print (data)
     try:
         js = json.loads(data)
     except Exception as e:
@@ -21,21 +22,13 @@ def handle_websocket(sock):
         req = WSExecStream(**js)
         handler = cfg.sm.get_handler(nname=req.node)
         try:
-            res = handler.exec_stream(Node(id=req.node, name=req.node), req.container)
+            res = handler.exec_stream(Node(id=req.node_id, name=req.node), req.container, req.exec_id)
         except Exception as e:
-            log.error(f"No exec stream found for node {req.node} and container {req.container}")
+            log.error(f"No exec stream found for node {req.node} and container {req.container}: {e}")
             sock.send(json.dumps({"error": "Exec stream not found"}))
             return
-        while res.is_open():
-            res.update(timeout=1)
-            if res.peek_stdout():
-                sock.send(res.read_stdout())
-                print (res.read_stdout())
-            if res.peek_stderr():
-                sock.send(res.read_stderr())
-                print (res.read_stderr())
-
-
-
-
-
+        while True:
+            r = res.get()
+            if r.get("eof"):
+                break
+            sock.send(r.get("msg"))

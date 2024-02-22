@@ -5,7 +5,7 @@ from janus.api.kubernetes import KubernetesApi
 from janus.api.constants import State, EPType
 from janus.lib import AgentMonitor
 from janus.api.models import Node
-from janus.api.utils import error_svc, handle_image, cname_from_id
+from janus.api.utils import error_svc, handle_image
 from janus.settings import cfg, AGENT_AUTO_TUNE
 
 
@@ -68,6 +68,9 @@ class ServiceManager():
         if nname:
             ntable = self._db.get_table('nodes')
             node = self._db.get(ntable, name=nname)
+        if not node:
+            log.error(f"Node does not exist (node={node}, nname={nname})")
+            return None
         eptype = node.get('endpoint_type')
         return self.service_map[eptype]
 
@@ -75,8 +78,9 @@ class ServiceManager():
         return self.service_map[ntype].auth_token
 
 
-    def init_service(self, s, dbid, errs=False):
+    def init_service(self, s, errs=False):
         n = s.get('node')
+        sname = s.get('sname')
         nname = n.get('name')
         img = s.get('image')
         handler = self.get_handler(n)
@@ -101,8 +105,7 @@ class ServiceManager():
         s['errors'] = list()
         errs = False
         try:
-            name = cname_from_id(dbid)
-            ret = handler.create_container(Node(**n), img, name, **s['kwargs'])
+            ret = handler.create_container(Node(**n), img, sname, **s['kwargs'])
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -122,7 +125,7 @@ class ServiceManager():
                 return None, None
 
         s['container_id'] = ret['Id']
-        s['container_name'] = name
+        s['container_name'] = sname
         # don't save node object in service record
         if s.get("node"):
             del s['node']

@@ -48,6 +48,7 @@ def parse_config(fpath):
     config = parser['JANUS']
     try:
         cfg.PORTAINER_URI = str(config.get('PORTAINER_URI', None))
+        cfg.PORTAINER_WS = str(config.get('PORTAINER_WS', None))
         cfg.PORTAINER_USER = str(config.get('PORTAINER_USER', None))
         cfg.PORTAINER_PASSWORD = str(config.get('PORTAINER_PASSWORD', None))
         vssl = str(config.get('PORTAINER_VERIFY_SSL', True))

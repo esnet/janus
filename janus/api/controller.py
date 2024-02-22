@@ -31,10 +31,10 @@ from janus.api.models import (
 )
 from janus.api.utils import (
     commit_db,
+    cname_from_id,
     precommit_db,
     set_qos,
     error_svc,
-    cname_from_id,
     Constants
 )
 
@@ -164,7 +164,7 @@ class ActiveCollection(Resource, QueryUser):
                     if "container_id" in res:
                         log.debug(f"Removing container {res['container_id']}")
                         handler = cfg.sm.get_handler(nname=res['node_name'])
-                        handler.remove_container(res['node_id'], res['container_id'])
+                        handler.remove_container(Node(name=res['node_name'], id=res['node_id']), res['container_id'])
                 except Exception as e:
                     log.error("Could not remove container on remote node: {}".format(e))
                     if not force:
@@ -366,15 +366,18 @@ class Create(Resource, QueryUser):
             addrs_v6 = set()
             cports = set()
             sports = set()
+            i = 1
             for s in create:
                 nname = s.node.get('name')
                 if nname not in svcs:
                     svcs[nname] = list()
+                sname = cname_from_id(Id, i)
                 handler = cfg.sm.get_handler(s.node)
-                rec = handler.create_service_record(Id, s, addrs_v4, addrs_v6, cports, sports)
+                rec = handler.create_service_record(sname, s, addrs_v4, addrs_v6, cports, sports)
                 if not rec:
                     raise Exception(f"No service record created for node {nname}")
                 svcs[nname].append(rec)
+                i+=1
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -395,7 +398,10 @@ class Create(Resource, QueryUser):
                     name = "janus_dryrun"
                 else:
                     try:
-                        aid, nname = cfg.sm.init_service(s, Id, errs)
+                        aid, nname = cfg.sm.init_service(s, errs)
+                        if nname not in record['allocations']:
+                            record['allocations'].update({nname: list()})
+                        record['allocations'][nname].append(aid)
                     except Exception as e:
                         import traceback
                         traceback.print_exc()
@@ -403,9 +409,6 @@ class Create(Resource, QueryUser):
                         continue
 
         # complete accounting
-        if nname not in record['allocations']:
-            record['allocations'].update({nname: list()})
-        record['allocations'][nname].append(aid)
         record['id'] = Id
         record['services'] = svcs
         record['request'] = req
@@ -616,7 +619,7 @@ class Exec(Resource):
             handler = cfg.sm.get_handler(node)
             ret = handler.exec_create(Node(**node), container, **kwargs)
             if start:
-                ret = handler.exec_start(Node(**node), ret)
+                handler.exec_start(Node(**node), ret)
         except Exception as e:
             log.error("Could not exec in container on {}: {}: {}".format(nname,
                                                                          e.reason,

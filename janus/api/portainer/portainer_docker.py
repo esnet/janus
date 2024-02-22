@@ -2,6 +2,9 @@ import six
 import time
 import json
 import logging
+import queue
+import websocket
+from threading import Thread
 from concurrent.futures.thread import ThreadPoolExecutor
 
 from portainer_api.api_client import ApiClient
@@ -385,8 +388,25 @@ class PortainerDockerApi(Service):
         string = res.read().decode('utf-8')
         return {"response": string}
 
-    def exec_stream(self, node: Node, eid, **kwargs):
-        pass
+    def exec_stream(self, node: Node, container, eid, **kwargs):
+        ws_url = f"{cfg.PORTAINER_WS}/exec?token={self.client.jwt}&id={eid}&endpointId={node.id}"
+        print (ws_url)
+        ws = websocket.create_connection(ws_url)
+
+        def _get_stream(ws, q):
+            while True:
+                try:
+                    msg = ws.recv()
+                    q.put({"msg": msg, "eof": False})
+                except:
+                    ws.close()
+                    break
+            q.put({"msg": None, "eof": True})
+
+        q = queue.Queue()
+        t = Thread(target=_get_stream, args=(ws, q))
+        t.start()
+        return q
 
     @auth
     def _call(self, url, method, body, headers=[], **kwargs):
@@ -512,7 +532,7 @@ class PortainerDockerApi(Service):
         return created
 
 
-    def create_service_record(self, sid, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
+    def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
         srec = dict()
         node = sreq.node
         prof = sreq.profile
@@ -726,6 +746,7 @@ class PortainerDockerApi(Service):
         srec['data_vfid'] = vfid
         srec['container_user'] = kwargs.get("USER_NAME", None)
 
+        srec['sname'] = sname
         srec['node'] = node
         srec['node_id'] = node['id']
         srec['serv_port'] = sport
