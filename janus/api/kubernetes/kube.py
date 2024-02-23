@@ -400,7 +400,9 @@ class KubernetesApi(Service):
         if constraints.nodeName:
             kwargs['spec'].update({"nodeName": constraints.nodeName})
 
-        if (dnet.name):
+        if (mnet.is_host()):
+            kwargs['spec'].update({"hostNetwork": True})
+        elif (dnet.name):
             ips = []
             data_ipv4 = get_next_ipv4(dnet, addrs_v4, cidr=True)
             data_ipv6 = get_next_ipv6(dnet, addrs_v6, cidr=True)
@@ -436,7 +438,7 @@ class KubernetesApi(Service):
         srec['node_id'] = node['id']
         srec['serv_port'] = sport
         srec['ctrl_port'] = cport
-        srec['ctrl_host'] = node['public_url']
+        srec['ctrl_host'] = constraints.nodeName if constraints.nodeName else node['public_url']
         srec['image'] = sreq.image
         srec['profile'] = prof.name
         srec['pull_image'] = prof.settings.pull_image
