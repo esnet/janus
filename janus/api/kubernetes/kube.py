@@ -212,7 +212,7 @@ class KubernetesApi(Service):
                                       namespace=self._get_namespace(node.name))
         log.info(f"Pod transitioned to state: {resp.status.phase}")
 
-    def stop_container(self, node: Node, container):
+    def stop_container(self, node: Node, container, **kwargs):
         api_client = self._get_client(node.name)
         api = client.CoreV1Api(api_client)
         res = api.delete_namespaced_pod(str(container), self._get_namespace(node.name))

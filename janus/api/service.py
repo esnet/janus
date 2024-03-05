@@ -75,6 +75,10 @@ class Service(ABC):
         pass
 
     @abstractmethod
+    def stop_container(self, node: Node, container, **kwargs):
+        pass
+
+    @abstractmethod
     def exec_create(self, node: Node, container, **kwargs):
         pass
 
