@@ -2,6 +2,7 @@ cryptography
 Flask==2.0.2
 flask-restplus==0.13.0
 Flask-httpauth==4.4.0
+flask-sock==0.7.0
 numa
 portainer-api
 psutil
@@ -16,4 +17,4 @@ Werkzeug==2.0.2
 pydantic==1.9.0
 ansible-tower-cli==3.3.8
 pytest-xprocess
-kubernetes
+kubernetes==29.0.0

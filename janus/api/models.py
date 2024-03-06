@@ -51,7 +51,7 @@ class ContainerProfileSettings(BaseModel):
     memory: int = 0
     affinity: str = "network"
     cpu_set: Optional[str] = None
-    mgmt_net: Union[dict, str] = None
+    mgmt_net: Optional[Union[dict, str]] = None
     data_net: Optional[Union[dict, str]] = None
     internal_port: Optional[str] = None
     ctrl_port_range: Optional[List[int]] = None
