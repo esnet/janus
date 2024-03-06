@@ -117,7 +117,7 @@ class KubernetesApi(Service):
             for i in res.items:
                 cnode = {
                     "name": i.metadata.name,
-                    "addresses": [ a.to_dict() for a in i.status.addresses ]
+                    "addresses": [ a.address if a.type == "InternalIP" else "" for a in i.status.addresses ]
                 }
                 host_info['cpu']['count'] += int(i.status.capacity.get('cpu'))
                 archs.add(i.status.node_info.architecture)

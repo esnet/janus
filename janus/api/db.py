@@ -163,6 +163,8 @@ def init_db(nname=None, refresh=False):
         # now do networks in separate table
         res = dbase.get(node_table, name=k)
         nets = res.get('networks', dict())
+        if not nets:
+            continue
         for n, w in nets.items():
             subnet = w.get('subnet', [])
             # try to get subnet information from profile if not tracked in endpoint

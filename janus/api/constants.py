@@ -23,7 +23,8 @@ class State(IntEnum):
     STALE = 5
 
 class EPType(IntEnum):
-    UNKNOWN = 0,
+    UNKNOWN = 0
     PORTAINER = 1
     KUBERNETES = 2
     DOCKER = 3
+    SLURM = 4

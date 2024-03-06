@@ -2,6 +2,7 @@ import re
 import logging
 from janus.api.portainer import PortainerDockerApi
 from janus.api.kubernetes import KubernetesApi
+from janus.api.slurm import JanusSlurmApi
 from janus.api.constants import State, EPType
 from janus.lib import AgentMonitor
 from janus.api.models import Node
@@ -18,7 +19,8 @@ class ServiceManager():
         self._am = AgentMonitor()
         self.service_map = {
             EPType.PORTAINER: PortainerDockerApi(),
-            EPType.KUBERNETES: KubernetesApi()
+            EPType.KUBERNETES: KubernetesApi(),
+            EPType.SLURM: JanusSlurmApi()
         }
 
     def _add_node_cb(self, node, name, url):
