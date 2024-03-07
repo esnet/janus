@@ -402,7 +402,7 @@ class KubernetesApi(Service):
 
         if (mnet.is_host()):
             kwargs['spec'].update({"hostNetwork": True})
-        elif (dnet.name):
+        if (dnet.name):
             ips = []
             data_ipv4 = get_next_ipv4(dnet, addrs_v4, cidr=True)
             data_ipv6 = get_next_ipv6(dnet, addrs_v6, cidr=True)
@@ -428,8 +428,8 @@ class KubernetesApi(Service):
         srec['mgmt_ipv6'] = mgmt_ipv6
         srec['data_net'] = node['networks'].get(dnet.name, None)
         srec['data_net_name'] = dnet.name
-        srec['data_ipv4'] = data_ipv4
-        srec['data_ipv6'] = data_ipv6
+        srec['data_ipv4'] = data_ipv4.split("/")[0] if data_ipv4 else None
+        srec['data_ipv6'] = data_ipv6.split("/")[0] if data_ipv6 else None
         srec['container_user'] = kwargs.get("USER_NAME", None)
 
         srec['kwargs'] = kwargs

@@ -103,11 +103,11 @@ class VolumeProfile(BaseModel):
 
 
 class SessionConstraints(BaseModel):
-    cpu: Optional[int]
-    memory: Optional[int]
-    nodeName: Optional[str]
-    nodeCount: Optional[int]
-    time: Optional[int]
+    cpu: Optional[int] = None
+    memory: Optional[int] = None
+    nodeName: Optional[str] = None
+    nodeCount: Optional[int] = None
+    time: Optional[int] = None
 
 
 class SessionRequest(BaseModel):

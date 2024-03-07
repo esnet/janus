@@ -175,12 +175,15 @@ def init_db(nname=None, refresh=False):
                 except Exception as e:
                     pass
             subnet = [keys_lower(x) for x in subnet]
-            if True:
-            #if n in data_nets:
-                key = f"{k}-{n}"
+            key = f"{k}-{n}"
+            curr = dbase.get(net_table, key=key)
+            if not curr:
                 net = {'name': n,
                        'key': key,
                        'subnet': list(subnet),
                        'allocated_v4': [],
                        'allocated_v6': []}
-                dbase.upsert(net_table, net, 'key', key)
+            else:
+                net = curr
+                net['subnet'] = list(subnet)
+            dbase.upsert(net_table, net, 'key', key)
