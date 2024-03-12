@@ -343,10 +343,10 @@ class KubernetesApi(Service):
             elif ninfo and not is_subset(kwargs, ninfo.get('_data')):
                 log.info(f"Network {net.name} found on {nname} but differs from profile, attempting to recreate")
                 try:
-                    self.remove_network(node.get('id'), net.name)
+                    self.remove_network(Node(**node), net.name)
                 except Exception as e:
                     log.warn(f"Removing network {net.name} on {nname} failed: {e}")
-            self.create_network(node.get('id'), net.name, **kwargs)
+            self.create_network(Node(**node), net.name, **kwargs)
             created = True
         return created
 
@@ -375,8 +375,10 @@ class KubernetesApi(Service):
 
         limits = dict()
         mem = get_mem(node, prof)
+        mem = constraints.memory if constraints.memory else mem
         limits["memory"] = mem if mem else self.DEF_MEM
         cpu = get_cpu(node, prof)
+        cpu = constraints.cpu if constraints.cpu else cpu
         limits["cpu"] = cpu if cpu else self.DEF_CPU
 
         kwargs = {
