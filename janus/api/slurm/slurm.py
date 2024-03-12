@@ -47,11 +47,14 @@ class JanusSlurmApi(Service):
         self.api_jwt = os.getenv('SLURM_JWT')
         self.api_url = os.getenv('SLURM_URL')
         self.api_user = os.getenv('SLURM_USER')
-        c = Config()
-        c.host = self.api_url
-        self._config = c
-        self._headers = {"X-SLURM-USER-NAME": self.api_user,
-                         "X-SLURM-USER-TOKEN": self.api_jwt}
+        if self.api_url:
+            c = Config()
+            c.host = self.api_url
+            self._config = c
+            self._headers = {"X-SLURM-USER-NAME": self.api_user,
+                             "X-SLURM-USER-TOKEN": self.api_jwt}
+        else:
+            self._config = None
 
     def _get_client(self):
         return SlurmApi(Client(self._config))
@@ -62,6 +65,8 @@ class JanusSlurmApi(Service):
 
     def get_nodes(self, nname=None, cb=None, refresh=False):
         ret = list()
+        if not self._config:
+            return ret
         api_client = self._get_client()
         res = api_client.slurm_v0038_get_nodes(_headers=self._headers)
         host_info = {

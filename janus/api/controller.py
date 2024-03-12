@@ -7,7 +7,7 @@ from operator import eq
 from functools import reduce
 
 from flask import request, jsonify
-from flask_restplus import Namespace, Resource
+from flask_restx import Namespace, Resource
 from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import check_password_hash
 from werkzeug.exceptions import BadRequest

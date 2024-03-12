@@ -6,14 +6,14 @@ import logging.config
 from configparser import ConfigParser
 
 # XXX Temporary fix for https://github.com/jarus/flask-testing/issues/143
-import werkzeug
-werkzeug.cached_property = werkzeug.utils.cached_property
+#import werkzeug
+#werkzeug.cached_property = werkzeug.utils.cached_property
 
 # XXX More monkeypatching
-import flask.scaffold
-flask.helpers._endpoint_from_view_func = flask.scaffold._endpoint_from_view_func
+#import flask.scaffold
+#flask.helpers._endpoint_from_view_func = flask.scaffold._endpoint_from_view_func
 
-from flask_restplus import Api
+from flask_restx import Api
 from flask import Flask, Blueprint
 from flask_sock import Sock
 
