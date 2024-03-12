@@ -14,7 +14,8 @@ tinydb
 virtfs
 tcconfig
 Werkzeug==2.0.2
-pydantic==1.9.0
+pydantic==2.5.3
 ansible-tower-cli==3.3.8
 pytest-xprocess
 kubernetes==29.0.0
+file:libs/openapi_slurm_0.0.38_client-1.0.0-py3-none-any.whl
