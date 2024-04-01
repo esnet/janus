@@ -524,10 +524,10 @@ class PortainerDockerApi(Service):
             elif ninfo and not is_subset(kwargs, ninfo.get('_data')):
                 log.info(f"Network {net.name} found on {nname} but differs from profile, attempting to recreate")
                 try:
-                    self.remove_network(node.get('id'), net.name)
+                    self.remove_network(Node(**node), net.name)
                 except Exception as e:
                     log.warn(f"Removing network {net.name} on {nname} failed: {e}")
-            self.create_network(node.get('id'), net.name, **kwargs)
+            self.create_network(Node(**node), net.name, **kwargs)
             created = True
         return created
 

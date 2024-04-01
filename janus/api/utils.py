@@ -6,7 +6,7 @@ from ipaddress import IPv6Network, IPv6Address
 
 from janus import settings
 from janus.api.constants import Constants
-from janus.api.models import Network
+from janus.api.models import Network,Node
 from janus.settings import cfg
 import requests
 import shlex
@@ -209,8 +209,8 @@ def get_next_ipv6(net, curr=set(), cidr=False):
     ipnet = None
     for sub in network['subnet']:
         try:
-            ipnet = IPv6Network(sub['Subnet'])
-            gw = IPv6Address(sub.get('Gateway'))
+            ipnet = IPv6Network(sub['subnet'])
+            gw = IPv6Address(sub.get('gateway'))
             if gw:
                 alloced.append(str(gw))
             break
@@ -282,10 +282,10 @@ def handle_image(n, img, handler, pull=False):
         if len(parts) == 1:
             if f"{img}:latest" not in n['images'] or pull:
                 log.info(f"Pulling image {img} for node {n['name']}")
-                handler.pull_image(n['id'], parts[0], 'latest')
+                handler.pull_image(Node(**n), parts[0], 'latest')
         elif len(parts) > 1:
             log.info(f"Pulling image {img} for node {n['name']}")
-            handler.pull_image(n['id'], parts[0], parts[1])
+            handler.pull_image(Node(**n), parts[0], parts[1])
 
 def set_qos(url, qos):
         try:
