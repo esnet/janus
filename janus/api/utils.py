@@ -276,16 +276,16 @@ def error_svc(s, e):
                         'response': restxt})
     return True
 
-def handle_image(n, img, handler, pull=False):
-    if img not in n['images'] or pull:
+def handle_image(n: Node, img, handler, pull=False):
+    if img not in n.images or pull:
         parts = img.split(':')
         if len(parts) == 1:
-            if f"{img}:latest" not in n['images'] or pull:
-                log.info(f"Pulling image {img} for node {n['name']}")
-                handler.pull_image(Node(**n), parts[0], 'latest')
+            if f"{img}:latest" not in n.images or pull:
+                log.info(f"Pulling image {img} for node {n.name}")
+                handler.pull_image(n, parts[0], 'latest')
         elif len(parts) > 1:
-            log.info(f"Pulling image {img} for node {n['name']}")
-            handler.pull_image(Node(**n), parts[0], parts[1])
+            log.info(f"Pulling image {img} for node {n.name}")
+            handler.pull_image(n, parts[0], parts[1])
 
 def set_qos(url, qos):
         try:

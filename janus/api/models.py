@@ -123,7 +123,7 @@ class SessionRequest(BaseModel):
 class Node(BaseModel):
     id: Union[int, str]
     name: str
-
+    images: Optional[list] = None
 
 class Network(object):
     def __init__(self, net, node=None):

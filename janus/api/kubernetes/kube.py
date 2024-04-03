@@ -63,9 +63,13 @@ class KubernetesApi(Service):
             return self.NS
 
     def _get_client(self, ctx_name):
-        if self.config:
-            return client.ApiClient(self.config)
-        return config.new_client_from_config(context=ctx_name)
+        try:
+            if self.config:
+                return client.ApiClient(self.config)
+            return config.new_client_from_config(context=ctx_name)
+        except Exception as e:
+            log.error(f"Could not get Kubernetes client: {e}")
+            return None
 
     def _get_contexts(self):
         if self.api_key and self.api_cluster_name and self.api_cluster_url:
@@ -108,6 +112,8 @@ class KubernetesApi(Service):
             cnodes = list()
             archs = set()
             api_client = self._get_client(ctx_name)
+            if not api_client:
+                continue
             v1 = client.CoreV1Api(api_client)
             try:
                 res = v1.list_node(watch=False)

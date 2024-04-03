@@ -23,7 +23,7 @@ class ServiceManager():
             EPType.SLURM: JanusSlurmApi()
         }
 
-    def _add_node_cb(self, node, name, url):
+    def _add_node_cb(self, node: dict, name, url):
         try:
             table = self._db.get_table('images')
             for img in node.get('images'):
@@ -32,13 +32,13 @@ class ServiceManager():
         except Exception as e:
             log.error("Could not save images for {}: {}".format(url, e))
         try:
-            (n, ret) = self._am.check_agent(name, url)
+            ret = self._am.check_agent(Node(**node), url)
             node['host'] = ret.json()
-            (n, ret) = self._am.tune(name, url)
+            ret = self._am.tune(url)
             node['host']['tuning'] = ret.json()
         except Exception as e:
             log.error("Could not fetch agent info from {}: {}".format(url, e))
-            self._am.start_agent(node)
+            self._am.start_agent(Node(**node))
 
     def get_nodes(self, nname=None, refresh=False):
         nodes = list()
@@ -57,16 +57,19 @@ class ServiceManager():
         n = self.service_map[eptype].create_node(ep, **kwargs)
         # Tune remote endpoints after addition if requested
         if AGENT_AUTO_TUNE:
-            self._am.tune(ep, post=True)
+            try:
+                self._am.tune(ep.get('public_url'), post=True)
+            except Exception as e:
+                log.error(f"Could not apply auto-tuning, agent not running?: {e}")
 
-    def remove_node(self, node=None, nname=None):
+    def remove_node(self, node: dict = None, nname=None):
         if nname:
             ntable = self._db.get_table('nodes')
             node = self._db.get(ntable, name=nname)
         eptype = node.get('endpoint_type')
         return self.service_map[eptype].remove_node(node.get('id'))
 
-    def get_handler(self, node=None, nname=None):
+    def get_handler(self, node: dict = None, nname=None):
         if nname:
             ntable = self._db.get_table('nodes')
             node = self._db.get(ntable, name=nname)
@@ -76,7 +79,7 @@ class ServiceManager():
         eptype = node.get('endpoint_type')
         return self.service_map[eptype]
 
-    def get_auth_token(self, node=None, ntype=EPType.PORTAINER):
+    def get_auth_token(self, node: dict = None, ntype=EPType.PORTAINER):
         return self.service_map[ntype].auth_token
 
 
