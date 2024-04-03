@@ -162,4 +162,5 @@ class JanusSlurmApi(Service):
 
     def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
         srec = dict()
+        print (sname, sreq)
         return srec

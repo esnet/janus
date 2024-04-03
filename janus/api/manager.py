@@ -93,13 +93,13 @@ class ServiceManager():
         if handler.type == EPType.PORTAINER:
             # Docker-specific v4 vs v6 image registry nonsense. Need to abstract this away.
             try:
-                handle_image(n, img, handler, s.get('pull_image'))
+                handle_image(Node(**n), img, handler, s.get('pull_image'))
             except Exception as e:
                 log.error(f"Could not pull image {img} on node {nname}: {e}")
                 errs = error_svc(s, e)
                 try:
                     v6img = f"registry.ipv6.docker.com/{img}"
-                    handle_image(n, v6img, handler, s.get('pull_image'))
+                    handle_image(Node(**n), v6img, handler, s.get('pull_image'))
                     s['image'] = v6img
                 except Exception as e:
                     log.error(f"Could not pull image {v6img} on node {nname}: {e}")
