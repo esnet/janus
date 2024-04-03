@@ -173,7 +173,7 @@ def init_db(nname=None, refresh=False):
                 try:
                     subnet = pnet.settings.ipam.get('config') if pnet else []
                 except Exception as e:
-                    pass
+                    subnet = []
             subnet = [keys_lower(x) for x in subnet]
             key = f"{k}-{n}"
             curr = dbase.get(net_table, key=key)
