@@ -68,7 +68,7 @@ class KubernetesApi(Service):
                 return client.ApiClient(self.config)
             return config.new_client_from_config(context=ctx_name)
         except Exception as e:
-            log.error(f"Could not get Kubernetes client: {e}")
+            log.error(f"Could not get Kubernetes client for {ctx_name}: {e}")
             return None
 
     def _get_contexts(self):
@@ -84,7 +84,10 @@ class KubernetesApi(Service):
                          'namespace': self.api_namespace}
                      }], None
         else:
-            return config.list_kube_config_contexts()
+            try:
+                return config.list_kube_config_contexts()
+            except Exception:
+                return [], None
 
     def get_nodes(self, nname=None, cb=None, refresh=False):
         ret = list()
@@ -93,7 +96,7 @@ class KubernetesApi(Service):
         contexts, active_context = self._get_contexts()
         if not contexts:
             log.error("Cannot find any contexts in current configuration.")
-            return
+            return ret
 
         node_count = 0
         for ctx in contexts:
