@@ -4,6 +4,7 @@ import json
 import logging
 import queue
 import websocket
+import shlex
 from threading import Thread
 from concurrent.futures.thread import ThreadPoolExecutor
 
