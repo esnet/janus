@@ -391,7 +391,6 @@ class PortainerDockerApi(Service):
 
     def exec_stream(self, node: Node, container, eid, **kwargs):
         ws_url = f"{cfg.PORTAINER_WS}/exec?token={self.client.jwt}&id={eid}&endpointId={node.id}"
-        print (ws_url)
         ws = websocket.create_connection(ws_url)
 
         def _get_stream(ws, q):
@@ -640,27 +639,27 @@ class PortainerDockerApi(Service):
                 }
                 })
 
-            # Constrain container memory if requested
-            mem = get_mem(node, prof)
-            if mem:
-                docker_kwargs["HostConfig"].update({"Memory": mem})
+        # Constrain container memory if requested
+        mem = get_mem(node, prof)
+        if mem:
+            docker_kwargs["HostConfig"].update({"Memory": mem})
 
-            for e in prof.settings.environment:
-                # XXX: do some sanity checking here
-                docker_kwargs['Env'].append(e)
+        for e in prof.settings.environment:
+            # XXX: do some sanity checking here
+            docker_kwargs['Env'].append(e)
 
-            for v in prof.settings.volumes:
-                vol = cfg.get_volume(v)
-                if vol:
-                    readonly = True if "ReadOnly" in vol and vol['ReadOnly'] else False
-                    mnt = {'Type': vol['type'],
-                           'Source': vol.get('source', None),
-                           'Target': vol.get('target', None),
-                           'ReadOnly': readonly
-                           }
-                    docker_kwargs['HostConfig']['Mounts'].append(mnt)
-                    if "driver" in vol:
-                        docker_kwargs['HostConfig']['VolumeDriver'] = vol['driver']
+        for v in prof.settings.volumes:
+            vol = cfg.pm.get_profile(Constants.VOL, v)
+            if vol:
+                readonly = True if "ReadOnly" in vol and vol['ReadOnly'] else False
+                mnt = {'Type': vol.settings.type,
+                       'Source': vol.settings.source,
+                       'Target': vol.settings.target,
+                       'ReadOnly': readonly
+                }
+                docker_kwargs['HostConfig']['Mounts'].append(mnt)
+                if "driver" in vol:
+                    docker_kwargs['HostConfig']['VolumeDriver'] = vol['driver']
 
         if dnet.name and not mnet.is_host():
             try:

@@ -157,15 +157,7 @@ class JanusConfig():
     def get_users(self):
         return self._users
 
-    def get_volume(self, v):
-        return self._volumes.get(v, {})
-
-    def get_qos(self, v):
-        return self._qos.get(v, {})
-
-    def get_qos_list(self):
-        return self._qos
-
+    # EK: XXX fix this
     def get_feature(self, f):
         return self._features.get(f, {})
 
