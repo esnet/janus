@@ -4,6 +4,7 @@ class WSType(IntEnum):
     EXEC_STREAM = 0
     EP_STATUS = 1
     CONTAINER_STATUS = 2
+    EVENTS = 3
 
 class Constants:
     NET = "network"

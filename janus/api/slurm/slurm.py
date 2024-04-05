@@ -1,8 +1,10 @@
 import os
 import time
+import functools
 import json
 import logging
 import queue
+from copy import copy, deepcopy
 from threading import Thread
 
 import openapi_client
@@ -16,6 +18,7 @@ from janus.api.service import Service
 from janus.api.constants import EPType
 from janus.api.constants import Constants
 from janus.settings import cfg
+from janus.api.pubsub import TOPIC
 from janus.api.models import (
     Node,
     Network,
@@ -37,6 +40,17 @@ from janus.api.utils import (
 
 
 log = logging.getLogger(__name__)
+
+def send_event(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        ret = func(*args, **kwargs)
+        cfg.sm.pubsub.publish({"msg": {"handler": EPType.SLURM.name,
+                                       "event": func.__name__,
+                                       "value": ret}},
+                              TOPIC.event_stream)
+        return ret
+    return wrapper
 
 class JanusSlurmApi(Service):
     DEF_MEM = "4G"
@@ -124,14 +138,34 @@ class JanusSlurmApi(Service):
     def create_node(self, nname, eptype, **kwargs):
         pass
 
-    def create_container(self, node: Node, image: str, name: str = None, **kwargs):
-        pass
+    @send_event
+    def create_container(self, node: Node, image: str, cname: str = None, **kwargs):
+        return {"Id": cname}
 
+    @send_event
     def start_container(self, node: Node, container: str, service=None, **kwargs):
-        pass
+        @send_event
+        def nodelist(sub, service):
+            job_id = sub.job_id
+            while True:
+                job = api_client.slurm_v0038_get_job(job_id=str(job_id), _headers=self._headers)
+                if job.jobs[0].nodes:
+                    return job.jobs[0].nodes
+                time.sleep(0.5)
 
+        kw = copy(service.get('kwargs'))
+        script = kw.pop('script')
+        api_client = self._get_client()
+        job = V0038JobSubmission(script=script,
+                                 job=V0038JobProperties(**kw))
+        sub = api_client.slurm_v0038_submit_job(job, _headers=self._headers)
+        t = Thread(target=nodelist, args=(sub, service))
+        t.start()
+        return {"Id": container}
+
+    @send_event
     def stop_container(self, node: Node, container, **kwargs):
-        pass
+        return {"Id": container}
 
     def create_network(self, node: Node, net_name, **kwargs):
         pass
@@ -160,7 +194,50 @@ class JanusSlurmApi(Service):
     def resolve_networks(self, node: dict, prof):
         pass
 
+    @send_event
     def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
         srec = dict()
-        print (sname, sreq)
+        srec = dict()
+        node = sreq.node
+        prof = sreq.profile
+        constraints = sreq.constraints
+        nname = node.get('name')
+        cname = sname
+        dnet = Network(prof.settings.data_net, nname)
+        mnet = Network(prof.settings.mgmt_net, nname)
+        args_override = sreq.arguments
+        cmd = None
+        if args_override:
+            cmd = shlex.split(args_override)
+        elif prof.settings.arguments:
+            cmd = shlex.split(prof.settings.arguments)
+
+        kwargs = {
+            'name': cname,
+            'partition': 'debug',
+            'environment': {'PATH': '/bin:/usr/bin/:/usr/local/bin/'},
+            'current_working_directory': '/tmp',
+            'script': '#!/bin/bash\nsleep 15'
+        }
+
+        srec['mgmt_net'] = node['networks'].get(mnet.name, None)
+        #srec['mgmt_ipv4'] = mgmt_ipv4
+        #srec['mgmt_ipv6'] = mgmt_ipv6
+        srec['data_net'] = node['networks'].get(dnet.name, None)
+        srec['data_net_name'] = dnet.name
+        #srec['data_ipv4'] = data_ipv4.split("/")[0] if data_ipv4 else None
+        #srec['data_ipv6'] = data_ipv6.split("/")[0] if data_ipv6 else None
+        srec['container_user'] = kwargs.get("USER_NAME", None)
+
+        srec['kwargs'] = kwargs
+        srec['sname'] = sname
+        srec['node'] = node
+        srec['node_id'] = node['id']
+        #srec['serv_port'] = sport
+        #srec['ctrl_port'] = cport
+        srec['ctrl_host'] = constraints.nodeName if constraints.nodeName else node['public_url']
+        srec['image'] = sreq.image
+        srec['profile'] = prof.name
+        srec['pull_image'] = prof.settings.pull_image
+        srec['errors'] = list()
         return srec

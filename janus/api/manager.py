@@ -1,11 +1,13 @@
 import re
 import logging
+import queue
 from janus.api.portainer import PortainerDockerApi
 from janus.api.kubernetes import KubernetesApi
 from janus.api.slurm import JanusSlurmApi
 from janus.api.constants import State, EPType
 from janus.lib import AgentMonitor
 from janus.api.models import Node
+from janus.api.pubsub import Publisher
 from janus.api.utils import error_svc, handle_image
 from janus.settings import cfg, AGENT_AUTO_TUNE
 
@@ -22,6 +24,11 @@ class ServiceManager():
             EPType.KUBERNETES: KubernetesApi(),
             EPType.SLURM: JanusSlurmApi()
         }
+        self._pubsub = Publisher()
+
+    @property
+    def pubsub(self):
+        return self._pubsub
 
     def _add_node_cb(self, node: dict, name, url):
         try:

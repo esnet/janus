@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from janus.api.models import Node, SessionRequest
+from janus.settings import cfg
 
 
 class Service(ABC):
