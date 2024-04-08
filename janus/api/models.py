@@ -107,6 +107,7 @@ class SessionConstraints(BaseModel):
     memory: Optional[int] = None
     nodeName: Optional[str] = None
     nodeCount: Optional[int] = None
+    nodeQueue: Optional[str] = None
     time: Optional[int] = None
 
 

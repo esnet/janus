@@ -4,6 +4,7 @@ import functools
 import json
 import logging
 import queue
+import requests
 from copy import copy, deepcopy
 from threading import Thread
 
@@ -55,6 +56,7 @@ def send_event(func):
 class JanusSlurmApi(Service):
     DEF_MEM = "4G"
     DEF_CPU = "2"
+    DEF_VER = "v0.0.38"
 
     def __init__(self):
         self.api_name = os.getenv('SLURM_NAME')
@@ -66,7 +68,8 @@ class JanusSlurmApi(Service):
             c.host = self.api_url
             self._config = c
             self._headers = {"X-SLURM-USER-NAME": self.api_user,
-                             "X-SLURM-USER-TOKEN": self.api_jwt}
+                             "X-SLURM-USER-TOKEN": self.api_jwt,
+                             "Content-Type": "application/json"}
         else:
             self._config = None
 
@@ -145,21 +148,33 @@ class JanusSlurmApi(Service):
     @send_event
     def start_container(self, node: Node, container: str, service=None, **kwargs):
         @send_event
-        def nodelist(sub, service):
-            job_id = sub.job_id
+        def nodelist(service, job_id):
             while True:
                 job = api_client.slurm_v0038_get_job(job_id=str(job_id), _headers=self._headers)
                 if job.jobs[0].nodes:
                     return job.jobs[0].nodes
                 time.sleep(0.5)
 
+        jid = None
         kw = copy(service.get('kwargs'))
         script = kw.pop('script')
         api_client = self._get_client()
-        job = V0038JobSubmission(script=script,
-                                 job=V0038JobProperties(**kw))
-        sub = api_client.slurm_v0038_submit_job(job, _headers=self._headers)
-        t = Thread(target=nodelist, args=(sub, service))
+        #job = V0038JobSubmission(script=script,
+        #                         job=V0038JobProperties(**kw))
+        #sub = api_client.slurm_v0038_submit_job(job, _headers=self._headers)
+        #jid = sub.job_id
+        req = {"script": script,
+               "job": kw}
+        try:
+            res = requests.post(f"{self.api_url}/slurm/{self.DEF_VER}/job/submit",
+                                data=json.dumps(req),
+                                headers=self._headers)
+            js = json.loads(res.text)
+            jid = js.get("job_id")
+        except Exception as e:
+            log.error(f"Could not submit job: {e}")
+            raise e
+        t = Thread(target=nodelist, args=(service, jid))
         t.start()
         return {"Id": container}
 
@@ -214,11 +229,19 @@ class JanusSlurmApi(Service):
 
         kwargs = {
             'name': cname,
-            'partition': 'debug',
             'environment': {'PATH': '/bin:/usr/bin/:/usr/local/bin/'},
             'current_working_directory': '/tmp',
-            'script': '#!/bin/bash\nsleep 15'
+            'script': '#!/bin/bash\nsleep 15',
         }
+
+        if constraints.nodeQueue:
+            kwargs['partition'] = constraints.nodeQueue
+
+        if constraints.nodeCount:
+            kwargs['nodes'] = constraints.nodeCount
+
+        if constraints.time:
+            kwargs['time_limit'] = constraints.time
 
         srec['mgmt_net'] = node['networks'].get(mnet.name, None)
         #srec['mgmt_ipv4'] = mgmt_ipv4
