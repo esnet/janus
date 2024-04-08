@@ -104,7 +104,8 @@ class JanusSlurmApi(Service):
                 "addresses": [ n.address ]
             }
             host_info['cpu']['count'] += int(n.cpus)
-            archs.add(n.architecture)
+            if n.architecture:
+                archs.add(n.architecture)
             cnodes.append(cnode)
             node_count += 1
 
