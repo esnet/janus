@@ -151,10 +151,18 @@ class JanusSlurmApi(Service):
         @send_event
         def nodelist(service, job_id):
             while True:
-                job = api_client.slurm_v0038_get_job(job_id=str(job_id), _headers=self._headers)
-                if job.jobs[0].nodes:
-                    return job.jobs[0].nodes
-                time.sleep(0.5)
+                try:
+                    #job = api_client.slurm_v0038_get_job(job_id=str(job_id), _headers=self._headers)
+                    res = requests.get(f"{self.api_url}/slurm/{self.DEF_VER}/job/{job_id}",
+                                       headers=self._headers)
+                    job = json.loads(res.text)
+                    nodes = job.get("jobs")[0].get("nodes")
+                    if nodes:
+                        return {"Id": service.get("sname"), "nodes": nodes}
+                except Exception as e:
+                    log.error(f"Could not query for job {job_id}: {e}")
+                    return {"Id": service.get("sname"), "nodes": "N/A"}
+                time.sleep(1.0)
 
         jid = None
         kw = copy(service.get('kwargs'))
@@ -232,7 +240,7 @@ class JanusSlurmApi(Service):
             'name': cname,
             'environment': {'PATH': '/bin:/usr/bin/:/usr/local/bin/'},
             'current_working_directory': '/tmp',
-            'script': '#!/bin/bash\nsleep 15',
+            'script': '#!/bin/bash\nsleep 30',
         }
 
         if constraints.nodeQueue:
@@ -243,6 +251,9 @@ class JanusSlurmApi(Service):
 
         if constraints.time:
             kwargs['time_limit'] = constraints.time
+
+        if constraints.account:
+            kwargs['account'] = constraints.account
 
         srec['mgmt_net'] = node['networks'].get(mnet.name, None)
         #srec['mgmt_ipv4'] = mgmt_ipv4
