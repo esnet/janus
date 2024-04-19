@@ -85,7 +85,11 @@ class JanusSlurmApi(Service):
         if not self._config:
             return ret
         api_client = self._get_client()
-        res = api_client.slurm_v0038_get_nodes(_headers=self._headers)
+        try:
+            res = api_client.slurm_v0038_get_nodes(_headers=self._headers)
+        except Exception as e:
+            log.error(f"Could not get nodes from SLURM endpoint: {e}")
+            return ret
         host_info = {
             "cpu": {
                 "brand_raw": str(),

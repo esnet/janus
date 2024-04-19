@@ -101,27 +101,6 @@ class VolumeProfile(BaseModel):
     name: str
     settings: VolumeProfileSettings
 
-
-class SessionConstraints(BaseModel):
-    cpu: Optional[float] = None
-    memory: Optional[int] = None
-    nodeName: Optional[str] = None
-    nodeCount: Optional[int] = None
-    nodeQueue: Optional[str] = None
-    account: Optional[str] = None
-    time: Optional[int] = None
-
-
-class SessionRequest(BaseModel):
-    node: dict
-    image: str
-    profile: ContainerProfile
-    constraints: SessionConstraints
-    arguments: Optional[str]
-    remove_container: Optional[bool]
-    kwargs: Optional[dict]
-
-
 class Node(BaseModel):
     id: Union[int, str]
     name: str
@@ -154,3 +133,28 @@ class Network(object):
 class ServiceRecord(object):
     def __init__(self, srec_dict):
         pass
+
+### API Request objects
+class SessionConstraints(BaseModel):
+    cpu: Optional[float] = None
+    memory: Optional[int] = None
+    nodeName: Optional[str] = None
+    nodeCount: Optional[int] = None
+    nodeQueue: Optional[str] = None
+    time: Optional[int] = None
+
+class SessionRequest(BaseModel):
+    node: dict
+    image: str
+    profile: ContainerProfile
+    constraints: SessionConstraints
+    arguments: Optional[str]
+    remove_container: Optional[bool]
+    kwargs: Optional[dict]
+
+class AddEndpointRequest(BaseModel):
+    type: int
+    name: str
+    url: str
+    edge_type: Optional[int] = None
+    public_url: Optional[str] = None

@@ -4,9 +4,10 @@ import queue
 from janus.api.portainer import PortainerDockerApi
 from janus.api.kubernetes import KubernetesApi
 from janus.api.slurm import JanusSlurmApi
+from janus.api.edge import JanusEdgeApi
 from janus.api.constants import State, EPType
 from janus.lib import AgentMonitor
-from janus.api.models import Node
+from janus.api.models import Node, AddEndpointRequest
 from janus.api.pubsub import Publisher
 from janus.api.utils import error_svc, handle_image
 from janus.settings import cfg, AGENT_AUTO_TUNE
@@ -22,7 +23,8 @@ class ServiceManager():
         self.service_map = {
             EPType.PORTAINER: PortainerDockerApi(),
             EPType.KUBERNETES: KubernetesApi(),
-            EPType.SLURM: JanusSlurmApi()
+            EPType.SLURM: JanusSlurmApi(),
+            EPType.EDGE: JanusEdgeApi()
         }
         self._pubsub = Publisher()
 
@@ -59,13 +61,13 @@ class ServiceManager():
                 log.error(f"Error retrieving nodes from {k}: {e}")
         return nodes
 
-    def add_node(self, ep, **kwargs):
-        eptype = ep.get('type')
+    def add_node(self, ep: AddEndpointRequest, **kwargs):
+        eptype = ep.type
         n = self.service_map[eptype].create_node(ep, **kwargs)
         # Tune remote endpoints after addition if requested
         if AGENT_AUTO_TUNE:
             try:
-                self._am.tune(ep.get('public_url'), post=True)
+                self._am.tune(ep.public_url, post=True)
             except Exception as e:
                 log.error(f"Could not apply auto-tuning, agent not running?: {e}")
 

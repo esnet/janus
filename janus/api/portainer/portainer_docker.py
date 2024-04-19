@@ -21,7 +21,8 @@ from janus.api.models import (
     Node,
     Network,
     ContainerProfile,
-    SessionRequest
+    SessionRequest,
+    AddEndpointRequest
 )
 from janus.settings import REGISTRIES as iregs
 from janus.settings import cfg, IGNORE_EPS
@@ -183,15 +184,15 @@ class PortainerDockerApi(Service):
         return list(nodes.values())
 
     @auth
-    def create_node(self, ep, **kwargs):
+    def create_node(self, ep: AddEndpointRequest, **kwargs):
         eapi = EndpointsApi(self.client)
         eptype = 2 # We use Portainer Agent registration method
-        kwargs = {"url": ep['url'],
-                  "public_url": ep['public_url'],
+        kwargs = {"url": ep.url,
+                  "public_url": ep.public_url,
                   "tls": "true",
                   "tls_skip_verify": "true",
                   "tls_skip_client_verify": "true"}
-        return eapi.endpoint_create(ep.get('name'), eptype, **kwargs)
+        return eapi.endpoint_create(ep.name, eptype, **kwargs)
 
     @auth
     def remove_node(self, nid):

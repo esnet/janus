@@ -27,7 +27,8 @@ from janus.api.models import (
     NetworkProfile,
     VolumeProfile,
     SessionRequest,
-    SessionConstraints
+    SessionConstraints,
+    AddEndpointRequest
 )
 from janus.api.utils import (
     commit_db,
@@ -242,11 +243,10 @@ class NodeCollection(Resource, QueryUser):
         eps = list()
         try:
             for r in req:
-                url_split = urlsplit(r['url'])
-                ep = {"name": r['name'],
-                      "url": r['url'],
-                      "public_url": url_split.hostname if not "public_url" in r else r['public_url'],
-                      "type": EPType(r['type'])}
+                ep = AddEndpointRequest(**r)
+                if not ep.public_url:
+                    url_split = urlsplit(r['url'])
+                    ep.public_url = url_split.hostname
                 eps.append(ep)
         except Exception as e:
             br = BadRequest()
@@ -255,8 +255,7 @@ class NodeCollection(Resource, QueryUser):
 
         try:
             for ep in eps:
-                kwargs = {}
-                ret = cfg.sm.add_node(ep, **kwargs)
+                ret = cfg.sm.add_node(ep)
         except Exception as e:
             return {"error": "{}".format(e)}, 500
 

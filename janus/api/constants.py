@@ -1,10 +1,5 @@
 from enum import IntEnum
 
-class WSType(IntEnum):
-    EXEC_STREAM = 0
-    EP_STATUS = 1
-    CONTAINER_STATUS = 2
-    EVENTS = 3
 
 class Constants:
     NET = "network"
@@ -29,3 +24,21 @@ class EPType(IntEnum):
     KUBERNETES = 2
     DOCKER = 3
     SLURM = 4
+    EDGE = 100
+
+class WSEPType(IntEnum):
+    PORTAINER = 1001
+    KUBERNETES = 1002
+    DOCKER = 1003
+    SLURM = 1004
+
+class WSType(IntEnum):
+    EXEC_STREAM = 0
+    EP_STATUS = 1
+    CONTAINER_STATUS = 2
+    EVENTS = 3
+    AGENT_COMM = 4
+    AGENT_REGISTER = EPType.EDGE
+
+WS_MIN = WSEPType.PORTAINER
+WS_MAX = WSEPType.SLURM
