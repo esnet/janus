@@ -5,7 +5,13 @@ from .utils import Constants
 from janus import settings
 from janus.settings import cfg
 from janus.api.db import QueryUser
-from janus.api.models import QoS_Controller, ContainerProfile, NetworkProfile, VolumeProfile
+from janus.api.models import (
+    QoS_Controller,
+    ContainerProfile,
+    NetworkProfile,
+    NetworkProfileSettings,
+    VolumeProfile
+)
 
 
 log = logging.getLogger(__name__)
@@ -18,8 +24,20 @@ class ProfileManager(QueryUser):
         Constants.QOS: QoS_Controller
     }
 
+    def _create_defaults(self):
+        net_tbl = self._db.get_table(Constants.NET)
+        for nname in settings.DEFAULT_NET_PROFILES:
+            if self._db.get(net_tbl, name=nname):
+                continue
+            log.debug(f"Adding default network profile {nname}")
+            driver = "null" if nname == "none" else nname
+            nprof = NetworkProfile(name=nname,
+                                   settings=NetworkProfileSettings(driver=driver))
+            self._db.upsert(net_tbl, nprof.model_dump(), 'name', nname)
+
     def __init__(self, db, profile_path = None):
         self._db = db
+        self._create_defaults()
         self._profile_path = profile_path
 
     def get_profile_from_db(self, ptype=None, p=None, user=None, group=None):

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, root_validator, create_model
+from pydantic import BaseModel, SerializeAsAny, root_validator, create_model
 from typing import List, Optional, Union
 
 
@@ -81,7 +81,7 @@ class NetworkProfileSettings(BaseModel):
 
 class NetworkProfile(BaseModel):
     name: str
-    settings: NetworkProfileSettings
+    settings: SerializeAsAny[NetworkProfileSettings]
 
 
 class VolumeProfileSettings(BaseModel):

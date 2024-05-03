@@ -26,6 +26,7 @@ except:
     FLASK_DEBUG = False
 
 DEFAULT_PROFILE = 'default'
+DEFAULT_NET_PROFILES = ['bridge', 'host', 'none']
 SUPPORTED_FEATURES = ['rdma']
 SUPPORTED_IMAGES = ['dtnaas/tools',
                     'dtnaas/ofed']
