@@ -258,7 +258,7 @@ class KubernetesApi(Service):
                      stderr=kwargs.get("AttachStderr"),
                      stdin=kwargs.get("AttachStdin"),
                      stdout=kwargs.get("AttachStdout"),
-                     tty=kwargs.get("Tty"),
+                     tty=False,
                      _preload_content=False
                      )
 
