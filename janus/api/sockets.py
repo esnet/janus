@@ -20,7 +20,7 @@ def handle_websocket(sock):
         return
 
     typ = js.get("type")
-    if not typ or typ not in [*WSType]:
+    if typ is None or typ not in [*WSType]:
         sock.send(json.dumps({"error": f"Invalid websocket request type: {typ}"}))
         return
 
