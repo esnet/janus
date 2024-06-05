@@ -76,6 +76,16 @@ class JanusSlurmApi(Service):
     def _get_client(self):
         return SlurmApi(Client(self._config))
 
+    def _get_headers(self, service):
+        user = service.get('slurm_user')
+        jwt = service.get('slurm_jwt')
+        if user and jwt:
+            return {"X-SLURM-USER-NAME": user,
+                    "X-SLURM-USER-TOKEN": jwt,
+                    "Content-Type": "application/json"}
+        else:
+            return self._headers
+
     @property
     def type(self):
         return EPType.SLURM
@@ -158,7 +168,7 @@ class JanusSlurmApi(Service):
                 try:
                     #job = api_client.slurm_v0038_get_job(job_id=str(job_id), _headers=self._headers)
                     res = requests.get(f"{self.api_url}/slurm/{self.DEF_VER}/job/{job_id}",
-                                       headers=self._headers)
+                                       headers=self._get_headers(service))
                     job = json.loads(res.text)
                     nodes = job.get("jobs")[0].get("nodes")
                     if nodes:
@@ -181,7 +191,9 @@ class JanusSlurmApi(Service):
         try:
             res = requests.post(f"{self.api_url}/slurm/{self.DEF_VER}/job/submit",
                                 data=json.dumps(req),
-                                headers=self._headers)
+                                headers=self._get_headers(service))
+            if res.status_code != 200:
+                raise Exception(f"Slurm API returned {res.status_code}: {res.text}")
             js = json.loads(res.text)
             jid = js.get("job_id")
         except Exception as e:
@@ -229,6 +241,7 @@ class JanusSlurmApi(Service):
         node = sreq.node
         prof = sreq.profile
         constraints = sreq.constraints
+        sess_kwargs = sreq.kwargs
         nname = node.get('name')
         cname = sname
         dnet = Network(prof.settings.data_net, nname)
@@ -243,9 +256,13 @@ class JanusSlurmApi(Service):
         kwargs = {
             'name': cname,
             'environment': {'PATH': '/bin:/usr/bin/:/usr/local/bin/'},
-            'current_working_directory': '/tmp',
-            'script': '#!/bin/bash\nsleep 30',
         }
+
+        if constraints.nodeExec:
+            kwargs['script'] = constraints.nodeExec
+
+        if constraints.nodePath:
+            kwargs['current_working_directory'] = constraints.nodePath
 
         if constraints.nodeQueue:
             kwargs['partition'] = constraints.nodeQueue
@@ -256,9 +273,12 @@ class JanusSlurmApi(Service):
         if constraints.time:
             kwargs['time_limit'] = constraints.time
 
-        if constraints.account:
-            kwargs['account'] = constraints.account
+        account = sess_kwargs.get("SLURM_ACCOUNT", None)
+        if account:
+            kwargs['account'] = account
 
+        srec['slurm_user'] = sess_kwargs.get("SLURM_USER", None)
+        srec['slurm_jwt'] = sess_kwargs.get("SLURM_JWT", None)
         srec['mgmt_net'] = node['networks'].get(mnet.name, None)
         #srec['mgmt_ipv4'] = mgmt_ipv4
         #srec['mgmt_ipv6'] = mgmt_ipv6
@@ -266,7 +286,7 @@ class JanusSlurmApi(Service):
         srec['data_net_name'] = dnet.name
         #srec['data_ipv4'] = data_ipv4.split("/")[0] if data_ipv4 else None
         #srec['data_ipv6'] = data_ipv6.split("/")[0] if data_ipv6 else None
-        srec['container_user'] = kwargs.get("USER_NAME", None)
+        srec['container_user'] = sess_kwargs.get("USER_NAME", None)
 
         srec['kwargs'] = kwargs
         srec['sname'] = sname

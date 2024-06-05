@@ -141,6 +141,9 @@ class SessionConstraints(BaseModel):
     nodeName: Optional[str] = None
     nodeCount: Optional[int] = None
     nodeQueue: Optional[str] = None
+    nodeExec: Optional[str] = None
+    nodePath: Optional[str] = None
+    account: Optional[str] = None
     time: Optional[int] = None
 
 class SessionRequest(BaseModel):
