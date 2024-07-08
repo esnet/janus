@@ -41,7 +41,13 @@ class QueryUser:
 class DBLayer():
 
     def __init__(self, db: str = None, **kwargs):
-        self._client = TinyDB(kwargs.get("path"))
+        path = kwargs.get("path")
+        if not path:
+            raise Exception("No DB file path specified")
+        if not os.path.exists(path):
+            with open(path, 'w') as file:
+                file.write("{}")
+        self._client = TinyDB(path)
 
     def mutex_lock(operation):
         def lock_unlock(*args, **kwargs):
