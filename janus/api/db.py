@@ -45,8 +45,7 @@ class DBLayer():
         if not path:
             raise Exception("No DB file path specified")
         if not os.path.exists(path):
-            with open(path, 'w') as file:
-                file.write("{}")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
         self._client = TinyDB(path)
 
     def mutex_lock(operation):
