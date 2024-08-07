@@ -145,19 +145,23 @@ class ActiveCollection(Resource, QueryUser):
         force = request.args.get('force', None)
         futures = list()
 
-        allocations = doc.get("allocations", dict())
         with ThreadPoolExecutor(max_workers=8) as executor:
-            for k, v in allocations.items():
+            for k,v in doc['services'].items():
                 try:
-                    n = dbase.search(nodes, name=k)[0]
+                    n = dbase.get(nodes, name=k)
+                    if not n:
+                        log.error(f"Node {k} not found")
+                        return {"error": f"Node not found: {k}"}, 404
                     handler = cfg.sm.get_handler(n)
                     if not (cfg.dryrun):
-                        for alloc in v:
-                            futures.append(executor.submit(handler.stop_container, Node(**n), alloc, **n))
+                        for s in v:
+                            futures.append(executor.submit(handler.stop_container,
+                                                           Node(**n), s.get('container_id'),
+                                                           **{'service': s}))
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
-                    log.error("Could not find node/container to stop, or already stopped: {}".format(k))
+                    log.error(f"Could not find node/container to stop, or already stopped: {k}")
         if not (cfg.dryrun):
             for future in concurrent.futures.as_completed(futures):
                 try:
@@ -167,9 +171,9 @@ class ActiveCollection(Resource, QueryUser):
                         handler = cfg.sm.get_handler(nname=res['node_name'])
                         handler.remove_container(Node(name=res['node_name'], id=res['node_id']), res['container_id'])
                 except Exception as e:
-                    log.error("Could not remove container on remote node: {}".format(e))
+                    log.error(f"Could not remove container on remote node: {e}")
                     if not force:
-                        return {"error": "{}".format(e)}, 503
+                        return {f"error": "{e}"}, 503
         # delete always removes realized state info
         commit_db(doc, aid, delete=True, realized=True)
         commit_db(doc, aid, delete=True)
@@ -257,7 +261,7 @@ class NodeCollection(Resource, QueryUser):
             for ep in eps:
                 ret = cfg.sm.add_node(ep)
         except Exception as e:
-            return {"error": "{}".format(e)}, 500
+            return {"error": "{e}"}, 500
 
         try:
             log.info("New Node added, refreshing endpoint DB...")
@@ -380,14 +384,13 @@ class Create(Resource, QueryUser):
         except Exception as e:
             import traceback
             traceback.print_exc()
-            log.error("Could not allocate request: {}".format(e))
-            return {"error": "{}".format(e)}, 503
+            log.error(f"Could not allocate request: {e}")
+            return {f"error": "{e}"}, 503
 
         # setup simple accounting
         record = {'uuid': str(uuid.uuid4()),
                   'user': user if user else httpauth.current_user(),
-                  'state': State.INITIALIZED.name,
-                  'allocations': dict()}
+                  'state': State.INITIALIZED.name}
 
         errs = False
         for k, services in svcs.items():
@@ -397,10 +400,7 @@ class Create(Resource, QueryUser):
                     name = "janus_dryrun"
                 else:
                     try:
-                        aid, nname = cfg.sm.init_service(s, errs)
-                        if nname not in record['allocations']:
-                            record['allocations'].update({nname: list()})
-                        record['allocations'][nname].append(aid)
+                        cfg.sm.init_service(s, errs)
                     except Exception as e:
                         import traceback
                         traceback.print_exc()
@@ -467,31 +467,31 @@ class Start(Resource, QueryUser):
             return {"error": "id not found"}, 404
 
         if svc['state'] == State.STARTED.name:
-            return {"error": "Service {} already started".format(svc['uuid'])}, 503
+            return {"error": f"Service {svc['uuid']} already started"}, 503
 
         # start the services
         error = False
         services = svc.get("services", dict())
         for k,v in services.items():
             for s in v:
-                if not s['container_id']:
-                    log.warn("Skipping service with no container_id: {}".format(k))
+                cid = s.get("container_id")
+                if not cid:
+                    log.warn(f"Skipping service with no container_id: {k}")
                     error = True
                     continue
-                c = s['container_id']
                 node = dbase.get(ntable, name=k)
-                handler = cfg.sm.get_handler(node)
                 if not node:
-                    log.error("Container node {} not found for container_id: {}".format(k, c))
-                    return {"error": "Node not found: {}".format(k)}, 404
-                log.debug("Starting container {} on {}".format(c, k))
+                    log.error(f"Container node {k} not found for container_id: {cid}")
+                    return {"error": f"Node not found: {k}"}, 404
+                handler = cfg.sm.get_handler(node)
+                log.debug(f"Starting container {cid} on {k}")
 
                 if not (cfg.dryrun):
                     # Error acconting
                     orig_errcnt = len(s.get('errors'))
 
                     try:
-                        handler.start_container(Node(**node), c, s)
+                        handler.start_container(Node(**node), cid, s)
                         if s.get('qos'):
                             qos = s["qos"]
                             qos["container"] = c
@@ -499,7 +499,7 @@ class Start(Resource, QueryUser):
                     except Exception as e:
                         import traceback
                         traceback.print_exc()
-                        log.error("Could not start container on {}: {}".format(k,e))
+                        log.error(f"Could not start container on {k}: {e}")
                         error_svc(s, e)
                         error = True
                         continue
@@ -537,29 +537,29 @@ class Stop(Resource, QueryUser):
             return {"error": "id not found"}, 404
 
         if svc['state'] == State.STOPPED.name:
-            return {"error": "Service {} already stopped".format(svc['uuid'])}, 503
+            return {"error": f"Service {scv['uuid']} already stopped"}, 503
         if svc['state'] == State.INITIALIZED.name:
-            return {"error": "Service {} is in initialized state".format(svc['uuid'])}, 503
+            return {"error": f"Service {svc['uuid']} is in initialized state"}, 503
 
         # stop the services
         error = False
         for k,v in svc['services'].items():
             for s in v:
-                if not s.get('container_id'):
-                    log.warn("Skipping service with no container_id: {}".format(k))
+                cid = s.get('container_id')
+                if not cid:
+                    log.warn(f"Skipping service with no container_id: {k}")
                     continue
-                c = s['container_id']
                 node = dbase.get(ntable, name=k)
                 handler = cfg.sm.get_handler(node)
                 if not node:
-                    log.error("Container node {} not found for container_id: {}".format(k, c))
-                    return {"error": "Node not found: {}".format(k)}, 404
-                log.debug("Stopping container {} on {}".format(c, k))
+                    log.error(f"Container node {k} not found for container_id: {cid}")
+                    return {"error": f"Node not found: {k}"}, 404
+                log.debug(f"Stopping container {cid} on {k}")
                 if not (cfg.dryrun):
                     try:
-                        handler.stop_container(Node(**node), c)
+                        handler.stop_container(Node(**node), cid, **{'service': s})
                     except Exception as e:
-                        log.error("Could not stop container on {}: {}".format(k,e))
+                        log.error(f"Could not stop container on {k}: {e}")
                         error_svc(s, e)
                         error = True
                         continue
@@ -603,7 +603,7 @@ class Exec(Resource):
         table = dbase.get_table('nodes')
         node = dbase.get(table, name=nname)
         if not node:
-            return {"error": "Node not found: {}".format(nname)}
+            return {"error": f"Node not found: {nname}"}
 
         container = req["container"]
         cmd = req["Cmd"]
@@ -620,9 +620,7 @@ class Exec(Resource):
             if start:
                 handler.exec_start(Node(**node), ret)
         except Exception as e:
-            log.error("Could not exec in container on {}: {}: {}".format(nname,
-                                                                         e.reason,
-                                                                         e.body))
+            log.error(f"Could not exec in container on {nname}: {e.reason}: {e.body}")
             return {"error": e.reason}, 503
         return ret
 
@@ -683,7 +681,7 @@ class Profile(Resource):
         if rname:
             res = cfg.pm.get_profile(resource, rname, user, group, inline=True)
             if not res:
-                return {"error": "Profile not found: {}".format(rname)}, 404
+                return {f"error": "Profile not found: {rname}"}, 404
             return res.dict()
         else:
             log.debug("Returning all profiles")
@@ -710,7 +708,7 @@ class Profile(Resource):
             configs = req["settings"]
             res = cfg.pm.get_profile(resource, rname, inline=True)
             if res:
-                return {"error": "'{}' already exists!".format(rname)}, 400
+                return {"error": "'{rname}' already exists!"}, 400
 
             if resource == Constants.HOST:
                 default = cfg._base_profile.copy()
@@ -740,7 +738,8 @@ class Profile(Resource):
             tbl = cfg.db.get_table(resource)
             # default = req["settings"]
             record = {'name': rname, "settings": default}
-            log.info("Creating {}".format(cfg.db.insert(tbl, record)))
+            res = cfg.db.insert(tbl, record)
+            log.info(f"Created {res}")
         except Exception as e:
             return str(e), 500
 
@@ -767,7 +766,7 @@ class Profile(Resource):
 
             res = cfg.pm.get_profile(resource, rname, user, group, inline=True).dict()
             if not res:
-                return {"error": "Profile not found: {}".format(rname)}, 404
+                return {"error": f"Profile not found: {rname}"}, 404
 
             default = res.copy()
             default['settings'].update(configs)
@@ -808,7 +807,7 @@ class Profile(Resource):
 
             res = cfg.pm.get_profile(resource, rname, user, group, inline=True)
             if not res:
-                return {"error": "Profile not found: {}".format(rname)}, 404
+                return {"error": f"Profile not found: {rname}"}, 404
 
         except Exception as e:
             return str(e), 500

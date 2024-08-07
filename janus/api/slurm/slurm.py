@@ -196,15 +196,27 @@ class JanusSlurmApi(Service):
                 raise Exception(f"Slurm API returned {res.status_code}: {res.text}")
             js = json.loads(res.text)
             jid = js.get("job_id")
+            if service:
+                service['container_id'] = jid
         except Exception as e:
             log.error(f"Could not submit job: {e}")
             raise e
         t = Thread(target=nodelist, args=(service, jid))
         t.start()
-        return {"Id": container}
+        return {"Id": jid}
 
     @send_event
     def stop_container(self, node: Node, container, **kwargs):
+        service = kwargs.get('service', dict())
+        try:
+            res = requests.delete(f"{self.api_url}/slurm/{self.DEF_VER}/job/{container}",
+                                  headers=self._get_headers(service))
+            if res.status_code != 200:
+                raise Exception(f"Slurm API returned {res.status_code}: {res.text}")
+            js = json.loads(res.text)
+        except Exception as e:
+            log.error(f"Could not submit job: {e}")
+            raise e
         return {"Id": container}
 
     def create_network(self, node: Node, net_name, **kwargs):
