@@ -173,7 +173,7 @@ class ActiveCollection(Resource, QueryUser):
                 except Exception as e:
                     log.error(f"Could not remove container on remote node: {e}")
                     if not force:
-                        return {f"error": "{e}"}, 503
+                        return {"error": str(e)}, 503
         # delete always removes realized state info
         commit_db(doc, aid, delete=True, realized=True)
         commit_db(doc, aid, delete=True)
@@ -261,7 +261,7 @@ class NodeCollection(Resource, QueryUser):
             for ep in eps:
                 ret = cfg.sm.add_node(ep)
         except Exception as e:
-            return {"error": "{e}"}, 500
+            return {"error": str(e)}, 500
 
         try:
             log.info("New Node added, refreshing endpoint DB...")
@@ -385,7 +385,7 @@ class Create(Resource, QueryUser):
             import traceback
             traceback.print_exc()
             log.error(f"Could not allocate request: {e}")
-            return {f"error": "{e}"}, 503
+            return {"error": str(e)}, 503
 
         # setup simple accounting
         record = {'uuid': str(uuid.uuid4()),
