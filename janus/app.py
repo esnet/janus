@@ -4,14 +4,7 @@ import platform
 import argparse
 import logging.config
 from configparser import ConfigParser
-
-# XXX Temporary fix for https://github.com/jarus/flask-testing/issues/143
-#import werkzeug
-#werkzeug.cached_property = werkzeug.utils.cached_property
-
-# XXX More monkeypatching
-#import flask.scaffold
-#flask.helpers._endpoint_from_view_func = flask.scaffold._endpoint_from_view_func
+import werkzeug
 
 from flask_restx import Api
 from flask import Flask, Blueprint
@@ -59,9 +52,14 @@ def parse_config(fpath):
         else:
             cfg.PORTAINER_VERIFY_SSL = True
     except Exception as e:
-        raise AttributeError('Config file parser error: {}'.format(e))
+        raise AttributeError(f"Config file parser error: {e}")
 
-
+    config = parser['PLUGINS']
+    try:
+        cfg.sense_metadata = config.getboolean('sense-metadata', False)
+    except Exception as e:
+        raise AttributeError(f"Config file parser error: {e}")
+    
 def register_api(name, title, version, desc, prefix, nslist):
     blueprint = Blueprint(name, __name__, url_prefix=prefix)
     api = Api(blueprint,
@@ -129,6 +127,13 @@ def main():
             log.error(e)
             exit(1)
         cfg._controller = True
+        # start any enabled plugins
+        if not settings.FLASK_DEBUG or (settings.FLASK_DEBUG and werkzeug.serving.is_running_from_reloader()):
+            if cfg.sense_metadata:
+                from janus.lib.sense import SENSEMetaManager
+                p =  SENSEMetaManager(cfg)
+                p.start()
+                cfg.plugins.append(p)
     if args.agent:
         cfg._agent = True
     if args.dryrun:
@@ -150,8 +155,12 @@ def main():
         app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
 
     ssl = 'adhoc' if args.ssl else None
-    app.run(host=args.bind, port=args.port, ssl_context=ssl,
-            debug=settings.FLASK_DEBUG, threaded=True)
+    try:
+        app.run(host=args.bind, port=args.port, ssl_context=ssl,
+                debug=settings.FLASK_DEBUG, threaded=True)
+    finally:
+        for p in cfg.plugins:
+            p.stop()
 
 if __name__ == '__main__':
     main()
