@@ -33,12 +33,28 @@ This will start the Janus controller in a development context along
 with supporting container images.  The janus/config directory along
 with the relative source tree will be mounted inside the container.
 
- * ../ : /opt/janus
- * ../janus/config : /etc/janus
+```
+volumes:
+ - ./..:/opt/janus
+ - ./../janus/config:/etc/janus
+```
 
 Edits to the source code will invoke a controller reload. Additional
 configuration files can be placed in the config/ subdirectory as
 needed, for example a kubecfg.
+
+### Adding Kubernetes config
+
+Bind mount your K8s `config` file into the $HOME of the Janus controller container.
+For example:
+
+```
+volumes:
+  - ./../janus/config/nrp.config:/home/janus/.kube/config
+```
+
+Then, when you access the Janus Web interface Endpoints view, the controller should
+list the resources queried from all the contexts in your K8s config.
 
 # Configuring container registry authentication
 
