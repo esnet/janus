@@ -21,6 +21,10 @@ pip3 install -e .
 
 ### Development quick-start
 
+Without installing any of the dependencies locally, you can use an existing
+Docker compose stack to run the controller and supporting services.
+From within the clone Janus repository:
+
 ```
 cd janus/config
 cp janus.conf.example janus.conf   <-- edit as needed
