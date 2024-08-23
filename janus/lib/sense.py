@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 import requests
@@ -40,9 +41,11 @@ class SENSEMetaManager(object):
                 log.info("Synchronizing SENSE-O Metadata ")
                 try:
                     res = self._client.get_metadata(domain="JANUS", name="overview")
-                    print (res)
-                    nodes = self._cfg.sm.get_nodes()
-                    print (nodes)
+                    print (json.dumps(res, indent=2))
+                    #nodes = self._cfg.sm.get_nodes()
+                    tbl = self._cfg.db.get_table('nodes')
+                    nodes = self._cfg.db.all(tbl)
+                    print (json.dumps(nodes, indent=2))
                 except Exception as e:
                     log.error(f"Could not retrieve metadata: {e}")
                 cnt = 0
