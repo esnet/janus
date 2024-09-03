@@ -157,7 +157,8 @@ class ActiveCollection(Resource, QueryUser):
                         for s in v:
                             futures.append(executor.submit(handler.stop_container,
                                                            Node(**n), s.get('container_id'),
-                                                           **{'service': s}))
+                                                           **{'service': s,
+                                                              'name': k}))
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
