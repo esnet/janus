@@ -538,7 +538,7 @@ class Stop(Resource, QueryUser):
             return {"error": "id not found"}, 404
 
         if svc['state'] == State.STOPPED.name:
-            return {"error": f"Service {scv['uuid']} already stopped"}, 503
+            return {"error": f"Service {svc['uuid']} already stopped"}, 503
         if svc['state'] == State.INITIALIZED.name:
             return {"error": f"Service {svc['uuid']} is in initialized state"}, 503
 
