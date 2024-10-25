@@ -834,7 +834,13 @@ class JanusAuth(Resource):
                  "profiles",
                  "active"]
     get_resources = ["jwt"]
-
+    resource_db_map = {
+        "nodes": "nodes",
+        "images": "images",
+        "profiles": "host",
+        "active": "active"
+    }
+    
     def _marshall_req(self):
         req = request.get_json()
         if not req:
@@ -854,7 +860,9 @@ class JanusAuth(Resource):
             qs.append(eq(where('id'), id))
         elif name:
             qs.append(eq(where('name'), name))
-        return reduce(lambda a, b: a & b, qs)
+        if len(qs):
+            return reduce(lambda a, b: a & b, qs)
+        return None
 
     @httpauth.login_required
     def get(self, resource, rid=None, rname=None):
@@ -864,7 +872,9 @@ class JanusAuth(Resource):
         if resource in self.get_resources:
             return {"jwt": cfg.sm.get_auth_token()}, 200
         query = self.query_builder(rid, rname)
-        table = cfg.db.get_table(resource)
+        if not query:
+            return {"error": "Must specify resource id or name"}
+        table = cfg.db.get_table(self.resource_db_map.get(resource))
         res = cfg.db.get(table, query=query)
         if not res:
             return {"error": f"{resource} resource not found with id {rid if rid else rname}"}, 404
@@ -874,10 +884,12 @@ class JanusAuth(Resource):
 
     @httpauth.login_required
     def post(self, resource, rid=None, rname=None):
+        if resource not in self.resources:
+            return {"error": f"Invalid resource path: {resource}"}, 404
         (users, groups) = self._marshall_req()
         query = self.query_builder(rid, rname)
         dbase = cfg.db
-        table = dbase.get_table(resource)
+        table = cfg.db.get_table(self.resource_db_map.get(resource))
         res = dbase.get(table, query=query)
         if not res:
             return {"error": f"{resource} resource not found with id {rid if rid else rname}"}, 404
@@ -893,7 +905,7 @@ class JanusAuth(Resource):
         (users, groups) = self._marshall_req()
         query = self.query_builder(rid, rname)
         dbase = cfg.db
-        table = dbase.get_table(resource)
+        table = cfg.db.get_table(self.resource_db_map.get(resource))
         res = dbase.get(table, query=query)
         if not res:
             return {"error": f"{resource} resource not found with id {rid if rid else rname}"}, 404
