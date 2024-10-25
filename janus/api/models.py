@@ -69,6 +69,8 @@ class ContainerProfileSettings(BaseModel):
 class ContainerProfile(BaseModel):
     name: str
     settings: ContainerProfileSettings
+    users: Optional[List[str]] = []
+    groups: Optional[List[str]] = []
 
 
 class NetworkProfileSettings(BaseModel):
