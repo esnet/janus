@@ -19,6 +19,27 @@ cd janus
 pip3 install -e .
 ```
 
+### Development quick-start
+
+```
+cd janus/config
+cp janus.conf.example janus.conf   <-- edit as needed
+
+cd ../scripts
+docker compose -f local-dev-compose.yml up -d
+```
+
+This will start the Janus controller in a development context along
+with supporting container images.  The janus/config directory along
+with the relative source tree will be mounted inside the container.
+
+ * ../ : /opt/janus
+ * ../janus/config : /etc/janus
+
+Edits to the source code will invoke a controller reload. Additional
+configuration files can be placed in the config/ subdirectory as
+needed, for example a kubecfg.
+
 # Configuring container registry authentication
 
 The Janus controller supports authentication to private container

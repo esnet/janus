@@ -53,6 +53,7 @@ class JanusConfig():
         self.PORTAINER_USER = None
         self.PORTAINER_PASSWORD = None
         self.PORTAINER_VERIFY_SSL = True
+        self.sense_metadata = False
 
         user = os.getenv("JANUS_USER")
         pwd = os.getenv("JANUS_PASSWORD")

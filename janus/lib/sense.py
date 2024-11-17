@@ -10,6 +10,7 @@ from sense.common import getConfig
 
 log = logging.getLogger(__name__)
 
+
 class SENSEMetaManager(object):
     def __init__(self, cfg: JanusConfig):
         self._cfg = cfg

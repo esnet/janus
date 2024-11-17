@@ -1,6 +1,9 @@
 [JANUS]
-PORTAINER_URI: <HOST:PORT:PATH>
-PORTAINER_WS: ws://<HOST:PORT>/api/websocket
-PORTAINER_USER: <USER>
-PORTAINER_PASSWORD: <PASSWORD>
+PORTAINER_URI: http://portainer-ce:9000/api
+PORTAINER_WS: ws://portainer-ce:9000/api/websocket
+PORTAINER_USER: admin
+PORTAINER_PASSWORD: [password]
 PORTAINER_VERIFY_SSL: False
+
+[PLUGINS]
+sense-metadata: False
