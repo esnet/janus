@@ -9,7 +9,7 @@ services:
     expose:
       - 9000
     ports:
-      - "9000:9000"
+      - "[::1]:9000:9000"
     networks:
       - dtnaas
 
@@ -23,8 +23,9 @@ services:
     expose:
       - 9001
     ports:
-      - "9001:9001"
-    network_mode: bridge
+      - "[::1]:9001:9001"
+    networks:
+      - dtnaas
 
   controller:
     image: dtnaas/controller:sense-plugin
@@ -41,7 +42,7 @@ services:
     expose:
       - 5000
     ports:
-      - "5000:5000"
+      - "[::1]:5000:5000"
     networks:
       - dtnaas
 
@@ -49,6 +50,7 @@ services:
     image: dtnaas/agent
     container_name: janus-agent
     restart: unless-stopped
+    privileged: true
     environment:
       - PYTHONUNBUFFERED=1
       - AGENT_BIND=0.0.0.0
@@ -57,7 +59,7 @@ services:
     expose:
       - 5050
     ports:
-      - "5050:5050"
+      - "[::1]:5050:5050"
     network_mode: host
 
   janus-web:
