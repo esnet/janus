@@ -124,9 +124,15 @@ class KubernetesApi(Service):
                 log.error(f"Could not list nodes on cluster {ctx_name}: {e}")
                 continue
             for i in res.items:
+                addresses = i.status.addresses
+
                 cnode = {
                     "name": i.metadata.name,
-                    "addresses": [ a.address if a.type == "InternalIP" else "" for a in i.status.addresses ]
+                    "addresses": [a.address if a.type == "InternalIP" else "" for a in i.status.addresses],
+                    "internal_addresses": [a.address for a in addresses if a.type == 'InternalIP'],
+                    "external_addresses": [a.address for a in addresses if a.type == 'ExternalIP'],
+                    "host_addresses": [a.address for a in addresses if a.type == "Hostname"],
+                    "phase": i.status.phase
                 }
                 host_info['cpu']['count'] += int(i.status.capacity.get('cpu'))
                 archs.add(i.status.node_info.architecture)
@@ -187,7 +193,44 @@ class KubernetesApi(Service):
         pass
 
     def get_networks(self, node: Node):
-        pass
+        cnets = list()
+        api_client = self._get_client(node.name)
+        namespace = self._get_namespace(node.name)
+
+        api = client.CustomObjectsApi(api_client)
+        res = api.list_namespaced_custom_object("k8s.cni.cncf.io",
+                                                "v1",
+                                                namespace,
+                                                "network-attachment-definitions")
+
+        for i in res.get('items'):
+            meta = i.get('metadata')
+            name = meta.get('name')
+            spec = json.loads(i.get('spec').get('config'))
+            plugins = spec.get('plugins')[0]
+            snets = list()
+            if plugins.get('ipam') and plugins.get('ipam').get('addresses'):
+                for a in plugins.get('ipam').get('addresses'):
+                    snets.append({
+                        'Subnet': a.get('address'),
+                        'Gateway': a.get('gateway')
+                    })
+            cnet = {
+                'name': name,
+                'id': meta.get('uid'),
+                'namespace': meta.get('namespace'),
+                'driver': plugins.get('type'),
+                'parent': plugins.get('master'),
+                'mode': plugins.get('mode'),
+                'vlan': plugins.get('vlanId'),
+                'mtu': plugins.get('mtu'),
+                'subnet': snets,
+                '_data': i
+            }
+
+            cnets.append(cnet)
+
+        return cnets
 
     def get_containers(self, node: Node):
         pass
@@ -212,19 +255,71 @@ class KubernetesApi(Service):
     def create_container(self, node: Node, image: str, name: str = None, **kwargs):
         return {"Id": name}
 
+    def get_pods(self, node: Node):
+        from kubernetes.client.models.v1_pod_list import V1PodList
+        from kubernetes.client.models.v1_pod import V1Pod
+        from kubernetes.client.models.v1_object_meta import V1ObjectMeta
+        from kubernetes.client.models.v1_pod_status import V1PodStatus
+        from kubernetes.client.models.v1_pod_spec import V1PodSpec
+
+        api_client = self._get_client(node.name)
+        v1 = client.CoreV1Api(api_client)
+        namespace = self._get_namespace(node.name)
+        res: V1PodList = v1.list_namespaced_pod(namespace)
+        cpods = list()
+
+        for i in res.items:
+            pod: V1Pod = i
+            metadata: V1ObjectMeta = pod.metadata
+            status: V1PodStatus = pod.status
+            spec: V1PodSpec = pod.spec
+            container_statuses = status.container_statuses or list()
+
+            cpod = {
+                "name": metadata.name,
+                "labels": metadata.labels,
+                "container_states": [s.state for s in container_statuses],
+                "host_ip": status.host_ip,
+                "container_images": [s.image for s in container_statuses],
+                "phase": status.phase,
+                "node_name": spec.node_name,
+                "annotations": metadata.annotations
+            }
+
+            cpods.append(cpod)
+
+        return cpods
+
     def start_container(self, node: Node, container: str, service=None, **kwargs):
         api_client = self._get_client(node.name)
         v1 = client.CoreV1Api(api_client)
-        resp = v1.create_namespaced_pod(body=service['kwargs'],
-                                        namespace=self._get_namespace(node.name))
-        resp = v1.read_namespaced_pod(name=container,
-                                      namespace=self._get_namespace(node.name))
-        log.info(f"Pod transitioned to state: {resp.status.phase}")
+        v1.create_namespaced_pod(body=service['kwargs'],
+                                 namespace=self._get_namespace(node.name))
+        pod = v1.read_namespaced_pod(name=container,
+                                     namespace=self._get_namespace(node.name))
+        metadata = pod.metadata
+        cpod = {
+            "name": metadata.name,
+            "phase": pod.status.phase
+        }
+
+        log.info(f"Pod started container: {cpod}")
+        print(f"Pod started container: {cpod}")
+        return cpod
 
     def stop_container(self, node: Node, container, **kwargs):
         api_client = self._get_client(node.name)
         api = client.CoreV1Api(api_client)
-        res = api.delete_namespaced_pod(str(container), self._get_namespace(node.name))
+        pod = api.delete_namespaced_pod(str(container), self._get_namespace(node.name))
+        metadata = pod.metadata
+
+        cpod = {
+            "name": metadata.name,
+            "phase": pod.status.phase
+        }
+
+        log.info(f"Pod has been deleted: {cpod}")
+        return cpod
 
     def create_network(self, node: Node, net_name, **kwargs):
         api_client = self._get_client(node.name)
@@ -236,7 +331,8 @@ class KubernetesApi(Service):
             namespace=self._get_namespace(node.name),
             body=kwargs
         )
-        log.info(f"Created network {net_name} on {node}")
+        log.info(f"Created network {net_name} on {node}:{created_resource}")
+        return created_resource
 
     def inspect_container(self, node: Node, container):
         pass

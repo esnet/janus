@@ -130,8 +130,8 @@ def main():
         # start any enabled plugins
         if not settings.FLASK_DEBUG or (settings.FLASK_DEBUG and werkzeug.serving.is_running_from_reloader()):
             if cfg.sense_metadata:
-                from janus.lib.sense import SENSEMetaManager
-                p =  SENSEMetaManager(cfg)
+                from janus.lib.sense import SENSEMetaRunner
+                p = SENSEMetaRunner(cfg)
                 p.start()
                 cfg.plugins.append(p)
     if args.agent:
