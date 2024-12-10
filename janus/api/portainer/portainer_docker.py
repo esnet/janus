@@ -44,30 +44,52 @@ log = logging.getLogger(__name__)
 
 def auth(func):
     def wrapper(self, *args, **kwargs):
-        if self.auth_expire and self.client and (time.time() < self.auth_expire):
+        def authenticate():
+            pcfg = Config()
+            pcfg.host = cfg.PORTAINER_URI
+            pcfg.username = cfg.PORTAINER_USER
+            pcfg.password = cfg.PORTAINER_PASSWORD
+            pcfg.verify_ssl = cfg.PORTAINER_VERIFY_SSL
+
+            if not pcfg.username or not pcfg.password:
+                raise Exception("No Portainer username or password defined")
+            self.client = ApiClient(pcfg)
+            aa_api = AuthApi(self.client)
+            res = aa_api.authenticate_user(AuthenticateUserRequest(pcfg.username, pcfg.password))
+            pcfg.api_key = {'Authorization': res.jwt}
+            pcfg.api_key_prefix = {'Authorization': 'Bearer'}
+
+            log.debug("Authenticating with token: {}".format(res.jwt))
+            self.client.jwt = res.jwt
+            self.auth_expire = time.time() + 14400
+
+        def try_authenticate_with_limit(retry_limit=3):
+            for attempt in range(retry_limit):
+                try:
+                    authenticate()
+                    return True
+                except ApiException as e:
+                    log.warning(f"Authentication attempt {attempt + 1} failed: {e}")
+                    if attempt == retry_limit - 1:
+                        log.error("Reached maximum retry limit for authentication")
+                        raise e
+            return False
+
+        if not self.client or not self.auth_expire or time.time() >= self.auth_expire:
+            try_authenticate_with_limit()
+
+        try:
+            try_authenticate_with_limit()
             return func(self, *args, **kwargs)
-
-        pcfg = Config()
-        pcfg.host = cfg.PORTAINER_URI
-        pcfg.username = cfg.PORTAINER_USER
-        pcfg.password = cfg.PORTAINER_PASSWORD
-        pcfg.verify_ssl = cfg.PORTAINER_VERIFY_SSL
-
-        if not pcfg.username or not pcfg.password:
-            raise Exception("No Portainer username or password defined")
-
-        self.client = ApiClient(pcfg)
-        aa_api = AuthApi(self.client)
-        res = aa_api.authenticate_user(AuthenticateUserRequest(pcfg.username,
-                                                               pcfg.password))
-
-        pcfg.api_key = {'Authorization': res.jwt}
-        pcfg.api_key_prefix = {'Authorization': 'Bearer'}
-
-        log.debug("Authenticating with token: {}".format(res.jwt))
-        self.client.jwt = res.jwt
-        self.auth_expire = time.time() + 14400
-        return func(self, *args, **kwargs)
+        except ApiException as e:
+            if e.status == 401:
+                log.warning("Authentication failed, retrying...")
+                if try_authenticate_with_limit():
+                    return func(self, *args, **kwargs)
+                else:
+                    raise Exception("Authentication failed after maximum retry attempts")
+            else:
+                raise e
     return wrapper
 
 
