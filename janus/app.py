@@ -30,6 +30,7 @@ except:
     logging.config.fileConfig(logging_conf_path)
 log = logging.getLogger(__name__)
 
+
 def parse_config(fpath):
     parser = ConfigParser(allow_no_value=True)
 
@@ -54,9 +55,15 @@ def parse_config(fpath):
     except Exception as e:
         raise AttributeError(f"Config file parser error: {e}")
 
-    config = parser['PLUGINS']
     try:
-        cfg.sense_metadata = config.getboolean('sense-metadata', False)
+        from janus.lib.sense import parse_from_config
+
+        sense_properties = parse_from_config(cfg=cfg, parser=parser)
+
+        if cfg.sense_metadata:
+            from janus.lib.sense import SENSEMetaRunner
+
+            cfg.plugins.append(SENSEMetaRunner(cfg=cfg, properties=sense_properties))
     except Exception as e:
         raise AttributeError(f"Config file parser error: {e}")
     
@@ -129,11 +136,9 @@ def main():
         cfg._controller = True
         # start any enabled plugins
         if not settings.FLASK_DEBUG or (settings.FLASK_DEBUG and werkzeug.serving.is_running_from_reloader()):
-            if cfg.sense_metadata:
-                from janus.lib.sense import SENSEMetaRunner
-                p = SENSEMetaRunner(cfg)
-                p.start()
-                cfg.plugins.append(p)
+            for plugin in cfg.plugins:
+                plugin.start()
+
     if args.agent:
         cfg._agent = True
     if args.dryrun:
