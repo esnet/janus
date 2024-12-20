@@ -3,24 +3,21 @@ import json
 import logging
 import time
 from configparser import ConfigParser
-from threading import Thread
 from functools import reduce
-from types import SimpleNamespace
+from threading import Thread
 
+from kubernetes.client import ApiException
 from pydantic import ValidationError
-from sense.client.discover_api import DiscoverApi
 from sense.client.metadata_api import MetadataApi
 from sense.client.requestwrapper import RequestWrapper
 from sense.client.task_api import TaskApi
-from sense.client.workflow_combined_api import WorkflowCombinedApi
 from tinydb import Query
-
 from tinydb.table import Table
 
 from janus.api.db import DBLayer
-from janus.settings import JanusConfig
 from janus.api.kubernetes import KubernetesApi
 from janus.api.models import Node, ContainerProfile, ContainerProfileSettings, NetworkProfile, NetworkProfileSettings
+from janus.settings import JanusConfig
 
 SENSE_METADATA_URL = 'sense-metadata-url'
 SENSE_METADATA_ASSIGNED = 'sense-metdata-assigned'
@@ -224,38 +221,8 @@ class Base(object):
 
 class SENSEApiHandler:
     def __init__(self, req_wrapper):
-        self.workflow_client = WorkflowCombinedApi(req_wrapper=req_wrapper)
-        self.discover_client = DiscoverApi(req_wrapper=req_wrapper)
         self.task_client = TaskApi(req_wrapper=req_wrapper)
         self.metadata_client = MetadataApi(req_wrapper=req_wrapper)
-
-    def is_instance_valid(self, si_uuid):
-        try:
-            status = self.workflow_client.instance_get_status(si_uuid=si_uuid)
-            return status in ['CREATE - READY', 'REINSTATE - READY'], status
-        except ValueError as ve:
-            if 'NOT FOUND' in str(ve).upper():
-                return False, "NOT FOUND"
-
-            raise ve
-
-    def find_instance_by_id(self, si_uuid):
-        response = self.discover_client.discover_service_instances_get()
-        instances = response['instances']
-
-        for instance in instances:
-            temp = SimpleNamespace(**instance)
-
-            if temp.referenceUUID == si_uuid:
-                instance['intents'] = []
-
-                for intent in temp.intents:
-                    intent['json'] = json.loads(intent['json'])
-                    instance['intents'].append(intent)
-
-                return instance
-
-        return None
 
     def retrieve_tasks(self, assigned, status):
         records = self.task_client.get_tasks_agent_status(assigned=assigned, status=status)
@@ -269,9 +236,6 @@ class SENSEApiHandler:
     def finish_task(self, uuid, url):
         data = {"callbackURL": url}
         return self.task_client.update_task(json.dumps(data), uuid=uuid, state='FINISHED')
-
-    def delete_task(self, uuid):
-        self.task_client.delete_task(uuid=uuid)
 
     def get_metadata(self, domain, name):
         return self.metadata_client.get_metadata(domain=domain, name=name)
@@ -445,26 +409,6 @@ class SENSEMetaManager(Base):
             for image in sum([self.find_images(name=tool) for tool in host_profile['settings']['tools']], list()):
                 self._update_users(resource=image, users=users, func=self.save_image)
 
-            CREATE_NETWORK = False
-
-            if CREATE_NETWORK:
-                vlan_infos = [(t['vlan'], t['cluster_info']['cluster_id'],) for t in sum(task_info.values(), [])]
-                if 'networks' not in sense_session:
-                    sense_session['networks'] = list()
-
-                for vlan_info in set(vlan_infos):
-                    vlan = vlan_info[0]
-                    cluster_id = vlan_info[1]
-                    network = self.create_network(cluster_id=cluster_id,
-                                                  name=name + "-" + str(vlan), vlan=vlan, host_profile_name=name)
-                    assert network is not None
-                    network_name = network['name'] if 'name' in network else network['metadata']['name']
-                    network_info = (network_name, cluster_id,)
-
-                    if network_info not in sense_session['networks']:
-                        sense_session['networks'].append(network_info)
-                        self.save_sense_session(sense_session=sense_session)
-
             for uuid in [uuid for uuid in task_info]:
                 self.sense_api_handler.finish_task(uuid, self.properties[SENSE_METADATA_URL])
 
@@ -566,7 +510,7 @@ class SENSEMetaManager(Base):
         sense_sessions = self.find_sense_session(status='FINISHED')
         for sense_session in sense_sessions:
             self.show_sense_session(sense_session=sense_session)
-        images = self.db.all(self.image_table)
+        # images = self.db.all(self.image_table)
         # print("IMAGES:", images)
         print("**************** END SUMMARY ***************")
 
@@ -594,54 +538,20 @@ class SENSEMetaManager(Base):
         node = Node(id=1, name=cluster_id)
         self.kube_api.remove_network(node, name)
 
+        try:
+            self.kube_api.remove_network(node, name)
+        except ApiException as ae:
+            if str(ae.status) != "404":
+                raise ae
+
     def delete_pod(self, cluster_id, name):
         node = Node(id=1, name=cluster_id)
-        self.kube_api.stop_container(node, name)
 
-    def create_network(self, cluster_id, name, vlan, host_profile_name):
-        node = Node(id=1, name=cluster_id)
-        networks = self.kube_api.get_networks(node)
-        networks = [cnet for cnet in networks if cnet['name'] == name]
-
-        if networks:
-            assert len(networks) == 1
-            return networks[0]
-
-        host_profiles = self.find_host_profiles(name=host_profile_name)
-        assert len(host_profiles) == 1, f'expected a host profile named {host_profile_name}'
-        network_profile_name = host_profiles[0]['settings']['mgmt_net']['name']
-
-        network_profiles = self.find_network_profiles(name=host_profiles[0]['settings']['mgmt_net']['name'])
-        assert len(network_profiles) == 1, f'expected a network profile named {network_profile_name}'
-        network_profile = network_profiles[0]
-        ipam_type = network_profile['settings']['ipam']['config']['type']
-        mode = network_profile['settings']['mode']
-        driver = network_profile['settings']['driver']
-        config = {"cniVersion": "0.3.1",
-                  "name": name,
-                  "plugins": [{"name": name,
-                               "type": driver,
-                               "master": f"vlan.{vlan}",
-                               "mode": mode,
-                               "vlan": vlan,
-                               "isDefaultGateway": False,
-                               "forceAddress": False,
-                               "ipMasq": False,
-                               "hairpinMode": False,
-                               "ipam": {
-                                   "type": ipam_type,
-                                   "subnet": "10.1.11.0/24", "rangeStart": "10.1.11.10", "rangeEnd": "10.1.11.255"
-                               }
-                               }
-                              ]}
-
-        spec = dict(config=json.dumps(config))
-        kind = 'NetworkAttachmentDefinition'
-        apiVersion = 'k8s.cni.cncf.io/v1'
-        metadata = dict(name=name)
-        network = self.kube_api.create_network(node,
-                                               name, apiVersion=apiVersion, kind=kind, metadata=metadata, spec=spec)
-        return network
+        try:
+            self.kube_api.stop_container(node, name)
+        except ApiException as ae:
+            if str(ae.status) != "404":
+                raise ae
 
     def run(self):
         _, number_of_nodes = self.update_metadata()
