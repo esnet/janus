@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 import time
@@ -34,6 +35,10 @@ class Base(object):
         self._cfg = cfg
 
     @property
+    def janus_session_table(self) -> Table:
+        return self.db.get_table('active')
+
+    @property
     def image_table(self) -> Table:
         return self.db.get_table('images')
 
@@ -61,17 +66,17 @@ class Base(object):
     def db(self) -> DBLayer:
         return self.cfg.db
 
-    def save_sense_session(self, sense_instance):
-        self.db.upsert(self.sense_session_table, sense_instance, 'key', sense_instance['key'])
+    def save_sense_session(self, sense_session):
+        self.db.upsert(self.sense_session_table, sense_session, 'key', sense_session['key'])
 
-    def find_sense_session(self, *, user=None, instance_id=None, name=None, status=None):
+    def find_sense_session(self, *, user=None, sense_session_key=None, name=None, status=None):
         queries = list()
 
         if user:
             queries.append(Query().users.any([user]))
 
-        if instance_id:
-            queries.append(Query().key == instance_id)
+        if sense_session_key:
+            queries.append(Query().key == sense_session_key)
 
         if name:
             queries.append(Query().name == name)
@@ -114,6 +119,21 @@ class Base(object):
 
         host_profiles = self.db.search(self.host_table, query=reduce(lambda a, b: a & b, queries))
         return host_profiles
+
+    def find_janus_session(self, *, user=None, name=None, host_profile_name=None):
+        queries = list()
+
+        if user:
+            queries.append(Query().users.any([user]))
+
+        if name:
+            queries.append(Query().name == name)
+
+        if host_profile_name:
+            queries.append(Query().request.any(Query().profile == host_profile_name))
+
+        janus_sessions = self.db.search(self.janus_session_table, query=reduce(lambda a, b: a & b, queries))
+        return janus_sessions
 
     # noinspection PyMethodMayBeStatic
     def _update_users(self, resource, users, func):
@@ -167,13 +187,7 @@ class Base(object):
         self.save_network_profile(network_profile=network_profile)
         return network_profile
 
-    def get_or_create_host_profile(self, name, users, groups=None):
-        # network_profile = self.get_or_create_network_profile(name=name, users=users, groups=groups)
-        # network_profile = self._update_users(network_profile, users, self.save_network_profile)
-        network_profiles = self.find_network_profiles(name=name)
-        assert len(network_profiles) == 1
-
-        network_profile_name = network_profiles[0]['name']
+    def get_or_create_host_profile(self, name, network_profile_name, users, groups=None):
         host_profiles = self.find_host_profiles(name=name, net_name=network_profile_name)
 
         if host_profiles:
@@ -293,106 +307,140 @@ class SENSEMetaManager(Base):
         if not tasks:
             return tasks
 
-        contexts = [(task['config']['context']['uuid'], task['config']['context']['alias'],) for task in tasks]
-        instance_map = dict((context, list(),) for context in contexts)
-
-        for task in tasks:
-            context = (task['config']['context']['uuid'], task['config']['context']['alias'],)
-            instance_map[context].append((task['uuid'], task['config']['targets'],))
-
         node_cluster_map = self.load_cluster_node_map()
         node_names = [n for n in node_cluster_map]
         sense_sessions = list()
 
-        for context, task_list in instance_map.items():
-            instance_id = context[0]
-            valid, status = self.sense_api_handler.is_instance_valid(si_uuid=instance_id)
+        for task in tasks:
+            config = task['config']
+            command = config['command']
 
-            if not valid:
-                log.warning(f'instance {context} is {status}')
+            if command not in ['handle-sense-instance', 'instance-termination-notice']:
+                log.warning(f'TODO REJECT TASK')
                 continue
 
-            task_info = dict(task_list)
-            targets = sum(task_info.values(), [])
-            endpoints = [target['name'] for target in targets]
+            instance_id = config['context']['uuid']
+            task_id = task['uuid']
+            alias = config['context']['alias']
+            sense_sessions = self.find_sense_session(sense_session_key=instance_id)
+            assert len(sense_sessions) <= 1
+            sense_session = sense_sessions[0] if sense_sessions else dict()
 
-            if len(endpoints) != 2:
-                log.warning(f'missing endpoint for instance {context}:endpoints={endpoints}')
-                continue
+            if command == 'instance-termination-notice':
+                if not sense_session:
+                    self.sense_api_handler.finish_task(task_id, "")
+                    continue
 
-            unknown_endpoints = [endpoint for endpoint in endpoints if endpoint not in node_names]
-
-            if unknown_endpoints:
-                log.warning(f'unknown endpoint for instance {context}:endpoints={unknown_endpoints}')
-                continue
-
-            clusters = []
-            principals = list()
-
-            for target in targets:
-                target['cluster_info'] = node_cluster_map[target['name']]
-                clusters.append(node_cluster_map[target['name']]['cluster_id'])
-                principals.extend(target['principals'])
-
-            alias = context[1]
-
-            # if not alias:
-            #     temp = self.sense_api_handler.find_instance_by_id(instance_id)
-            #
-            #     if temp is None:
-            #         log.warning(f'instance not found for {context}:endpoints={endpoints}')
-            #         continue
-            #
-            #     alias = temp['alias']
-
-            if not alias:
-                alias = f'sense-janus-{"-".join(instance_id.split("-")[0:2])}'
+                sense_session['command'] = command
+                sense_session['status'] = 'PENDING'
+                sense_session['termination_task'] = task_id
             else:
-                alias = f'sense-janus-{alias.replace(" ", "-")}-{"-".join(instance_id.split("-")[0:2])}'
+                targets = config['targets']
 
-            users = list(set(principals))
-            sense_session = dict(key=instance_id,
-                                 name=alias,
-                                 task_info=task_info,
-                                 users=users,
-                                 status='PENDING',
-                                 clusters=list(set(clusters)))
-            self.save_sense_session(sense_instance=sense_session)
-            log.debug(f'saved sense instance:{json.dumps(sense_session)}')
+                if len(targets) > 2 or len(targets) == 0:
+                    log.warning(f'TODO REJECT TASK')
+                    continue
+
+                task_info = dict()
+                task_info[task_id] = targets
+                endpoints = [target['name'] for target in targets]
+                unknown_endpoints = [endpoint for endpoint in endpoints if endpoint not in node_names]
+
+                if unknown_endpoints:
+                    log.warning(f'unknown endpoint for instance {instance_id}:endpoints={unknown_endpoints}')
+                    continue
+
+                clusters = sense_session['clusters'] if 'clusters' in sense_session else list()
+                users = sense_session['users'] if 'users' in sense_session else list()
+
+                for target in targets:
+                    target['cluster_info'] = node_cluster_map[target['name']]
+                    clusters.append(node_cluster_map[target['name']]['cluster_id'])
+                    users.extend(target['principals'])
+
+                target_names = [target['name'] for target in targets]
+
+                if 'task_info' in sense_session:
+                    old_task_info = sense_session['task_info']
+
+                    for old_task_id, old_targets in copy.deepcopy(old_task_info).items():
+                        old_task_info[old_task_id] = list()
+
+                        for old_target in old_targets.copy():
+                            if old_target['name'] not in target_names:
+                                old_task_info[old_task_id].append(old_target)
+
+                        if not old_task_info[old_task_id]:
+                            del old_task_info[old_task_id]
+
+                    task_info.update(old_task_info)
+
+                if not alias:
+                    alias = f'sense-janus-{"-".join(instance_id.split("-")[0:2])}'
+                else:
+                    alias = f'sense-janus-{alias.replace(" ", "-")}-{"-".join(instance_id.split("-")[0:2])}'
+
+                users = list(set(users))
+                sense_session = dict(key=instance_id,
+                                     name=alias,
+                                     task_info=task_info,
+                                     users=users,
+                                     status='PENDING',
+                                     command=command,
+                                     clusters=list(set(clusters)))
+
+            self.save_sense_session(sense_session=sense_session)
+            log.debug(f'saved sense session:{json.dumps(sense_session)}')
             sense_sessions.append(sense_session)
 
         return sense_sessions
 
     def accept_tasks(self):
-        sense_instances = self.find_sense_session(status='PENDING')
+        sense_sessions = self.find_sense_session(status='PENDING')
 
-        for sense_instance in sense_instances:
-            task_info = sense_instance['task_info']
-            uuids = [uuid for uuid in task_info]
+        for sense_session in sense_sessions:
+            task_info = sense_session['task_info']
 
-            for uuid in uuids:
-                self.sense_api_handler.accept_task(uuid)
+            if 'termination_task' in sense_session:
+                self.sense_api_handler.accept_task(sense_session['termination_task'])
+            else:
+                uuids = [uuid for uuid in task_info]
 
-            sense_instance['status'] = 'ACCEPTED'
-            self.save_sense_session(sense_instance=sense_instance)
+                for uuid in uuids:
+                    self.sense_api_handler.accept_task(uuid)
 
-        return sense_instances
+            sense_session['status'] = 'ACCEPTED'
+            self.save_sense_session(sense_session=sense_session)
+
+        return sense_sessions
 
     def finish_tasks(self):
-        sense_instances = self.find_sense_session(status='ACCEPTED')
+        sense_sessions = self.find_sense_session(status='ACCEPTED')
 
-        for sense_instance in sense_instances:
-            name = sense_instance['name']
-            users = sense_instance['users']
-            task_info = sense_instance['task_info']
+        for sense_session in sense_sessions:
+            if 'termination_task' in sense_session:
+                assert sense_session['command'] != 'handle-sense-instance'
+                self.terminate_sense_session(sense_session=sense_session)
+                self.sense_api_handler.finish_task(sense_session['termination_task'], '')
+                sense_session['status'] = 'DELETED'
+                continue
+
+            assert sense_session['command'] == 'handle-sense-instance'
+            name = sense_session['name']
+            users = sense_session['users']
+            task_info = sense_session['task_info']
             targets = sum(task_info.values(), [])
-            network_profile = self.get_or_create_network_profile(name=name, targets=targets, users=users)
+            network_profile = self.get_or_create_network_profile(name=name + "-net", targets=targets, users=users)
+            # network_profile = self.get_or_create_network_profile(name=name, targets=targets, users=users)
             assert network_profile is not None
-            host_profile = self.get_or_create_host_profile(name=name, users=users)
+            assert network_profile is not None
+            network_profile_name = network_profile['name']
+            host_profile = self.get_or_create_host_profile(name=name,
+                                                           network_profile_name=network_profile_name, users=users)
             assert host_profile is not None
             assert 'settings' in host_profile and 'tools' in host_profile['settings']
-            sense_instance['host_profile'] = host_profile['name']
-            sense_instance['network_profile'] = network_profile['name']
+            sense_session['host_profile'] = host_profile['name']
+            sense_session['network_profile'] = network_profile['name']
 
             for image in sum([self.find_images(name=tool) for tool in host_profile['settings']['tools']], list()):
                 self._update_users(resource=image, users=users, func=self.save_image)
@@ -401,8 +449,8 @@ class SENSEMetaManager(Base):
 
             if CREATE_NETWORK:
                 vlan_infos = [(t['vlan'], t['cluster_info']['cluster_id'],) for t in sum(task_info.values(), [])]
-                if 'networks' not in sense_instance:
-                    sense_instance['networks'] = list()
+                if 'networks' not in sense_session:
+                    sense_session['networks'] = list()
 
                 for vlan_info in set(vlan_infos):
                     vlan = vlan_info[0]
@@ -413,53 +461,20 @@ class SENSEMetaManager(Base):
                     network_name = network['name'] if 'name' in network else network['metadata']['name']
                     network_info = (network_name, cluster_id,)
 
-                    if network_info not in sense_instance['networks']:
-                        sense_instance['networks'].append(network_info)
-                        self.save_sense_session(sense_instance=sense_instance)
+                    if network_info not in sense_session['networks']:
+                        sense_session['networks'].append(network_info)
+                        self.save_sense_session(sense_session=sense_session)
 
             for uuid in [uuid for uuid in task_info]:
                 self.sense_api_handler.finish_task(uuid, self.properties[SENSE_METADATA_URL])
 
-            sense_instance['status'] = 'FINISHED'
-            self.save_sense_session(sense_instance=sense_instance)
+            sense_session['status'] = 'FINISHED'
+            self.save_sense_session(sense_session=sense_session)
 
-        return sense_instances
-
-    def cleanup_tasks(self):
-        invalid_sense_instances = list()
-
-        for sense_instance in self.db.all(self.sense_session_table):
-            instance_id = sense_instance['key']
-            valid, _ = self.sense_api_handler.is_instance_valid(si_uuid=instance_id)
-
-            if not valid:
-                alias = sense_instance['name']
-
-                for network_info in sense_instance['networks'].copy():
-                    network_name = network_info[0]
-                    cluster_id = network_info[1]
-                    self.delete_network(cluster_id=cluster_id, name=network_name)
-                    sense_instance['networks'].remove(network_info)
-                    self.save_sense_session(sense_instance=sense_instance)
-
-                DELETE_TASKS = False
-
-                if DELETE_TASKS:
-                    task_info = sense_instance['task_info']
-                    uuids = [uuid for uuid in task_info]
-
-                    for uuid in uuids:
-                        self.sense_api_handler.delete_task(uuid)
-
-                self.db.remove(self.host_table, name=alias)
-                self.db.remove(self.sense_session_table, name=alias)
-                sense_instance['status'] = 'DELETED'
-                invalid_sense_instances.append(sense_instance)
-
-        return invalid_sense_instances
+        return sense_sessions
 
     def update_clusters_user_infos(self):
-        sense_instances = self.find_sense_session(status='FINISHED')
+        sense_sessions = self.find_sense_session(status='FINISHED')
         clusters = self.db.all(self.nodes_table)
         clusters = [cluster for cluster in clusters if 'cluster_nodes' in cluster]
         updated_clusters = list()
@@ -468,9 +483,9 @@ class SENSEMetaManager(Base):
             temp = cluster['users'] if 'users' in cluster else list()
             cluster['users'] = list()
 
-            for sense_instance in sense_instances:
-                if cluster['id'] in sense_instance['clusters']:
-                    cluster['users'].extend(sense_instance['users'])
+            for sense_session in sense_sessions:
+                if cluster['id'] in sense_session['clusters']:
+                    cluster['users'].extend(sense_session['users'])
 
             cluster['users'] = sorted(list(set(cluster['users'])))
 
@@ -479,6 +494,81 @@ class SENSEMetaManager(Base):
                 updated_clusters.append(cluster)
 
         return updated_clusters
+
+    '''
+    JANUS API:
+    delete pods
+    delete janus session
+    delete net-attachement .....
+    delete host profile
+    delete network profile
+    clean up users  and clean sense_session
+    
+    Do we need to stop session first?
+    PUT /api/janus/controller/stop/1 HTTP/1.1" 200
+    DELETE /api/janus/controller/active/1?force=true HTTP/1.1
+    DELETE /api/janus/controller/profiles/network/sense-janus-vlan-attachement HTTP/1.1
+    DELETE /api/janus/controller/profiles/host/sense-janus-617c8b1a-d23c HTTP/1.1
+    '''
+    def terminate_sense_session(self, sense_session: dict):
+        host_profile_name = sense_session['host_profile']
+        network_profile_name = sense_session['network_profile']
+        cluster_id = sense_session['clusters'][0]  # TODO cannot assume same cluster for pods and network...
+
+        print(sense_session['name'], host_profile_name, network_profile_name, cluster_id)
+
+        for janus_session in self.find_janus_session(host_profile_name=host_profile_name):
+            clusters = janus_session['services']
+            pods = list()
+
+            for cluster_name, services in clusters.items():
+                print("CLUSTER", cluster_name, "Number Of Service:", len(services))
+                pods.extend([service['sname'] for service in services])
+
+            for pod in pods:
+                self.delete_pod(cluster_id=cluster_id, name=pod)
+
+            # TODO This is controller delete
+            # @ns.route('/active/<int:aid>')
+            # from janus.api.utils import commit_db
+            # commit_db(janus_session, janus_session['id'], delete=True, realized=True)
+            # commit_db(janus_session, janus_session['id'], delete=True)
+            self.db.remove(self.janus_session_table, ids=janus_session['id'])
+
+        self.delete_network(cluster_id=cluster_id, name=network_profile_name)
+        self.db.remove(self.host_table, name=host_profile_name)
+        self.db.remove(self.network_table, name=network_profile_name)
+        self.db.remove(self.sense_session_table, name=sense_session['name'])
+
+    def show_sense_session(self, sense_session: dict):
+        print("**************** BEGIN SENSE SESSION  ***************")
+        host_profile_name = sense_session['host_profile']
+        network_profile_name = sense_session['network_profile']
+        print("SENSE_SESSION:", sense_session['name'], host_profile_name, network_profile_name)
+
+        for janus_session in self.find_janus_session(host_profile_name=host_profile_name):
+            pods = list()
+            clusters = janus_session['services']
+
+            for cluster_name, services in clusters.items():
+                print("CLUSTER", cluster_name, "Number Of Service:", len(services))
+                pods.extend([service['sname'] for service in services])
+
+            print("FOUND JANUS SESSION:", janus_session['uuid'],
+                  janus_session['state'],
+                  "OWNER=", janus_session['user'],
+                  "USERS=", janus_session['users'],
+                  "PODS=", pods)
+        print("**************** END SENSE SESSION  ***************")
+
+    def show_summary(self):
+        print("**************** BEGIN SUMMARY ***************")
+        sense_sessions = self.find_sense_session(status='FINISHED')
+        for sense_session in sense_sessions:
+            self.show_sense_session(sense_session=sense_session)
+        images = self.db.all(self.image_table)
+        # print("IMAGES:", images)
+        print("**************** END SUMMARY ***************")
 
     def update_metadata(self):
         domain_info = self.properties[SENSE_DOMAIN_INFO].split('/')
@@ -503,6 +593,10 @@ class SENSEMetaManager(Base):
     def delete_network(self, cluster_id, name):
         node = Node(id=1, name=cluster_id)
         self.kube_api.remove_network(node, name)
+
+    def delete_pod(self, cluster_id, name):
+        node = Node(id=1, name=cluster_id)
+        self.kube_api.stop_container(node, name)
 
     def create_network(self, cluster_id, name, vlan, host_profile_name):
         node = Node(id=1, name=cluster_id)
@@ -569,11 +663,7 @@ class SENSEMetaManager(Base):
             log.info(f'Finished tasks: {len(sense_instances)}')
             self.update_clusters_user_infos()
 
-        sense_instances = self.cleanup_tasks()
-
-        if sense_instances:
-            log.info(f'Cleaned up tasks: {len(sense_instances)}')
-            self.update_clusters_user_infos()
+        self.show_summary()
 
 
 class SENSEMetaRunner:
@@ -595,13 +685,16 @@ class SENSEMetaRunner:
 
     def _run(self):
         cnt = 0
+        quiet = False
         while not self._stop:
             time.sleep(1)
             cnt += 1
             if cnt == self._interval:
                 try:
-                    self._sense_mngr.run()
-                    log.info(f'SenseMetaRunner ran ok')
+                    if not quiet:
+                        self._sense_mngr.run()
+                        log.info(f'SenseMetaRunner ran ok')
+                        pass
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
