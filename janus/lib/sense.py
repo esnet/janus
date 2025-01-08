@@ -663,7 +663,6 @@ class SENSEMetaRunner:
                     if not quiet:
                         self._sense_mngr.run()
                         log.info(f'SenseMetaRunner ran ok')
-                        pass
                 except Exception as e:
                     import traceback
                     traceback.print_exc()

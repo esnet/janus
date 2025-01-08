@@ -64,7 +64,7 @@ class Service(ABC):
         pass
 
     @abstractmethod
-    def connect_network(self, node: Node, network, container):
+    def connect_network(self, node: Node, network, container, **kwargs):
         pass
 
     @abstractmethod

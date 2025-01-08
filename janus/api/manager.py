@@ -131,8 +131,8 @@ class ServiceManager():
             try:
                 # if specified, connect the management network to this created container
                 if s['mgmt_net']:
-                    handler.connect_network(Node(**n), s['mgmt_net']['id'], ret['Id'],
-                                            **s['net_kwargs'])
+                   net_kwargs = s['net_kwargs'] if 'net_kwargs' in s else dict()
+                   handler.connect_network(Node(**n), s['mgmt_net']['id'], ret['Id'], **net_kwargs)
             except Exception as e:
                 log.error("Could not connect network on {nname}: {e}")
                 errs = error_svc(s, e)
