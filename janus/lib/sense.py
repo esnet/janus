@@ -90,6 +90,14 @@ class Base(object):
         images = self.db.search(self.image_table, query=(Query().name == name))
         return images
 
+    def find_cluster(self, *, cluster_id=None, name=None):
+        if id:
+            clusters = self.db.search(self.nodes_table, query=(Query().id == cluster_id))
+        else:
+            clusters = self.db.search(self.nodes_table, query=(Query().name == name))
+
+        return clusters
+
     def save_network_profile(self, network_profile):
         self.db.upsert(self.network_table, network_profile, 'name', network_profile['name'])
 
@@ -146,28 +154,37 @@ class Base(object):
 
     def get_or_create_network_profile(self, name, targets, users, groups=None):
         network_profile_name = name
-        network_profiles = self.find_network_profiles(name=network_profile_name)
+        # TODO CHECK IF MODIFIED AND MAYBE DESTROY EXISTING SESSIONS
+        # network_profiles = self.find_network_profiles(name=network_profile_name)
+        #
+        # if network_profiles:
+        #     assert len(network_profiles) == 1
+        #     network_profile = self._update_users(network_profiles[0], users, self.save_network_profile)
+        #     return network_profile
+
         vlans = [t['vlan'] for t in targets]
         vlans = list(set(vlans))
+        subnets = [t['ip'] for t in targets if t['ip']]
+        config = list()
+        bws = [t['bw'] for t in targets if t['bw']]
 
-        if network_profiles:
-            assert len(network_profiles) == 1
-            network_profile = self._update_users(network_profiles[0], users, self.save_network_profile)
-            return network_profile
+        if bws:
+            options = dict(vlan=str(vlans[0]), bw=str(bws[0]))
+        else:
+            options = dict(vlan=str(vlans[0]))
+
+        for subnet in subnets:
+            idx = subnet.rindex(".")
+            config.append(dict(subnet=subnet, gateway=subnet[0:idx+1] + '1'))
 
         network_profile_settings = {
             "driver": "macvlan",
             "mode": "bridge",
             "enable_ipv6": False,
             "ipam": {
-                "config": [
-                    # "type": "host-local", TODO We can't have this here ....
-                    {"subnet": "10.1.1.10", "gateway": "10.1.1.1"}
-                ]
+                "config": config
             },
-            "options": {
-                "vlan": str(vlans[0])
-            }
+            "options": options
         }
 
         users = users or list()
@@ -230,11 +247,13 @@ class SENSEApiHandler:
 
     def accept_task(self, uuid):
         data = None
-        status = 'ACCEPTED'
-        return self.task_client.update_task(json.dumps(data), uuid=uuid, state=status)
+        return self.task_client.update_task(json.dumps(data), uuid=uuid, state='ACCEPTED')
 
-    def finish_task(self, uuid, url):
-        data = {"callbackURL": url}
+    def reject_task(self, uuid, message):
+        data = {"message": message}
+        return self.task_client.update_task(json.dumps(data), uuid=uuid, state='REJECTED')
+
+    def finish_task(self, uuid, data):
         return self.task_client.update_task(json.dumps(data), uuid=uuid, state='FINISHED')
 
     def get_metadata(self, domain, name):
@@ -259,7 +278,7 @@ class SENSEMetaManager(Base):
 
         for cluster in clusters:
             for node in cluster['cluster_nodes']:
-                cluster_info = dict(cluster_id=cluster['id'], namespace=cluster['namespace'])
+                cluster_info = (dict(cluster_id=cluster['id'], namespace=cluster['namespace']))
                 node_cluster_map[node['name']] = cluster_info
 
         return node_cluster_map
@@ -268,8 +287,9 @@ class SENSEMetaManager(Base):
         assigned = self.properties[SENSE_METADATA_ASSIGNED]
         tasks = self.sense_api_handler.retrieve_tasks(assigned=assigned, status='PENDING')
 
-        if not tasks:
-            return tasks
+        if not tasks or not isinstance(tasks, list):
+            # TODO task can be str and it means an error ...
+            return list()
 
         node_cluster_map = self.load_cluster_node_map()
         node_names = [n for n in node_cluster_map]
@@ -278,13 +298,13 @@ class SENSEMetaManager(Base):
         for task in tasks:
             config = task['config']
             command = config['command']
+            task_id = task['uuid']
 
             if command not in ['handle-sense-instance', 'instance-termination-notice']:
-                log.warning(f'TODO REJECT TASK')
+                self.sense_api_handler.reject_task(task_id, f"unknown command:{command}")
                 continue
 
             instance_id = config['context']['uuid']
-            task_id = task['uuid']
             alias = config['context']['alias']
             sense_sessions = self.find_sense_session(sense_session_key=instance_id)
             assert len(sense_sessions) <= 1
@@ -301,8 +321,14 @@ class SENSEMetaManager(Base):
             else:
                 targets = config['targets']
 
-                if len(targets) > 2 or len(targets) == 0:
-                    log.warning(f'TODO REJECT TASK')
+                if len(targets) == 0:
+                    # TODO should we finish task with existing targets?
+                    log.warning(f'no targets for instance {instance_id}')
+                    self.sense_api_handler.reject_task(task_id, f"no targets")
+                    continue
+                elif len(targets) > 2:
+                    log.warning(f'unknown endpoint for instance {instance_id}:too many targets:{len(targets)}')
+                    self.sense_api_handler.reject_task(task_id, f"too many targets:{len(targets)}")
                     continue
 
                 task_info = dict()
@@ -312,6 +338,7 @@ class SENSEMetaManager(Base):
 
                 if unknown_endpoints:
                     log.warning(f'unknown endpoint for instance {instance_id}:endpoints={unknown_endpoints}')
+                    self.sense_api_handler.reject_task(task_id, f"unkown targets:{ unknown_endpoints}")
                     continue
 
                 clusters = sense_session['clusters'] if 'clusters' in sense_session else list()
@@ -410,7 +437,16 @@ class SENSEMetaManager(Base):
                 self._update_users(resource=image, users=users, func=self.save_image)
 
             for uuid in [uuid for uuid in task_info]:
-                self.sense_api_handler.finish_task(uuid, self.properties[SENSE_METADATA_URL])
+                targets = []
+
+                for target in task_info[uuid]:
+                    if 'cluster_info' in target:
+                        targets.append(dict(name=target['name'], cluster_info=target['cluster_info']))
+                    else:
+                        target.append(dict(name=target['name']))
+
+                message = {'callbackURL': self.properties[SENSE_METADATA_URL], 'targets': targets}
+                self.sense_api_handler.finish_task(uuid, message)
 
             sense_session['status'] = 'FINISHED'
             self.save_sense_session(sense_session=sense_session)
@@ -439,6 +475,19 @@ class SENSEMetaManager(Base):
 
         return updated_clusters
 
+    def update_images(self):
+        users = list()
+        host_profiles = self.db.all(self.host_table)
+        images = self.db.all(self.image_table)
+
+        for host_profile in host_profiles:
+            if 'users' in host_profile:
+                users.extend(host_profile['users'])
+
+        for image in images:
+            image['users'] = users
+            self.save_image(image)
+
     '''
     JANUS API:
     delete pods
@@ -459,8 +508,6 @@ class SENSEMetaManager(Base):
         network_profile_name = sense_session['network_profile']
         cluster_id = sense_session['clusters'][0]  # TODO cannot assume same cluster for pods and network...
 
-        print(sense_session['name'], host_profile_name, network_profile_name, cluster_id)
-
         for janus_session in self.find_janus_session(host_profile_name=host_profile_name):
             clusters = janus_session['services']
             pods = list()
@@ -480,6 +527,13 @@ class SENSEMetaManager(Base):
             self.db.remove(self.janus_session_table, ids=janus_session['id'])
 
         self.delete_network(cluster_id=cluster_id, name=network_profile_name)
+        clusters = self.find_cluster(cluster_id=cluster_id)
+        cluster = clusters[0]
+
+        if network_profile_name in cluster['networks']:
+            del cluster['networks'][network_profile_name]
+            self.db.upsert(self.nodes_table, cluster, 'name', cluster['name'])
+
         self.db.remove(self.host_table, name=host_profile_name)
         self.db.remove(self.network_table, name=network_profile_name)
         self.db.remove(self.sense_session_table, name=sense_session['name'])
@@ -510,33 +564,30 @@ class SENSEMetaManager(Base):
         sense_sessions = self.find_sense_session(status='FINISHED')
         for sense_session in sense_sessions:
             self.show_sense_session(sense_session=sense_session)
-        # images = self.db.all(self.image_table)
-        # print("IMAGES:", images)
+        images = self.db.all(self.image_table)
+        print("IMAGES:", images)
         print("**************** END SUMMARY ***************")
 
-    def update_metadata(self):
-        domain_info = self.properties[SENSE_DOMAIN_INFO].split('/')
-        # metadata = self.sense_api_handler.get_metadata(domain=domain_info[0], name=domain_info[1])
+    def get_agents(self):
+        agents = dict()
         clusters = self.db.all(self.nodes_table)
-        metadata = dict()
-        agents = metadata["agents"] = dict()
-        number_of_nodes = 0
 
         for cluster in clusters:
             if 'cluster_nodes' in cluster:
                 for node in cluster['cluster_nodes']:
                     agents[node['name']] = node
-                    number_of_nodes += 1
             else:
                 agents[cluster['name']] = cluster
-                number_of_nodes += 1
 
+        return agents
+
+    def update_metadata(self, agents):
+        domain_info = self.properties[SENSE_DOMAIN_INFO].split('/')
+        metadata = dict(agents=agents)
         self.sense_api_handler.post_metadata(metadata=metadata, domain=domain_info[0], name=domain_info[1])
-        return metadata, number_of_nodes
 
     def delete_network(self, cluster_id, name):
         node = Node(id=1, name=cluster_id)
-        self.kube_api.remove_network(node, name)
 
         try:
             self.kube_api.remove_network(node, name)
@@ -554,8 +605,15 @@ class SENSEMetaManager(Base):
                 raise ae
 
     def run(self):
-        _, number_of_nodes = self.update_metadata()
-        log.debug(f'Metadata: Number of nodes: {number_of_nodes}')
+        agents = self.get_agents()
+        number_of_nodes = len(agents)
+
+        if number_of_nodes == 0:  # Wait for nodes to be populated
+            log.debug(f'Waiting on nodes: Number of nodes: {number_of_nodes}')
+            return
+
+        self.update_metadata(agents=agents)
+        log.debug(f'Updated Metadata: Number of nodes: {number_of_nodes}')
 
         sense_instances = self.retrieve_tasks()
 
@@ -572,6 +630,7 @@ class SENSEMetaManager(Base):
         if sense_instances:
             log.info(f'Finished tasks: {len(sense_instances)}')
             self.update_clusters_user_infos()
+            self.update_images()
 
         self.show_summary()
 

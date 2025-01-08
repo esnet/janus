@@ -375,7 +375,11 @@ class Create(Resource, QueryUser):
                 nname = s.node.get('name')
                 if nname not in svcs:
                     svcs[nname] = list()
-                sname = cname_from_id(Id, i)
+                # AES CHANGE_NAME
+                if s.profile.name.startswith('sense-janus'):
+                    sname = cname_from_id(Id, i, s.profile.name)
+                else:
+                    sname = cname_from_id(Id, i)
                 handler = cfg.sm.get_handler(s.node)
                 rec = handler.create_service_record(sname, s, addrs_v4, addrs_v6, cports, sports)
                 if not rec:
