@@ -417,12 +417,11 @@ class SENSEMetaManager(Base):
                 continue
 
             assert sense_session['command'] == 'handle-sense-instance'
-            name = sense_session['name']
+            name = sense_session['name'].lower()
             users = sense_session['users']
             task_info = sense_session['task_info']
             targets = sum(task_info.values(), [])
             network_profile = self.get_or_create_network_profile(name=name + "-net", targets=targets, users=users)
-            # network_profile = self.get_or_create_network_profile(name=name, targets=targets, users=users)
             assert network_profile is not None
             assert network_profile is not None
             network_profile_name = network_profile['name']
