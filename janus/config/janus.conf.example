@@ -11,5 +11,5 @@ sense-metadata-plugin: SENSE_METADATA_PLUGIN
 [SENSE_METADATA_PLUGIN]
 sense-metadata-enabled: True
 sense-metadata-url: https://janus.esnet.app/authentication/signup
-sense-metdata-domain-info: JANUS/AES_TESTING
+sense-metadata-domain-info: JANUS/AES_TESTING
 sense-metadata-assigned: janus.device.manager

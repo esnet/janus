@@ -51,8 +51,6 @@ class TestSenseWorkflow:
             for node in cluster['cluster_nodes']:
                 if node['name'] in self.node_name_filter:
                     filtered_nodes.append(node)
-                else:
-                    print(node['name'])
 
             cluster['cluster_nodes'] = filtered_nodes
             cluster['users'] = []

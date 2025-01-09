@@ -20,9 +20,9 @@ from janus.api.models import Node, ContainerProfile, ContainerProfileSettings, N
 from janus.settings import JanusConfig
 
 SENSE_METADATA_URL = 'sense-metadata-url'
-SENSE_METADATA_ASSIGNED = 'sense-metdata-assigned'
+SENSE_METADATA_ASSIGNED = 'sense-metadata-assigned'
 JANUS_DEVICE_MANAGER = 'janus.device.manager'
-SENSE_DOMAIN_INFO = 'sense-metdata-domain-info'
+SENSE_DOMAIN_INFO = 'sense-metadata-domain-info'
 
 log = logging.getLogger(__name__)
 
@@ -260,7 +260,7 @@ class SENSEApiHandler:
         return self.metadata_client.get_metadata(domain=domain, name=name)
 
     def post_metadata(self, metadata, domain, name):
-        self.metadata_client.post_metadata(data=json.dumps(metadata), domain=domain, name=name)
+        return self.metadata_client.post_metadata(data=json.dumps(metadata), domain=domain, name=name)
 
 
 class SENSEMetaManager(Base):
@@ -269,7 +269,7 @@ class SENSEMetaManager(Base):
         self.sense_api_handler = SENSEApiHandler(req_wrapper=RequestWrapper())
         self.kube_api = KubernetesApi()
         self.properties = properties
-        log.info(f"Initialized {__name__}")
+        log.info(f"Initialized {__name__}:{properties}")
 
     def load_cluster_node_map(self):
         clusters = self.db.all(self.nodes_table)
@@ -288,12 +288,14 @@ class SENSEMetaManager(Base):
         tasks = self.sense_api_handler.retrieve_tasks(assigned=assigned, status='PENDING')
 
         if not tasks or not isinstance(tasks, list):
-            # TODO task can be str and it means an error ...
+            if not isinstance(tasks, list):
+                log.warning(f'warning retrieving tasks: {tasks}')
+
             return list()
 
         node_cluster_map = self.load_cluster_node_map()
         node_names = [n for n in node_cluster_map]
-        sense_sessions = list()
+        validated_sense_sessions = list()
 
         for task in tasks:
             config = task['config']
@@ -382,9 +384,9 @@ class SENSEMetaManager(Base):
 
             self.save_sense_session(sense_session=sense_session)
             log.debug(f'saved sense session:{json.dumps(sense_session)}')
-            sense_sessions.append(sense_session)
+            validated_sense_sessions.append(sense_session)
 
-        return sense_sessions
+        return validated_sense_sessions
 
     def accept_tasks(self):
         sense_sessions = self.find_sense_session(status='PENDING')
@@ -583,7 +585,7 @@ class SENSEMetaManager(Base):
     def update_metadata(self, agents):
         domain_info = self.properties[SENSE_DOMAIN_INFO].split('/')
         metadata = dict(agents=agents)
-        self.sense_api_handler.post_metadata(metadata=metadata, domain=domain_info[0], name=domain_info[1])
+        return self.sense_api_handler.post_metadata(metadata=metadata, domain=domain_info[0], name=domain_info[1])
 
     def delete_network(self, cluster_id, name):
         node = Node(id=1, name=cluster_id)
@@ -608,16 +610,20 @@ class SENSEMetaManager(Base):
         number_of_nodes = len(agents)
 
         if number_of_nodes == 0:  # Wait for nodes to be populated
-            log.debug(f'Waiting on nodes: Number of nodes: {number_of_nodes}')
+            log.warning(f'Waiting on nodes: Number of nodes: {number_of_nodes}')
             return
 
-        self.update_metadata(agents=agents)
-        log.debug(f'Updated Metadata: Number of nodes: {number_of_nodes}')
+        ret = self.update_metadata(agents=agents)
+
+        if not isinstance(ret, dict):
+            log.warning(f'Expected a dict when updating data: {ret}')
+        else:
+            log.debug(f'Updated Metadata: Number of nodes: {number_of_nodes}')
 
         sense_instances = self.retrieve_tasks()
 
         if sense_instances:
-            log.info(f'Validated tasks: {len(sense_instances)}')
+            log.info(f'Retrieved and validated tasks: {len(sense_instances)}')
 
         sense_instances = self.accept_tasks()
 
