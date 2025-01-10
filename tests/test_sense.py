@@ -86,10 +86,15 @@ class TestSenseWorkflow:
 if __name__ == '__main__':
     db_file_name = 'db-test-sense.json'
     janus_conf_path = 'janus-sense-test.conf'
-    endpoints = ['k8s-gen5-01.sdsc.optiputer.net',
-                 'k8s-gen5-02.sdsc.optiputer.net',
-                 'losa4-nrp-01.cenic.net',
-                 'k8s-3090-01.clemson.edu']
+    filter_nodes = False
+
+    if filter_nodes:
+        endpoints = ['k8s-gen5-01.sdsc.optiputer.net',
+                     'k8s-gen5-02.sdsc.optiputer.net',
+                     'losa4-nrp-01.cenic.net',
+                     'k8s-3090-01.clemson.edu']
+    else:
+        endpoints = None
 
     tsw = TestSenseWorkflow(
         database=os.path.join(os.getcwd(), db_file_name),

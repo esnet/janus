@@ -120,7 +120,7 @@ class Base(object):
             queries.append(Query().name == name)
 
         if net_name:
-            queries.append(Query().settings.mgmt_net.name == net_name)
+            queries.append(Query().settings.data_net.name == net_name)
 
         host_profiles = self.db.search(self.host_table, query=reduce(lambda a, b: a & b, queries))
         return host_profiles
@@ -219,7 +219,14 @@ class Base(object):
             return host_profile
 
         host_profile_settings = {
+            "cpu": 1,
+            "memory": 1073741824,
             "mgmt_net": {
+                "name": 'host',
+                "ipv4_addr": None,
+                "ipv6_addr": None
+            },
+            "data_net": {
                 "name": network_profile_name,
                 "ipv4_addr": None,
                 "ipv6_addr": None
@@ -504,8 +511,21 @@ class SENSEMetaManager(Base):
                 users.extend(host_profile['users'])
 
         for image in images:
-            image['users'] = users
+            image['users'] = list(set(users))
             self.save_image(image)
+
+    def update_builtin_host_network_profile(self):
+        users = list()
+        host_profiles = self.db.all(self.host_table)
+        network_profiles = self.find_network_profiles(name='host')
+
+        for host_profile in host_profiles:
+            if 'users' in host_profile:
+                users.extend(host_profile['users'])
+
+        for network_profile in network_profiles:
+            network_profile['users'] = list(set(users))
+            self.save_network_profile(network_profile)
 
     '''
     JANUS API:
@@ -585,6 +605,7 @@ class SENSEMetaManager(Base):
             self.show_sense_session(sense_session=sense_session)
         images = self.db.all(self.image_table)
         print("IMAGES:", images)
+        print("BUILTIN_HOST_PROFILE", self.find_network_profiles(name='host'))
         print("**************** END SUMMARY ***************")
 
     def get_agents(self):
@@ -654,6 +675,7 @@ class SENSEMetaManager(Base):
             log.info(f'Finished tasks: {len(sense_instances)}')
             self.update_clusters_user_infos()
             self.update_images()
+            self.update_builtin_host_network_profile()
 
         self.show_summary()
 
