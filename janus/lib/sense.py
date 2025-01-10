@@ -164,19 +164,28 @@ class Base(object):
 
         vlans = [t['vlan'] for t in targets]
         vlans = list(set(vlans))
-        subnets = [t['ip'] for t in targets if t['ip']]
+        portNames = [t['portName'] for t in targets if 'portName' in t and t['portName']]
+        portNames = list(set(portNames))
+        portNames = portNames or [f'vlan.{vlans[0]}']
+
+        subnets = [t['ip'] for t in targets if 'ip' in t and t['ip']]
+        subnets = subnets or ['192.168.1.0/24']
         config = list()
-        bws = [t['bw'] for t in targets if t['bw']]
+        bws = [t['bw'] for t in targets if 'bw' in t and t['bw']]
 
         if bws:
             options = dict(vlan=str(vlans[0]), bw=str(bws[0]))
         else:
             options = dict(vlan=str(vlans[0]))
 
-        for subnet in subnets:
-            idx = subnet.rindex(".")
-            config.append(dict(subnet=subnet, gateway=subnet[0:idx+1] + '1'))
+        options['parent'] = portNames[0]
 
+        from ipaddress import IPv4Network
+
+        subnet = subnets[0]
+        idx = subnet.rindex(".")
+        prefixlen = IPv4Network(subnet, strict=False).prefixlen
+        config.append(dict(subnet=subnet[0:idx + 1] + '0/' + str(prefixlen), gateway=subnet[0:idx + 1] + '1'))
         network_profile_settings = {
             "driver": "macvlan",
             "mode": "bridge",
@@ -314,7 +323,10 @@ class SENSEMetaManager(Base):
 
             if command == 'instance-termination-notice':
                 if not sense_session:
-                    self.sense_api_handler.finish_task(task_id, "")
+                    message = {'url': self.properties[SENSE_METADATA_URL],
+                               'targets': [],
+                               'message': f'no session found for {instance_id}'}
+                    self.sense_api_handler.finish_task(task_id, message)
                     continue
 
                 sense_session['command'] = command
@@ -414,7 +426,10 @@ class SENSEMetaManager(Base):
             if 'termination_task' in sense_session:
                 assert sense_session['command'] != 'handle-sense-instance'
                 self.terminate_sense_session(sense_session=sense_session)
-                self.sense_api_handler.finish_task(sense_session['termination_task'], '')
+                message = {'url': self.properties[SENSE_METADATA_URL],
+                           'targets': [],
+                           'message': f'session for {sense_session["key"]} has been terminated'}
+                self.sense_api_handler.finish_task(sense_session['termination_task'], message)
                 sense_session['status'] = 'DELETED'
                 continue
 
@@ -446,7 +461,10 @@ class SENSEMetaManager(Base):
                     else:
                         target.append(dict(name=target['name']))
 
-                message = {'callbackURL': self.properties[SENSE_METADATA_URL], 'targets': targets}
+                message = {'url': self.properties[SENSE_METADATA_URL],
+                           'targets': targets,
+                           'message': f'session for {sense_session["key"]} has been handled'
+                           }
                 self.sense_api_handler.finish_task(uuid, message)
 
             sense_session['status'] = 'FINISHED'
