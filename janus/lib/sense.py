@@ -678,6 +678,32 @@ class SENSEMetaManager(Base):
             print("\t\t\tPODS=", pods)
         print("**************** END SENSE SESSION  ***************")
 
+    def to_sense_session_summary(self, sense_session: dict):
+        host_profile_name = sense_session['host_profile']
+        network_profile_name = sense_session['network_profile']
+        janus_sessions_summaries = list()
+
+        for janus_session in self.find_janus_session(host_profile_name=host_profile_name):
+            pods = list()
+            clusters = janus_session['services']
+
+            for _, services in clusters.items():
+                pods.extend([service['sname'] for service in services])
+
+            janus_session_summary = dict(
+                uuid=janus_session['uuid'],
+                state=janus_session['state'],
+                users=janus_session['users'],
+                pods=pods
+            )
+
+            janus_sessions_summaries.append(janus_session_summary)
+
+        return dict(sense_session=sense_session['name'],
+                    host_and_net_profiles=f'{host_profile_name}/{network_profile_name}',
+                    status_and_state=f'{sense_session["status"]}/{sense_session["state"]}',
+                    janus_sessions=janus_sessions_summaries)
+
     def show_summary(self):
         print("**************** BEGIN SUMMARY ***************")
         sense_sessions = self.find_sense_session(status='FINISHED')
@@ -730,35 +756,59 @@ class SENSEMetaManager(Base):
 
         if number_of_nodes == 0:  # Wait for nodes to be populated
             log.warning(f'Waiting on nodes: Number of nodes: {number_of_nodes}')
-            return
+            return 0
 
         ret = self.update_metadata(agents=agents)
 
         if not isinstance(ret, dict):
             log.warning(f'Expected a dict when updating data: {ret}')
-        else:
-            log.debug(f'Updated Metadata: Number of nodes: {number_of_nodes}')
+            number_of_nodes = -1
+        # else:
+        #     log.debug(f'Updated Metadata: Number of nodes: {number_of_nodes}')
 
         sense_instances = self.retrieve_tasks()
+        counters = dict()
+        print_summary = False
 
         if sense_instances:
-            commands = [s['command'] for s in sense_instances]
-            log.info(f'Retrieved and validated tasks: {len(sense_instances)}:{commands}')
+            # commands = [s['command'] for s in sense_instances]
+            # log.debug(f'Retrieved and validated tasks:count={len(sense_instances)}:{commands[0:2]}...')
+            counters['retrieved'] = len(sense_instances)
+            print_summary = True
 
         sense_instances = self.accept_tasks()
 
         if sense_instances:
-            log.info(f'Accepted tasks: {len(sense_instances)}')
+            # log.debug(f'Accepted tasks:count={len(sense_instances)}')
+            counters['accepted'] = len(sense_instances)
+            print_summary = True
 
         sense_instances = self.finish_tasks()
 
         if sense_instances:
-            log.info(f'Finished tasks: {len(sense_instances)}')
+            # log.debug(f'Finished tasks:count={len(sense_instances)}')
+            counters['finished'] = len([s for s in sense_instances if s['status'] != 'ACCEPTED'])
             self.update_clusters_user_infos()
             self.update_images()
             self.update_builtin_host_network_profile()
+            print_summary = True
 
-        self.show_summary()
+        if print_summary:
+            # self.show_summary()
+            sense_session_summaries = [self.to_sense_session_summary(s) for s in sense_instances]
+            existing_sessions = self.db.all(self.sense_session_table)
+            existing_sessions = [
+                dict(name=s['name'],
+                     status=s['status'],
+                     state=s.get('state'),
+                     number_janus_sessions=len(self.find_janus_session(host_profile_name=s['host_profile'])),
+                     users=s['users']) for s in existing_sessions]
+
+            log.debug(f'SENSE_PLUGIN_TASK_COUNTERS:{json.dumps(counters, indent=2)}')
+            log.debug(f'SENSE_PLUGIN_LAST_UPDATES:{json.dumps(sense_session_summaries, indent=2)}')
+            log.debug(f'SENSE_PLUGIN_EXISTING_SESSIONS:{json.dumps(existing_sessions, indent=2)}')
+
+        return number_of_nodes
 
 
 class SENSEMetaRunner:
@@ -786,9 +836,10 @@ class SENSEMetaRunner:
             cnt += 1
             if cnt == self._interval:
                 try:
+                    number_of_nodes = self._sense_mngr.run()
+
                     if not quiet:
-                        self._sense_mngr.run()
-                        log.info(f'SenseMetaRunner ran ok')
+                        log.info(f'SenseMetaRunner ran ok:sent update:number_of_nodes={number_of_nodes}')
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
