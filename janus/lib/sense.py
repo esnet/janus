@@ -17,6 +17,7 @@ from tinydb.table import Table
 from janus.api.db import DBLayer
 from janus.api.kubernetes import KubernetesApi
 from janus.api.models import Node, ContainerProfile, ContainerProfileSettings, NetworkProfile, NetworkProfileSettings
+from janus.api.session_manager import SessionManager
 from janus.settings import JanusConfig
 
 SENSE_METADATA_URL = 'sense-metadata-url'
@@ -50,6 +51,10 @@ class Base(object):
     @property
     def nodes_table(self) -> Table:
         return self.db.get_table('nodes')
+
+    @property
+    def networks_table(self) -> Table:
+        return self.db.get_table('networks')
 
     @property
     def sense_session_table(self) -> Table:
@@ -154,14 +159,6 @@ class Base(object):
 
     def get_or_create_network_profile(self, name, targets, users, groups=None):
         network_profile_name = name
-        # TODO CHECK IF MODIFIED AND MAYBE DESTROY EXISTING SESSIONS
-        # network_profiles = self.find_network_profiles(name=network_profile_name)
-        #
-        # if network_profiles:
-        #     assert len(network_profiles) == 1
-        #     network_profile = self._update_users(network_profiles[0], users, self.save_network_profile)
-        #     return network_profile
-
         vlans = [t['vlan'] for t in targets]
         vlans = list(set(vlans))
         portNames = [t['portName'] for t in targets if 'portName' in t and t['portName']]
@@ -285,7 +282,52 @@ class SENSEMetaManager(Base):
         self.sense_api_handler = SENSEApiHandler(req_wrapper=RequestWrapper())
         self.kube_api = KubernetesApi()
         self.properties = properties
+        self.session_manager = SessionManager()
+        self.retries = 3
         log.info(f"Initialized {__name__}:{properties}")
+
+    def create_janus_session(self, sense_session):
+        targets = sum(sense_session['task_info'].values(), [])
+        instances = [dict(name=t['cluster_info']['cluster_id'], nodeName=t['name']) for t in targets]
+        host_profile = sense_session['host_profile']
+        req = dict(
+            errors=[],
+            instances=instances,
+            image='dtnaas/tools:latest',
+            profile=host_profile,
+            arguments=str(),
+            kwargs=dict(USER_NAME=str(), PUBLIC_KEY=str()),
+            remove_container=False
+        )
+
+        log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{instances}')
+        owner = sense_session["users"][0]
+        return self.session_manager.create_session(None, None, req, owner, sense_session["users"])
+
+    def terminate_janus_sessions(self, sense_session: dict):
+        host_profile_name = sense_session['host_profile']
+        network_profile_name = sense_session['network_profile']
+        cluster_id = sense_session['clusters'][0]  # TODO cannot assume same cluster for pods and network...
+
+        for janus_session in self.find_janus_session(host_profile_name=host_profile_name):
+            self.session_manager.stop_session(janus_session['id'])
+            self.db.remove(self.janus_session_table, ids=janus_session['id'])
+
+        self.delete_network(cluster_id=cluster_id, name=network_profile_name)
+        self.db.remove(self.networks_table, name=network_profile_name)
+        clusters = self.find_cluster(cluster_id=cluster_id)
+        cluster = clusters[0]
+
+        if network_profile_name in cluster['networks']:
+            del cluster['networks'][network_profile_name]
+            self.db.upsert(self.nodes_table, cluster, 'name', cluster['name'])
+
+    def terminate_sense_session(self, sense_session: dict):
+        host_profile_name = sense_session['host_profile']
+        network_profile_name = sense_session['network_profile']
+        self.terminate_janus_sessions(sense_session=sense_session)
+        self.db.remove(self.host_table, name=host_profile_name)
+        self.db.remove(self.network_table, name=network_profile_name)
 
     def load_cluster_node_map(self):
         clusters = self.db.all(self.nodes_table)
@@ -298,6 +340,36 @@ class SENSEMetaManager(Base):
                 node_cluster_map[node['name']] = cluster_info
 
         return node_cluster_map
+
+    def check_modified(self, new_sense_session):
+        sense_sessions = self.find_sense_session(sense_session_key=new_sense_session['key'])
+        assert len(sense_sessions) <= 1
+
+        if not sense_sessions:
+            return True
+
+        old_sense_session = sense_sessions[0]
+
+        if old_sense_session['state'] == 'MODIFIED':
+            return True
+
+        old_targets = sum(old_sense_session['task_info'].values(), [])
+        new_targets = sum(new_sense_session['task_info'].values(), [])
+
+        if len(old_targets) != len(new_targets):
+            return True
+
+        for target in old_targets:
+            del target['principals']
+
+        new_targets = [copy.deepcopy(t) for t in new_targets]
+
+        for target in new_targets:
+            del target['principals']
+
+        old_targets = sorted(old_targets, key=lambda t: t['name'])
+        new_targets = sorted(new_targets, key=lambda t: t['name'])
+        return old_targets != new_targets
 
     def retrieve_tasks(self):
         assigned = self.properties[SENSE_METADATA_ASSIGNED]
@@ -327,6 +399,7 @@ class SENSEMetaManager(Base):
             sense_sessions = self.find_sense_session(sense_session_key=instance_id)
             assert len(sense_sessions) <= 1
             sense_session = sense_sessions[0] if sense_sessions else dict()
+            saved_targets = sum(sense_session.get('task_info', dict()).values(), [])
 
             if command == 'instance-termination-notice':
                 if not sense_session:
@@ -359,7 +432,7 @@ class SENSEMetaManager(Base):
 
                 if unknown_endpoints:
                     log.warning(f'unknown endpoint for instance {instance_id}:endpoints={unknown_endpoints}')
-                    self.sense_api_handler.reject_task(task_id, f"unkown targets:{ unknown_endpoints}")
+                    self.sense_api_handler.reject_task(task_id, f"unkown targets:{unknown_endpoints}")
                     continue
 
                 clusters = sense_session['clusters'] if 'clusters' in sense_session else list()
@@ -370,29 +443,28 @@ class SENSEMetaManager(Base):
                     clusters.append(node_cluster_map[target['name']]['cluster_id'])
                     users.extend(target['principals'])
 
-                target_names = [target['name'] for target in targets]
+                if len(targets) == 1 and saved_targets:
+                    target_names = [target['name'] for target in targets]
+                    saved_targets = [target['name'] for target in saved_targets if target['name'] not in target_names]
+                    targets.extends(saved_targets)
 
-                if 'task_info' in sense_session:
-                    old_task_info = sense_session['task_info']
-
-                    for old_task_id, old_targets in copy.deepcopy(old_task_info).items():
-                        old_task_info[old_task_id] = list()
-
-                        for old_target in old_targets.copy():
-                            if old_target['name'] not in target_names:
-                                old_task_info[old_task_id].append(old_target)
-
-                        if not old_task_info[old_task_id]:
-                            del old_task_info[old_task_id]
-
-                    task_info.update(old_task_info)
+                if len(targets) > 2:
+                    self.sense_api_handler.reject_task(task_id,
+                                                       f"too many targets after merging:{len(targets)}")
+                    continue
 
                 if not alias:
                     alias = f'sense-janus-{"-".join(instance_id.split("-")[0:2])}'
                 else:
                     alias = f'sense-janus-{alias.replace(" ", "-")}-{"-".join(instance_id.split("-")[0:2])}'
 
-                users = list(set(users))
+                users = sorted(list(set(users)))
+
+                if not users:
+                    self.sense_api_handler.reject_task(task_id,
+                                                       f"must specify at least one principal")
+                    continue
+
                 sense_session = dict(key=instance_id,
                                      name=alias,
                                      task_info=task_info,
@@ -400,6 +472,12 @@ class SENSEMetaManager(Base):
                                      status='PENDING',
                                      command=command,
                                      clusters=list(set(clusters)))
+
+                sense_session['state'] = 'MODIFIED' if self.check_modified(sense_session) else 'OK'
+
+                if sense_session['state'] == 'MODIFIED' and saved_targets:
+                    log.warning(
+                        f'detected modified instance {instance_id}:saved_targets={saved_targets}:new_targets={targets}')
 
             self.save_sense_session(sense_session=sense_session)
             log.debug(f'saved sense session:{json.dumps(sense_session)}')
@@ -426,56 +504,109 @@ class SENSEMetaManager(Base):
 
         return sense_sessions
 
+    def _finish_handle_sense_instance_command_helper(self, task_info, mesg):
+        for uuid in [uuid for uuid in task_info]:
+            targets = []
+
+            for target in task_info[uuid]:
+                if 'cluster_info' in target:
+                    targets.append(dict(name=target['name'], cluster_info=target['cluster_info']))
+                else:
+                    targets.append(dict(name=target['name']))
+
+            message = dict(url=self.properties[SENSE_METADATA_URL], targets=targets, message=mesg)
+            self.sense_api_handler.finish_task(uuid, message)
+
+    def _finish_handle_sense_instance_command(self, sense_session):
+        name = sense_session['name'].lower()
+        users = sense_session['users']
+        task_info = sense_session['task_info']
+        targets = sum(task_info.values(), [])
+        network_profile = self.get_or_create_network_profile(name=name + '-net', targets=targets, users=users)
+        network_profile_name = network_profile['name']
+        host_profile = self.get_or_create_host_profile(name=name,
+                                                       network_profile_name=network_profile_name, users=users)
+        sense_session['host_profile'] = host_profile['name']
+        sense_session['network_profile'] = network_profile['name']
+
+        if sense_session['state'] == 'MODIFIED':
+            error = False
+
+            try:
+                self.terminate_janus_sessions(sense_session=sense_session)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                log.warning(f'error terminating janus session: {e}')
+                sense_session['errors'] += 1
+
+            if not error:
+                try:
+                    janus_session_id = self.create_janus_session(sense_session=sense_session)
+                    sense_session['state'] = 'OK'
+                    sense_session['janus_session_id'] = janus_session_id
+                    sense_session['errors'] = 0
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    log.warning(f'error creating janus session: {e}')
+                    sense_session['errors'] += 1
+
+        if 0 < sense_session['errors'] < self.retries:
+            self.save_sense_session(sense_session=sense_session)
+            return
+
+        if sense_session['errors'] == 0:
+            sense_session['status'] = 'FINISHED'
+            self.save_sense_session(sense_session=sense_session)
+            mesg = f'session for {sense_session["key"]} has been handled'
+        else:
+            sense_session['status'] = 'FINISHED'
+            sense_session['state'] = 'PARTIALLY_HANDLED'
+            sense_session['errors'] = 0
+            mesg = f'session for {sense_session["key"]} has been partially handled:errors={sense_session["errors"]}'
+            log.warning(f'giving up on creating janus session: {mesg}')
+
+        self._finish_handle_sense_instance_command_helper(task_info, mesg)
+
+    def _finish_instance_termination_notice_command(self, sense_session):
+        assert 'termination_task' in sense_session
+
+        try:
+            self.terminate_sense_session(sense_session=sense_session)
+            sense_session['errors'] = 0
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            log.warning(f'error terminating sense session: {e}')
+            sense_session['errors'] += 1
+
+        if 0 < sense_session['errors'] < self.retries:
+            self.save_sense_session(sense_session=sense_session)
+            return
+
+        if sense_session['errors'] == 0:
+            mesg = f'session for {sense_session["key"]} has been terminated'
+        else:
+            mesg = f'giving up on terminating session for {sense_session["key"]}'
+
+        message = dict(url=self.properties[SENSE_METADATA_URL], targets=[], message=mesg)
+        self.sense_api_handler.finish_task(sense_session['termination_task'], message)
+        sense_session['status'] = 'DELETED'
+        log.warning(f'removing sense session from db: {mesg}')
+        self.db.remove(self.sense_session_table, name=sense_session['name'])
+
     def finish_tasks(self):
         sense_sessions = self.find_sense_session(status='ACCEPTED')
 
         for sense_session in sense_sessions:
-            if 'termination_task' in sense_session:
-                assert sense_session['command'] != 'handle-sense-instance'
-                self.terminate_sense_session(sense_session=sense_session)
-                message = {'url': self.properties[SENSE_METADATA_URL],
-                           'targets': [],
-                           'message': f'session for {sense_session["key"]} has been terminated'}
-                self.sense_api_handler.finish_task(sense_session['termination_task'], message)
-                sense_session['status'] = 'DELETED'
-                continue
+            if 'errors' not in sense_session:
+                sense_session['errors'] = 0
 
-            assert sense_session['command'] == 'handle-sense-instance'
-            name = sense_session['name'].lower()
-            users = sense_session['users']
-            task_info = sense_session['task_info']
-            targets = sum(task_info.values(), [])
-            network_profile = self.get_or_create_network_profile(name=name + "-net", targets=targets, users=users)
-            assert network_profile is not None
-            assert network_profile is not None
-            network_profile_name = network_profile['name']
-            host_profile = self.get_or_create_host_profile(name=name,
-                                                           network_profile_name=network_profile_name, users=users)
-            assert host_profile is not None
-            assert 'settings' in host_profile and 'tools' in host_profile['settings']
-            sense_session['host_profile'] = host_profile['name']
-            sense_session['network_profile'] = network_profile['name']
-
-            for image in sum([self.find_images(name=tool) for tool in host_profile['settings']['tools']], list()):
-                self._update_users(resource=image, users=users, func=self.save_image)
-
-            for uuid in [uuid for uuid in task_info]:
-                targets = []
-
-                for target in task_info[uuid]:
-                    if 'cluster_info' in target:
-                        targets.append(dict(name=target['name'], cluster_info=target['cluster_info']))
-                    else:
-                        target.append(dict(name=target['name']))
-
-                message = {'url': self.properties[SENSE_METADATA_URL],
-                           'targets': targets,
-                           'message': f'session for {sense_session["key"]} has been handled'
-                           }
-                self.sense_api_handler.finish_task(uuid, message)
-
-            sense_session['status'] = 'FINISHED'
-            self.save_sense_session(sense_session=sense_session)
+            if sense_session['command'] != 'handle-sense-instance':
+                self._finish_instance_termination_notice_command(sense_session)
+            else:
+                self._finish_handle_sense_instance_command(sense_session)
 
         return sense_sessions
 
@@ -527,75 +658,24 @@ class SENSEMetaManager(Base):
             network_profile['users'] = list(set(users))
             self.save_network_profile(network_profile)
 
-    '''
-    JANUS API:
-    delete pods
-    delete janus session
-    delete net-attachement .....
-    delete host profile
-    delete network profile
-    clean up users  and clean sense_session
-    
-    Do we need to stop session first?
-    PUT /api/janus/controller/stop/1 HTTP/1.1" 200
-    DELETE /api/janus/controller/active/1?force=true HTTP/1.1
-    DELETE /api/janus/controller/profiles/network/sense-janus-vlan-attachement HTTP/1.1
-    DELETE /api/janus/controller/profiles/host/sense-janus-617c8b1a-d23c HTTP/1.1
-    '''
-    def terminate_sense_session(self, sense_session: dict):
-        host_profile_name = sense_session['host_profile']
-        network_profile_name = sense_session['network_profile']
-        cluster_id = sense_session['clusters'][0]  # TODO cannot assume same cluster for pods and network...
-
-        for janus_session in self.find_janus_session(host_profile_name=host_profile_name):
-            clusters = janus_session['services']
-            pods = list()
-
-            for cluster_name, services in clusters.items():
-                print("CLUSTER", cluster_name, "Number Of Service:", len(services))
-                pods.extend([service['sname'] for service in services])
-
-            for pod in pods:
-                self.delete_pod(cluster_id=cluster_id, name=pod)
-
-            # TODO This is controller delete
-            # @ns.route('/active/<int:aid>')
-            # from janus.api.utils import commit_db
-            # commit_db(janus_session, janus_session['id'], delete=True, realized=True)
-            # commit_db(janus_session, janus_session['id'], delete=True)
-            self.db.remove(self.janus_session_table, ids=janus_session['id'])
-
-        self.delete_network(cluster_id=cluster_id, name=network_profile_name)
-        clusters = self.find_cluster(cluster_id=cluster_id)
-        cluster = clusters[0]
-
-        if network_profile_name in cluster['networks']:
-            del cluster['networks'][network_profile_name]
-            self.db.upsert(self.nodes_table, cluster, 'name', cluster['name'])
-
-        self.db.remove(self.host_table, name=host_profile_name)
-        self.db.remove(self.network_table, name=network_profile_name)
-        self.db.remove(self.sense_session_table, name=sense_session['name'])
-
     def show_sense_session(self, sense_session: dict):
         print("**************** BEGIN SENSE SESSION  ***************")
         host_profile_name = sense_session['host_profile']
         network_profile_name = sense_session['network_profile']
-        print("SENSE_SESSION:", sense_session['name'], host_profile_name, network_profile_name)
+        print("\tSENSE_SESSION:", sense_session['name'], host_profile_name, network_profile_name)
 
         for janus_session in self.find_janus_session(host_profile_name=host_profile_name):
             pods = list()
             clusters = janus_session['services']
 
-            for cluster_name, services in clusters.items():
-                print("CLUSTER", cluster_name, "Number Of Service:", len(services))
+            for _, services in clusters.items():
                 pods.extend([service['sname'] for service in services])
 
-            print("FOUND JANUS SESSION:", janus_session['uuid'],
-                  janus_session['state'],
+            print("\t\tFOUND JANUS SESSION:", janus_session['uuid'],
+                  "state=", janus_session['state'],
                   "OWNER=", janus_session['user'],
-                  "USERS=", janus_session['users'],
-                  "PODS=", pods)
+                  "USERS=", janus_session['users'])
+            print("\t\t\tPODS=", pods)
         print("**************** END SENSE SESSION  ***************")
 
     def show_summary(self):
@@ -662,7 +742,8 @@ class SENSEMetaManager(Base):
         sense_instances = self.retrieve_tasks()
 
         if sense_instances:
-            log.info(f'Retrieved and validated tasks: {len(sense_instances)}')
+            commands = [s['command'] for s in sense_instances]
+            log.info(f'Retrieved and validated tasks: {len(sense_instances)}:{commands}')
 
         sense_instances = self.accept_tasks()
 

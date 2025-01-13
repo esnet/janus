@@ -4,6 +4,8 @@ from configparser import ConfigParser
 
 from janus.api.db import DBLayer
 from janus.api.kubernetes import KubernetesApi
+from janus.api.manager import ServiceManager
+from janus.api.profile import ProfileManager
 from janus.lib.sense import SENSEMetaManager, parse_from_config
 from janus.settings import cfg, SUPPORTED_IMAGES
 
@@ -16,9 +18,10 @@ class TestSenseWorkflow:
     def __init__(self, database, config_file, node_name_filter=None):
         db = DBLayer(path=database)
 
-        cfg.setdb(db, None, None)
+        pm = ProfileManager(db, None)
+        sm = ServiceManager(db)
+        cfg.setdb(db, pm, sm)
         self.node_name_filter = node_name_filter or list()
-
         parser = ConfigParser(allow_no_value=True)
         parser.read(config_file)
         sense_properties = parse_from_config(cfg=cfg, parser=parser)
@@ -53,9 +56,10 @@ class TestSenseWorkflow:
                     filtered_nodes.append(node)
 
             cluster['cluster_nodes'] = filtered_nodes
-            cluster['users'] = []
+            cluster['users'] = list()
 
-        cluster['networks'] = list()
+        cluster['allocated_ports'] = list()
+
         self.mngr.db.upsert(node_table, cluster, 'name', cluster['name'])
         log.info(f"saved nodes to db from cluster={cluster['name']}")
 
