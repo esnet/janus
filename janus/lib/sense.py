@@ -161,21 +161,22 @@ class Base(object):
         network_profile_name = name
         vlans = [t['vlan'] for t in targets]
         vlans = list(set(vlans))
-        portNames = [t['portName'] for t in targets if 'portName' in t and t['portName']]
+        portNames = [t['portName'] for t in targets if t.get('portName')]
         portNames = list(set(portNames))
         portNames = portNames or [f'vlan.{vlans[0]}']
 
-        subnets = [t['ip'] for t in targets if 'ip' in t and t['ip']]
+        subnets = [t['ip'] for t in targets if t.get('ip')]
         subnets = subnets or ['192.168.1.0/24']
         config = list()
-        bws = [t['bw'] for t in targets if 'bw' in t and t['bw']]
+        bws = [t['bw'] for t in targets if 'bw' if t.get('bw')]
 
         if bws:
             options = dict(vlan=str(vlans[0]), bw=str(bws[0]))
         else:
             options = dict(vlan=str(vlans[0]))
 
-        options['parent'] = portNames[0]
+        options['parent'] = portNames[0] if '?' not in portNames[0] else f'vlan.{vlans[0]}'
+        options['mtu'] = '1500'
 
         from ipaddress import IPv4Network
 
@@ -253,27 +254,84 @@ class SENSEApiHandler:
     def __init__(self, req_wrapper):
         self.task_client = TaskApi(req_wrapper=req_wrapper)
         self.metadata_client = MetadataApi(req_wrapper=req_wrapper)
+        self.retries = 3
 
     def retrieve_tasks(self, assigned, status):
-        records = self.task_client.get_tasks_agent_status(assigned=assigned, status=status)
-        return records
+        err = None
+
+        for attempt in range(self.retries):
+            try:
+                tasks = self.task_client.get_tasks_agent_status(assigned=assigned, status=status)
+
+                if isinstance(tasks, list):
+                    return tasks
+
+                err = tasks
+                log.warning(f'warning retrieving tasks: {err}')
+            except Exception as e:
+                err = str(e)
+
+            log.warning(f'warning retrieving tasks: {err}')
+
+            import time
+            time.sleep(1)
+
+        log.error(f'unable to retrieve tasks ....{err}')
+        return None
+
+    def _update_task(self, data, **kwargs):
+        err = None
+
+        for attempt in range(self.retries):
+            try:
+                ret = self.task_client.update_task(json.dumps(data), **kwargs)
+
+                if isinstance(ret, dict):
+                    return True
+
+                err = ret
+            except Exception as e:
+                err = str(e)
+
+            log.warning(f'Expected a dict when updating task:{kwargs}: {err}')
+            import time
+            time.sleep(1)
+
+        log.error(f'Expected a dict when updating task:{kwargs}: {err}')
+        return False
 
     def accept_task(self, uuid):
         data = None
-        return self.task_client.update_task(json.dumps(data), uuid=uuid, state='ACCEPTED')
+        return self._update_task(json.dumps(data), uuid=uuid, state='ACCEPTED')
 
     def reject_task(self, uuid, message):
         data = {"message": message}
-        return self.task_client.update_task(json.dumps(data), uuid=uuid, state='REJECTED')
+        return self._update_task(json.dumps(data), uuid=uuid, state='REJECTED')
 
     def finish_task(self, uuid, data):
-        return self.task_client.update_task(json.dumps(data), uuid=uuid, state='FINISHED')
+        return self._update_task(json.dumps(data), uuid=uuid, state='FINISHED')
 
     def get_metadata(self, domain, name):
         return self.metadata_client.get_metadata(domain=domain, name=name)
 
     def post_metadata(self, metadata, domain, name):
-        return self.metadata_client.post_metadata(data=json.dumps(metadata), domain=domain, name=name)
+        err = None
+
+        for attempt in range(self.retries):
+
+            ret = self.metadata_client.post_metadata(data=json.dumps(metadata), domain=domain, name=name)
+
+            if isinstance(ret, dict):
+                return ret
+
+            err = ret
+            log.warning(f'Expected a dict when updating metadata: {err}')
+            import time
+
+            time.sleep(1)
+
+        log.warning(f'Error when updating metadata: {err}')
+        return None
 
 
 class SENSEMetaManager(Base):
@@ -284,7 +342,8 @@ class SENSEMetaManager(Base):
         self.properties = properties
         self.session_manager = SessionManager()
         self.retries = 3
-        log.info(f"Initialized {__name__}:{properties}")
+        self.counter = 0
+        log.info(f"Initialized {__name__}:properties={json.dumps(properties, indent=2)}")
 
     def create_janus_session(self, sense_session):
         targets = sum(sense_session['task_info'].values(), [])
@@ -350,7 +409,7 @@ class SENSEMetaManager(Base):
 
         old_sense_session = sense_sessions[0]
 
-        if old_sense_session['state'] == 'MODIFIED':
+        if old_sense_session.get('state') == 'MODIFIED':
             return True
 
         old_targets = sum(old_sense_session['task_info'].values(), [])
@@ -375,15 +434,13 @@ class SENSEMetaManager(Base):
         assigned = self.properties[SENSE_METADATA_ASSIGNED]
         tasks = self.sense_api_handler.retrieve_tasks(assigned=assigned, status='PENDING')
 
-        if not tasks or not isinstance(tasks, list):
-            if not isinstance(tasks, list):
-                log.warning(f'warning retrieving tasks: {tasks}')
-
-            return list()
+        if not tasks:
+            return None, None
 
         node_cluster_map = self.load_cluster_node_map()
         node_names = [n for n in node_cluster_map]
         validated_sense_sessions = list()
+        rejected_tasks = list()
 
         for task in tasks:
             config = task['config']
@@ -392,6 +449,7 @@ class SENSEMetaManager(Base):
 
             if command not in ['handle-sense-instance', 'instance-termination-notice']:
                 self.sense_api_handler.reject_task(task_id, f"unknown command:{command}")
+                rejected_tasks.append(task)
                 continue
 
             instance_id = config['context']['uuid']
@@ -419,10 +477,12 @@ class SENSEMetaManager(Base):
                     # TODO should we finish task with existing targets?
                     log.warning(f'no targets for instance {instance_id}')
                     self.sense_api_handler.reject_task(task_id, f"no targets")
+                    rejected_tasks.append(task)
                     continue
                 elif len(targets) > 2:
                     log.warning(f'unknown endpoint for instance {instance_id}:too many targets:{len(targets)}')
                     self.sense_api_handler.reject_task(task_id, f"too many targets:{len(targets)}")
+                    rejected_tasks.append(task)
                     continue
 
                 task_info = dict()
@@ -433,6 +493,7 @@ class SENSEMetaManager(Base):
                 if unknown_endpoints:
                     log.warning(f'unknown endpoint for instance {instance_id}:endpoints={unknown_endpoints}')
                     self.sense_api_handler.reject_task(task_id, f"unkown targets:{unknown_endpoints}")
+                    rejected_tasks.append(task)
                     continue
 
                 clusters = sense_session['clusters'] if 'clusters' in sense_session else list()
@@ -451,6 +512,7 @@ class SENSEMetaManager(Base):
                 if len(targets) > 2:
                     self.sense_api_handler.reject_task(task_id,
                                                        f"too many targets after merging:{len(targets)}")
+                    rejected_tasks.append(task)
                     continue
 
                 if not alias:
@@ -463,6 +525,7 @@ class SENSEMetaManager(Base):
                 if not users:
                     self.sense_api_handler.reject_task(task_id,
                                                        f"must specify at least one principal")
+                    rejected_tasks.append(task)
                     continue
 
                 sense_session = dict(key=instance_id,
@@ -480,10 +543,10 @@ class SENSEMetaManager(Base):
                         f'detected modified instance {instance_id}:saved_targets={saved_targets}:new_targets={targets}')
 
             self.save_sense_session(sense_session=sense_session)
-            log.debug(f'saved sense session:{json.dumps(sense_session)}')
+            log.debug(f'saved pending sense session:{json.dumps(sense_session)}')
             validated_sense_sessions.append(sense_session)
 
-        return validated_sense_sessions
+        return validated_sense_sessions, rejected_tasks
 
     def accept_tasks(self):
         sense_sessions = self.find_sense_session(status='PENDING')
@@ -543,7 +606,6 @@ class SENSEMetaManager(Base):
             if not error:
                 try:
                     janus_session_id = self.create_janus_session(sense_session=sense_session)
-                    sense_session['state'] = 'OK'
                     sense_session['janus_session_id'] = janus_session_id
                     sense_session['errors'] = 0
                 except Exception as e:
@@ -558,7 +620,7 @@ class SENSEMetaManager(Base):
 
         if sense_session['errors'] == 0:
             sense_session['status'] = 'FINISHED'
-            self.save_sense_session(sense_session=sense_session)
+            sense_session['state'] = 'OK'
             mesg = f'session for {sense_session["key"]} has been handled'
         else:
             sense_session['status'] = 'FINISHED'
@@ -567,6 +629,7 @@ class SENSEMetaManager(Base):
             mesg = f'session for {sense_session["key"]} has been partially handled:errors={sense_session["errors"]}'
             log.warning(f'giving up on creating janus session: {mesg}')
 
+        self.save_sense_session(sense_session=sense_session)
         self._finish_handle_sense_instance_command_helper(task_info, mesg)
 
     def _finish_instance_termination_notice_command(self, sense_session):
@@ -728,9 +791,23 @@ class SENSEMetaManager(Base):
         return agents
 
     def update_metadata(self, agents):
+        from datetime import datetime, timezone
+
         domain_info = self.properties[SENSE_DOMAIN_INFO].split('/')
+        name = domain_info[1].upper()
         metadata = dict(agents=agents)
-        return self.sense_api_handler.post_metadata(metadata=metadata, domain=domain_info[0], name=domain_info[1])
+        ret = self.sense_api_handler.post_metadata(metadata=metadata, domain=domain_info[0], name=name)
+
+        utc_iso_str = datetime.strftime(datetime.now(timezone.utc), "%Y-%m-%dT%H:%M:%S.%f")[:-3]
+        name += '_SERVER_INFO'
+        metadata = dict(agents=dict(),
+                        timestamp=utc_iso_str,
+                        counter=self.counter)
+
+        self.sense_api_handler.post_metadata(metadata=metadata, domain=domain_info[0], name=name)
+
+        self.counter += 1
+        return ret
 
     def delete_network(self, cluster_id, name):
         node = Node(id=1, name=cluster_id)
@@ -756,70 +833,64 @@ class SENSEMetaManager(Base):
 
         if number_of_nodes == 0:  # Wait for nodes to be populated
             log.warning(f'Waiting on nodes: Number of nodes: {number_of_nodes}')
-            return 0
+            return
 
-        ret = self.update_metadata(agents=agents)
+        if not self.update_metadata(agents=agents):
+            log.warning(f'Returning as unable to update metadata')
+            return
 
-        if not isinstance(ret, dict):
-            log.warning(f'Expected a dict when updating data: {ret}')
-            number_of_nodes = -1
-        # else:
-        #     log.debug(f'Updated Metadata: Number of nodes: {number_of_nodes}')
-
-        sense_instances = self.retrieve_tasks()
-        counters = dict()
+        sense_sessions, rejected_tasks = self.retrieve_tasks()
+        counters = dict(retrieved=0, rejected=0, accepted=0, terminated=0, finished=0)
         print_summary = False
 
-        if sense_instances:
-            # commands = [s['command'] for s in sense_instances]
-            # log.debug(f'Retrieved and validated tasks:count={len(sense_instances)}:{commands[0:2]}...')
-            counters['retrieved'] = len(sense_instances)
+        if sense_sessions:
+            counters['retrieved'] = len(sense_sessions)
             print_summary = True
 
-        sense_instances = self.accept_tasks()
+        if rejected_tasks:
+            counters['rejected'] = len(rejected_tasks)
 
-        if sense_instances:
-            # log.debug(f'Accepted tasks:count={len(sense_instances)}')
-            counters['accepted'] = len(sense_instances)
+        sense_sessions = self.accept_tasks()
+
+        if sense_sessions:
+            counters['accepted'] = len(sense_sessions)
             print_summary = True
 
-        sense_instances = self.finish_tasks()
+        sense_sessions = self.finish_tasks()
 
-        if sense_instances:
-            # log.debug(f'Finished tasks:count={len(sense_instances)}')
-            counters['finished'] = len([s for s in sense_instances if s['status'] != 'ACCEPTED'])
+        if sense_sessions:
             self.update_clusters_user_infos()
             self.update_images()
             self.update_builtin_host_network_profile()
+            counters['finished'] = len([s for s in sense_sessions if s['status'] == 'FINISHED'])
+            counters['terminated'] = len([s for s in sense_sessions if s['status'] == 'DELETED'])
             print_summary = True
 
         if print_summary:
-            # self.show_summary()
-            sense_session_summaries = [self.to_sense_session_summary(s) for s in sense_instances]
+            sense_session_summaries = [self.to_sense_session_summary(s) for s in sense_sessions]
             existing_sessions = self.db.all(self.sense_session_table)
             existing_sessions = [
                 dict(name=s['name'],
                      status=s['status'],
                      state=s.get('state'),
+                     errors=s.get('errors'),
                      number_janus_sessions=len(self.find_janus_session(host_profile_name=s['host_profile'])),
                      users=s['users']) for s in existing_sessions]
 
-            log.debug(f'SENSE_PLUGIN_TASK_COUNTERS:{json.dumps(counters, indent=2)}')
-            log.debug(f'SENSE_PLUGIN_LAST_UPDATES:{json.dumps(sense_session_summaries, indent=2)}')
-            log.debug(f'SENSE_PLUGIN_EXISTING_SESSIONS:{json.dumps(existing_sessions, indent=2)}')
-
-        return number_of_nodes
+            server_info = dict(counters=counters, last_updates=sense_session_summaries, all_sessions=existing_sessions)
+            log.debug(f'SERVER_INFO:{json.dumps(server_info, indent=2)}')
 
 
 class SENSEMetaRunner:
     def __init__(self, cfg: JanusConfig, properties: dict):
         self._stop = False
-        self._interval = 30
+        self._interval = 10
         self._th = None
         self._sense_mngr = SENSEMetaManager(cfg, properties)
         log.info(f"Initialized {__name__}")
 
     def start(self):
+        log.debug(f"Started {__name__}")
         self._th = Thread(target=self._run, args=())
         self._th.start()
 
@@ -830,16 +901,13 @@ class SENSEMetaRunner:
 
     def _run(self):
         cnt = 0
-        quiet = False
+        log.debug(f"Running {__name__}:stop={self._stop}")
         while not self._stop:
             time.sleep(1)
             cnt += 1
             if cnt == self._interval:
                 try:
-                    number_of_nodes = self._sense_mngr.run()
-
-                    if not quiet:
-                        log.info(f'SenseMetaRunner ran ok:sent update:number_of_nodes={number_of_nodes}')
+                    self._sense_mngr.run()
                 except Exception as e:
                     import traceback
                     traceback.print_exc()

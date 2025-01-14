@@ -93,10 +93,12 @@ if __name__ == '__main__':
     filter_nodes = False
 
     if filter_nodes:
+        # urn:ogf:network:nrp-nautilus.io:2020:node-2-8.sdsc.optiputer.net
         endpoints = ['k8s-gen5-01.sdsc.optiputer.net',
                      'k8s-gen5-02.sdsc.optiputer.net',
                      'losa4-nrp-01.cenic.net',
-                     'k8s-3090-01.clemson.edu']
+                     'k8s-3090-01.clemson.edu',
+                     'node-2-8.sdsc.optiputer.net']
     else:
         endpoints = None
 
