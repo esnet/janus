@@ -302,14 +302,14 @@ class SENSEApiHandler:
 
     def accept_task(self, uuid):
         data = None
-        return self._update_task(json.dumps(data), uuid=uuid, state='ACCEPTED')
+        return self._update_task(data, uuid=uuid, state='ACCEPTED')
 
     def reject_task(self, uuid, message):
         data = {"message": message}
-        return self._update_task(json.dumps(data), uuid=uuid, state='REJECTED')
+        return self._update_task(data, uuid=uuid, state='REJECTED')
 
     def finish_task(self, uuid, data):
-        return self._update_task(json.dumps(data), uuid=uuid, state='FINISHED')
+        return self._update_task(data, uuid=uuid, state='FINISHED')
 
     def get_metadata(self, domain, name):
         return self.metadata_client.get_metadata(domain=domain, name=name)
@@ -318,19 +318,22 @@ class SENSEApiHandler:
         err = None
 
         for attempt in range(self.retries):
+            try:
+                ret = self.metadata_client.post_metadata(data=json.dumps(metadata), domain=domain, name=name)
 
-            ret = self.metadata_client.post_metadata(data=json.dumps(metadata), domain=domain, name=name)
+                if isinstance(ret, dict):
+                    return True
 
-            if isinstance(ret, dict):
-                return ret
+                err = ret
+            except Exception as e:
+                err = str(e)
 
-            err = ret
-            log.warning(f'Expected a dict when updating metadata: {err}')
+            log.warning(f'Error when updating metadata: {err}')
             import time
 
             time.sleep(1)
 
-        log.warning(f'Error when updating metadata: {err}')
+        log.error(f'Error when updating metadata: {err}')
         return None
 
 
@@ -602,6 +605,7 @@ class SENSEMetaManager(Base):
                 traceback.print_exc()
                 log.warning(f'error terminating janus session: {e}')
                 sense_session['errors'] += 1
+                error = True 
 
             if not error:
                 try:
@@ -763,8 +767,11 @@ class SENSEMetaManager(Base):
             janus_sessions_summaries.append(janus_session_summary)
 
         return dict(sense_session=sense_session['name'],
-                    host_and_net_profiles=f'{host_profile_name}/{network_profile_name}',
-                    status_and_state=f'{sense_session["status"]}/{sense_session["state"]}',
+                    host_profile=host_profile_name,
+                    net_profile=network_profile_name,
+                    status=sense_session['status'],
+                    state=sense_session.get('state'),
+                    errors=sense_session.get('errors'),
                     janus_sessions=janus_sessions_summaries)
 
     def show_summary(self):
@@ -798,13 +805,14 @@ class SENSEMetaManager(Base):
         metadata = dict(agents=agents)
         ret = self.sense_api_handler.post_metadata(metadata=metadata, domain=domain_info[0], name=name)
 
-        utc_iso_str = datetime.strftime(datetime.now(timezone.utc), "%Y-%m-%dT%H:%M:%S.%f")[:-3]
-        name += '_SERVER_INFO'
-        metadata = dict(agents=dict(),
-                        timestamp=utc_iso_str,
-                        counter=self.counter)
+        if ret:
+            utc_iso_str = datetime.strftime(datetime.now(timezone.utc), "%Y-%m-%dT%H:%M:%S.%f")[:-3]
+            name += '_SERVER_INFO'
+            metadata = dict(agents=dict(),
+                            timestamp=utc_iso_str,
+                            counter=self.counter)
 
-        self.sense_api_handler.post_metadata(metadata=metadata, domain=domain_info[0], name=name)
+            ret = self.sense_api_handler.post_metadata(metadata=metadata, domain=domain_info[0], name=name)
 
         self.counter += 1
         return ret
@@ -878,7 +886,7 @@ class SENSEMetaManager(Base):
                      users=s['users']) for s in existing_sessions]
 
             server_info = dict(counters=counters, last_updates=sense_session_summaries, all_sessions=existing_sessions)
-            log.debug(f'SERVER_INFO:{json.dumps(server_info, indent=2)}')
+            log.debug(f'SERVER_INFO:{json.dumps(server_info)}')
 
 
 class SENSEMetaRunner:
