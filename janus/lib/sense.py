@@ -219,11 +219,7 @@ class Base(object):
         host_profile_settings = {
             "cpu": 1,
             "memory": 1073741824,
-            "mgmt_net": {
-                "name": 'host',
-                "ipv4_addr": None,
-                "ipv6_addr": None
-            },
+            "mgmt_net": None,
             "data_net": {
                 "name": network_profile_name,
                 "ipv4_addr": None,
