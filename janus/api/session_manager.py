@@ -113,7 +113,7 @@ class SessionManager(QueryUser):
                                              constraints=c,
                                              kwargs=r.get("kwargs", dict())))
 
-        assert len(create) == 2, 'expected at least two requests'
+        assert 0 < len(create) <= 2, 'expected one or two requests'
 
         # get an ID from the DB
         db_id = precommit_db()
