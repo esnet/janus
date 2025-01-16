@@ -267,16 +267,13 @@ class SENSEApiHandler:
                     return tasks
 
                 err = tasks
-                log.warning(f'warning retrieving tasks: {err}')
             except Exception as e:
                 err = str(e)
-
-            log.warning(f'warning retrieving tasks: {err}')
 
             import time
             time.sleep(1)
 
-        log.error(f'unable to retrieve tasks ....{err}')
+        log.error(f'Giving up on retrieving tasks ....{err}')
         return None
 
     def _update_task(self, data, **kwargs):
@@ -293,11 +290,10 @@ class SENSEApiHandler:
             except Exception as e:
                 err = str(e)
 
-            log.warning(f'Expected a dict when updating task:{kwargs}: {err}')
             import time
             time.sleep(1)
 
-        log.error(f'Expected a dict when updating task:{kwargs}: {err}')
+        log.error(f'Giving up on updating task after {self.retries} attempts:{kwargs}: error={err}')
         return False
 
     def accept_task(self, uuid):
@@ -328,12 +324,10 @@ class SENSEApiHandler:
             except Exception as e:
                 err = str(e)
 
-            log.warning(f'Error when updating metadata: {err}')
             import time
-
             time.sleep(1)
 
-        log.error(f'Error when updating metadata: {err}')
+        log.error(f'Giving up on updating metadata: {err}')
         return None
 
 
