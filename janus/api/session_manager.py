@@ -101,6 +101,9 @@ class SessionManager(QueryUser):
                 node = dbase.get(ntable, query=query)
                 assert node is not None, f"did not find endpoint {ename}"
 
+                # TODO should we just update regardless???
+                # The db.json has beeen delered
+
                 if cfg.sm.get_handler(node).resolve_networks(node, prof):
                     dbase.upsert(ntable, node, 'name', node['name'])
                     self.update_networks(node)

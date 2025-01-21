@@ -6,12 +6,189 @@ from janus.api.db import DBLayer
 from janus.api.kubernetes import KubernetesApi
 from janus.api.manager import ServiceManager
 from janus.api.profile import ProfileManager
-from janus.lib.sense import SENSEMetaManager, parse_from_config
+from janus.lib.sense import SENSEMetaManager
+from janus.lib.sense_api_handler import SENSEApiHandler
+from janus.lib.sense_utils import SenseUtils
 from janus.settings import cfg, SUPPORTED_IMAGES
 
 logging_conf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), '../janus/config/logging.conf'))
 logging.config.fileConfig(logging_conf_path)
 log = logging.getLogger(__name__)
+
+
+class SENSEFakeTasks:
+    fakeit = True
+
+    # noinspection PyUnusedLocal
+    @staticmethod
+    def fake_handle_instance_tasks():
+        atask = {
+            'config': {
+                "command": "handle-sense-instance",
+                "targets": [
+                    {
+                        "name": "k8s-gen5-01.sdsc.optiputer.net",
+                        "vlan": 1786,
+                        "bw": 1000,
+                        "ip": "10.251.88.2/28",
+                        "portName": "vlan.1786",  # "portName": "?name?",
+                        "principals": [
+                            "aessiari@lbl.gov"
+                        ]
+                    },
+                    {
+                        "name": "k8s-gen5-02.sdsc.optiputer.net",
+                        "vlan": 1786,
+                        "bw": 1000,
+                        "ip": "10.251.88.3/28",
+                        "portName": "vlan.1786",  # "?name?",
+                        "principals": [
+                            "aessiari@lbl.gov"
+                        ]
+                    }
+                ],
+                "context": {
+                    "alias": "ainstance",
+                    "uuid": "ainstance"
+                }},
+            'uuid': "atask"
+        }
+
+        btask = {
+            'config': {
+                "command": "handle-sense-instance",
+                "targets": [
+                    {
+                        "name": "k8s-gen5-01.sdsc.optiputer.net",
+                        "vlan": 1787,
+                        "bw": 1000,
+                        "ip": None,
+                        "portName": "vlan.1787",  # "portName": "?name?",
+                        "principals": [
+                            "aessiari@lbl.gov",
+                            "test_user@lbl.gov",
+                            "test_user2@lbl.gov"
+                        ]
+                    },
+                    {
+                        "name": "k8s-gen5-02.sdsc.optiputer.net",
+                        "vlan": 1787,
+                        "bw": 1000,
+                        "ip": None,
+                        "portName": "vlan.1787",  # "?name?",
+                        "principals": [
+                            "aessiari@lbl.gov"
+                        ]
+                    }
+                ],
+                "context": {
+                    "alias": "binstance",
+                    "uuid": "binstance"
+                }},
+            'uuid': "btask"
+        }
+
+        ctask = {
+            'config': {
+                "command": "handle-sense-instance",
+                "targets": [
+                    {
+                        "name": "k8s-gen5-01.sdsc.optiputer.net",
+                        "vlan": 1790,
+                        "bw": 1000,
+                        "ip": "10.251.88.4/28",
+                        "portName": "vlan.1790",  # "portName": "?name?",
+                        "principals": [
+                            "aessiari@lbl.gov"
+                        ]
+                    },
+                    {
+                        "name": "k8s-gen5-02.sdsc.optiputer.net",
+                        "vlan": 1791,
+                        "bw": 1000,
+                        "ip": "10.251.88.5/28",
+                        "portName": "vlan.1791",  # "?name?",
+                        "principals": [
+                            "aessiari@lbl.gov"
+                        ]
+                    }
+                ],
+                "context": {
+                    "alias": "cinstance",
+                    "uuid": "cinstance"
+                }},
+            'uuid': "ctask"
+        }
+
+        dtask = {
+            'config': {
+                "command": "handle-sense-instance",
+                "targets": [
+                    {
+                        "name": "k8s-gen5-01.sdsc.optiputer.net",
+                        "vlan": 1788,
+                        "bw": 1000,
+                        "ip": None,
+                        "portName": "vlan.1788",  # "portName": "?name?",
+                        "principals": [
+                            "test_user@lbl.gov"
+                        ]
+                    },
+                    {
+                        "name": "k8s-gen5-02.sdsc.optiputer.net",
+                        "vlan": 1789,
+                        "bw": 1000,
+                        "ip": None,
+                        "portName": "vlan.1789",  # "?name?",
+                        "principals": [
+                            "aessiari@lbl.gov"
+                        ]
+                    }
+                ],
+                "context": {
+                    "alias": "dinstance",
+                    "uuid": "dinstance"
+                }},
+            'uuid': "dtask"
+        }
+
+        # atask, dtask and btask worked
+        return [btask]  # [atask, btask, ctask, dtask]
+
+    @staticmethod
+    def fake_terminate_instance_tasks():
+        tasks = list()
+        import copy
+
+        for task in SENSEFakeTasks.fake_handle_instance_tasks():
+            task = copy.deepcopy(task)
+            task['config']['command'] = "instance-termination-notice"
+            task['config']['targets'] = []
+            task['uuid'] = task['uuid'] + '-' + 'terminate'
+            tasks.append(task)
+
+        return tasks
+
+
+class FakeSENSEApiHandler(SENSEApiHandler):
+    def __init__(self):
+        super().__init__()
+
+    def retrieve_tasks(self, assigned, status):
+        if SENSEFakeTasks.fakeit:
+            tasks = list()
+            tasks.extend(SENSEFakeTasks.fake_handle_instance_tasks())
+            # tasks.extend(SENSEFakeTasks.fake_terminate_instance_tasks())
+            return tasks
+
+        return super().retrieve_tasks(assigned, status)
+
+    def _update_task(self, data, **kwargs):
+        if SENSEFakeTasks.fakeit:
+            log.info(f'faking updating task attempts:{data}:{kwargs}')
+            return False
+
+        return super()._update_task(data, **kwargs)
 
 
 class TestSenseWorkflow:
@@ -24,8 +201,10 @@ class TestSenseWorkflow:
         self.node_name_filter = node_name_filter or list()
         parser = ConfigParser(allow_no_value=True)
         parser.read(config_file)
-        sense_properties = parse_from_config(cfg=cfg, parser=parser)
-        self.mngr = SENSEMetaManager(cfg, sense_properties)
+        sense_properties = SenseUtils.parse_from_config(cfg=cfg, parser=parser)
+        self.mngr = SENSEMetaManager(cfg, sense_properties, sense_api_handler=FakeSENSEApiHandler())
+
+        # self.mngr = SENSEMetaManager(cfg, sense_properties)
 
         if cfg.sense_metadata:
             cfg.plugins.append(self.mngr)

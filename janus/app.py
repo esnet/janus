@@ -13,6 +13,7 @@ from flask_sock import Sock
 from janus.api.controller import ns as controller_ns
 from janus.api.agent import ns as agent_ns
 from janus import settings
+from janus.lib.sense_utils import SenseUtils
 from janus.settings import cfg
 from janus.api.db import DBLayer
 from janus.api.profile import ProfileManager
@@ -56,9 +57,9 @@ def parse_config(fpath):
         raise AttributeError(f"Config file parser error: {e}")
 
     try:
-        from janus.lib.sense import parse_from_config
+        from janus.lib.sense_utils import SenseUtils
 
-        sense_properties = parse_from_config(cfg=cfg, parser=parser)
+        sense_properties = SenseUtils.parse_from_config(cfg=cfg, parser=parser)
 
         if cfg.sense_metadata:
             from janus.lib.sense import SENSEMetaRunner
