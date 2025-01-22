@@ -98,10 +98,15 @@ class DBHandler(object):
         if len(old_targets) != len(new_targets):
             return True
 
+        import copy
+
+        old_targets = [copy.deepcopy(t) for t in old_targets]
+
         for target in old_targets:
             del target['principals']
-
-        import copy
+            parent = target.get('portName')
+            parent = parent if parent and '?' not in parent else f'vlan.{target["vlan"]}'
+            target['portName'] = parent
 
         new_targets = [copy.deepcopy(t) for t in new_targets]
 
