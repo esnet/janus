@@ -520,7 +520,24 @@ class Start(Resource, QueryUser):
                         s['errors'] = s['errors'][orig_errcnt-errcnt:]
                 # End of Ansible job
         svc['state'] = State.MIXED.name if error else State.STARTED.name
-        return commit_db(svc, id, realized=True)
+
+        if not error and svc.get('peer'):
+            peer = svc.get('peer')
+
+            if isinstance(svc.get('peer'), list):
+                peer = peer[0]
+
+            from janus.api.session_manager import SessionManager
+
+            session_manager = SessionManager()
+
+            try:
+                session_manager.start_session(peer['id'])
+            except Exception as e:
+                log.error(f"Could not start peer container using {peer['id']}: {e}")
+
+        ret = commit_db(svc, id, realized=True)
+        return ret
 
 @ns.response(200, 'OK')
 @ns.response(404, 'Not found')
@@ -569,7 +586,24 @@ class Stop(Resource, QueryUser):
                         error = True
                         continue
         svc['state'] = State.MIXED.name if error else State.STOPPED.name
-        return commit_db(svc, id, delete=True, realized=True)
+        ret = commit_db(svc, id, delete=True, realized=True)
+
+        if not error and svc.get('peer'):
+            peer = svc.get('peer')
+
+            if isinstance(svc.get('peer'), list):
+                peer = peer[0]
+
+            from janus.api.session_manager import SessionManager
+
+            session_manager = SessionManager()
+
+            try:
+                session_manager.stop_session(peer['id'])
+            except Exception as e:
+                log.error(f"Could not stop peer container using {peer['id']}: {e}")
+
+        return ret
 
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
