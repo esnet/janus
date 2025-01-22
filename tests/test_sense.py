@@ -28,9 +28,9 @@ class SENSEFakeTasks:
                 "targets": [
                     {
                         "name": "k8s-gen5-01.sdsc.optiputer.net",
-                        "vlan": 1786,
+                        "vlan": 3911,
                         "bw": 1000,
-                        "ip": "10.251.88.2/28",
+                        "ip": "10.251.88.241/28",
                         "portName": "vlan.1786",  # "portName": "?name?",
                         "principals": [
                             "aessiari@lbl.gov"
@@ -38,9 +38,9 @@ class SENSEFakeTasks:
                     },
                     {
                         "name": "k8s-gen5-02.sdsc.optiputer.net",
-                        "vlan": 1786,
+                        "vlan": 3911,
                         "bw": 1000,
-                        "ip": "10.251.88.3/28",
+                        "ip": "10.251.88.242/28",
                         "portName": "vlan.1786",  # "?name?",
                         "principals": [
                             "aessiari@lbl.gov"
@@ -48,8 +48,8 @@ class SENSEFakeTasks:
                     }
                 ],
                 "context": {
-                    "alias": "ainstance",
-                    "uuid": "ainstance"
+                    "alias": "aes-dev-tue-with-ip",
+                    "uuid": "61e92ecc-69a6-4263-965c-ef33f9390a3e"
                 }},
             'uuid': "atask"
         }
@@ -106,8 +106,8 @@ class SENSEFakeTasks:
                         "name": "k8s-gen5-02.sdsc.optiputer.net",
                         "vlan": 1791,
                         "bw": 1000,
-                        "ip": "10.251.88.5/28",
-                        "portName": "vlan.1791",  # "?name?",
+                        "ip": "10.251.88.6/28",
+                        "portName": "?name?",  # "vlan.1791",  # "?name?",
                         "principals": [
                             "aessiari@lbl.gov"
                         ]
@@ -153,7 +153,7 @@ class SENSEFakeTasks:
         }
 
         # atask, dtask and btask worked
-        return [btask]  # [atask, btask, ctask, dtask]
+        return [atask, btask, ctask, dtask]
 
     @staticmethod
     def fake_terminate_instance_tasks():
@@ -177,8 +177,8 @@ class FakeSENSEApiHandler(SENSEApiHandler):
     def retrieve_tasks(self, assigned, status):
         if SENSEFakeTasks.fakeit:
             tasks = list()
-            tasks.extend(SENSEFakeTasks.fake_handle_instance_tasks())
-            # tasks.extend(SENSEFakeTasks.fake_terminate_instance_tasks())
+            # tasks.extend(SENSEFakeTasks.fake_handle_instance_tasks())
+            tasks.extend(SENSEFakeTasks.fake_terminate_instance_tasks())
             return tasks
 
         return super().retrieve_tasks(assigned, status)

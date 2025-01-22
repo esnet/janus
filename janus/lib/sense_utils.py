@@ -45,3 +45,51 @@ class SenseUtils:
                 ret.append(dict(name=target['name']))
 
         return ret
+
+    @staticmethod
+    def get_service_info(janus_session):
+        pods = list()
+        clusters = janus_session['services']
+
+        for node_name, services in clusters.items():
+            pods.extend([
+                dict(container_id=service['container_id'],
+                     node=node_name,
+                     sname=service['sname'],
+                     node_id=service['node_id'],
+                     data_ipv4=service['data_ipv4'],
+                     data_ipv6=service['data_ipv6']
+                     ) for service in services
+            ])
+
+        return pods
+
+    @staticmethod
+    def to_sense_session_summary(sense_session: dict, janus_sessions):
+        janus_sessions_summaries = list()
+
+        for janus_session in janus_sessions:
+            janus_session_summary = dict(
+                uuid=janus_session['uuid'],
+                state=janus_session['state'],
+                users=janus_session['users'],
+                pods=SenseUtils.get_service_info(janus_session),
+                peer=janus_session.get('peer')
+            )
+
+            janus_sessions_summaries.append(janus_session_summary)
+
+        return dict(sense_session=sense_session['name'],
+                    network_profiles=sense_session['network_profile'],
+                    host_profiles=sense_session['host_profile'],
+                    status=sense_session['status'],
+                    state=sense_session.get('state'),
+                    errors=sense_session.get('errors'),
+                    janus_sessions=janus_sessions_summaries)
+
+    @staticmethod
+    def peer_sessions(janus_session1, janus_session2):
+        pods1 = SenseUtils.get_service_info(janus_session1)
+        pods2 = SenseUtils.get_service_info(janus_session2)
+        janus_session1['peer'] = [dict(id=janus_session2['id'], services=pods2)]
+        janus_session2['peer'] = [dict(id=janus_session1['id'], services=pods1)]

@@ -9,7 +9,9 @@ from janus.api.utils import (
     cname_from_id,
     precommit_db,
     error_svc,
-    Constants, keys_lower
+    Constants,
+    keys_lower,
+    # set_qos
 )
 from janus.settings import cfg
 
@@ -104,9 +106,10 @@ class SessionManager(QueryUser):
                 # TODO should we just update regardless???
                 # The db.json has beeen delered
 
-                if cfg.sm.get_handler(node).resolve_networks(node, prof):
-                    dbase.upsert(ntable, node, 'name', node['name'])
-                    self.update_networks(node)
+                # if cfg.sm.get_handler(node).resolve_networks(node, prof):
+                cfg.sm.get_handler(node).resolve_networks(node, prof)
+                dbase.upsert(ntable, node, 'name', node['name'])
+                self.update_networks(node)
 
                 create.append(SessionRequest(node=node,
                                              profile=prof,
@@ -172,6 +175,70 @@ class SessionManager(QueryUser):
         record['groups'] = group.split(",") if group else []
         commit_db(record, db_id)
         return db_id
+
+    def _do_poststart(self, s):
+        pass
+
+    def start_session(self, session_id):
+        """
+        Handle the starting of container services
+        """
+        dbase = self.db or cfg.db
+        table = dbase.get_table('active')
+        ntable = dbase.get_table('nodes')
+        assert session_id
+        query = self.query_builder(None, None, {"id": session_id})
+        svc = dbase.get(table, query=query)
+
+        if not svc:
+            raise Exception(f'no janus session found for {session_id}')
+
+        if svc['state'] == State.STARTED.name:
+            return svc
+
+        # start the services
+        error = False
+        services = svc.get("services", dict())
+        for k, v in services.items():
+            for s in v:
+                cid = s.get("container_id")
+                if not cid:
+                    log.warning(f"Skipping service with no container_id: {k}")
+                    error = True
+                    continue
+                node = dbase.get(ntable, name=k)
+                if not node:
+                    log.error(f"Container node {k} not found for container_id: {cid}")
+                    return {"error": f"Node not found: {k}"}, 404
+                handler = cfg.sm.get_handler(node)
+                log.debug(f"Starting container {cid} on {k}")
+
+                if not cfg.dryrun:
+                    # Error acconting
+                    orig_errcnt = len(s.get('errors'))
+
+                    try:
+                        handler.start_container(Node(**node), cid, s)  # TODO Handle qos
+                    except Exception as e:
+                        import traceback
+                        traceback.print_exc()
+                        log.error(f"Could not start container on {k}: {e}")
+                        error_svc(s, e)
+                        error = True
+                        continue
+
+                    # Handle post_start tasks
+                    self._do_poststart(s)
+
+                    # Trim logged errors
+                    errcnt = len(s.get('errors'))
+                    if not errcnt-orig_errcnt:
+                        s['errors'] = list()
+                    else:
+                        s['errors'] = s['errors'][orig_errcnt-errcnt:]
+                # End of Ansible job
+        svc['state'] = State.MIXED.name if error else State.STARTED.name
+        return commit_db(svc, session_id, realized=True)
 
     def stop_session(self, session_id):
         dbase = self.db or cfg.db

@@ -107,6 +107,9 @@ class DBHandler(object):
 
         for target in new_targets:
             del target['principals']
+            parent = target.get('portName')
+            parent = parent if parent and '?' not in parent else f'vlan.{target["vlan"]}'
+            target['portName'] = parent
 
         old_targets = sorted(old_targets, key=lambda t: t['name'])
         new_targets = sorted(new_targets, key=lambda t: t['name'])
@@ -372,30 +375,3 @@ class DBHandler(object):
         for network_profile in network_profiles:
             network_profile['users'] = list(set(users))
             self.save_network_profile(network_profile)
-
-    def to_sense_session_summary(self, sense_session: dict):
-        janus_sessions_summaries = list()
-
-        for janus_session in self.find_janus_session(host_profile_names=sense_session['host_profile']):
-            pods = list()
-            clusters = janus_session['services']
-
-            for _, services in clusters.items():
-                pods.extend([service['sname'] for service in services])
-
-            janus_session_summary = dict(
-                uuid=janus_session['uuid'],
-                state=janus_session['state'],
-                users=janus_session['users'],
-                pods=pods
-            )
-
-            janus_sessions_summaries.append(janus_session_summary)
-
-        return dict(sense_session=sense_session['name'],
-                    network_profiles=sense_session['network_profile'],
-                    host_profiles=sense_session['host_profile'],
-                    status=sense_session['status'],
-                    state=sense_session.get('state'),
-                    errors=sense_session.get('errors'),
-                    janus_sessions=janus_sessions_summaries)

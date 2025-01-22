@@ -86,7 +86,9 @@ class SENSEMetaManager(DBHandler):
             req['instances'] = instances
             req['profile'] = host_profiles[0]
             log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{instances}')
-            return [self.session_manager.create_session(None, None, req, owner, sense_session["users"])]
+            janus_session_id = self.session_manager.create_session(None, None, req, owner,
+                                                                   sense_session["users"])
+            return [janus_session_id]
 
         janus_session_ids = list()
 
@@ -107,7 +109,25 @@ class SENSEMetaManager(DBHandler):
                                                                    None, req, owner, sense_session["users"])
             janus_session_ids.append(janus_session_id)
 
+        janus_sessions = list()
+        for janus_session_id in janus_session_ids:
+            janus_session = self.db.get(self.janus_session_table, ids=janus_session_id)
+            janus_sessions.append(janus_session)
+
+        assert len(janus_sessions) == 2
+        SenseUtils.peer_sessions(janus_sessions[0], janus_sessions[1])
+
+        for janus_session in janus_sessions:
+            self.db.update(self.janus_session_table, janus_session, ids=janus_session['id'])
+
         return janus_session_ids
+
+    def start_janus_session(self, janus_session_ids):
+        for janus_session_id in janus_session_ids:
+            try:
+                self.session_manager.start_session(janus_session_id)
+            except Exception as e:
+                log.error(f'not able to start janus session {janus_session_id}:{e}')
 
     def terminate_janus_sessions(self, sense_session: dict):
         for janus_session in self.find_janus_session(host_profile_names=sense_session['host_profile']):
@@ -319,9 +339,10 @@ class SENSEMetaManager(DBHandler):
                 self.create_profiles(sense_session=sense_session)
 
                 try:
-                    janus_session_id = self.create_janus_session(sense_session=sense_session)
-                    sense_session['janus_session_id'] = janus_session_id
+                    janus_session_ids = self.create_janus_session(sense_session=sense_session)
+                    sense_session['janus_session_id'] = janus_session_ids
                     sense_session['errors'] = 0
+                    # self.start_janus_session(janus_session_ids)
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
@@ -433,7 +454,16 @@ class SENSEMetaManager(DBHandler):
             print_summary = True
 
         if print_summary:
-            sense_session_summaries = [self.to_sense_session_summary(s) for s in sense_sessions]
+            s = sense_sessions[0]
+            self.find_janus_session(host_profile_names=s['host_profile'])
+
+            to_session_summary = SenseUtils.to_sense_session_summary
+
+            sense_session_summaries = [
+                to_session_summary(s,
+                                   self.find_janus_session(host_profile_names=s['host_profile'])
+                                   ) for s in sense_sessions
+            ]
             existing_sessions = self.db.all(self.sense_session_table)
             existing_sessions = [
                 dict(name=s['name'],
