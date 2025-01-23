@@ -92,6 +92,7 @@ class PortainerDockerApi(Service):
                 'name': e['Name'],
                 'endpoint_status': e['Status'],
                 'endpoint_type': EPType.PORTAINER,
+                'backend_type': e['Type'],
                 'id': e['Id'],
                 'gid': e['GroupId'],
                 'url': e['URL'],
@@ -147,7 +148,7 @@ class PortainerDockerApi(Service):
                 "total": docker.get("MemTotal")
             }
         }
-        if res.get('Type') == 4: # Portainer Edge Agent
+        if nodes[nname].get('backend_type') == 4: # Portainer Edge Agent
             nodes[nname]['url'] = docker['Name']
         nodes[nname]['host'] = hinfo
         nodes[nname]['networks'] = self._parse_portainer_networks(nets)
