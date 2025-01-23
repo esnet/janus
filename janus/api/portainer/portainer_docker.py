@@ -87,7 +87,6 @@ class PortainerDockerApi(Service):
 
     def _parse_portainer_endpoints(self, res):
         ret = dict()
-
         for e in res:
             ret[e['Name']] = {
                 'name': e['Name'],
@@ -133,13 +132,27 @@ class PortainerDockerApi(Service):
         try:
             nets = self.get_networks(Node(id=Id, name=nname))
             imgs = self.get_images(Node(id=Id, name=nname))
+            docker = self._get_docker_info(Id)
         except Exception as e:
             import traceback
             traceback.print_exc()
             log.error("No response from {}: {}".format(url, e))
             return nodes[nname]
+        hinfo = {
+            "cpu": {
+                "count": docker.get("NCPU"),
+                "brand_raw": docker.get("Architecture"),
+            },
+            "mem": {
+                "total": docker.get("MemTotal")
+            }
+        }
+        if res.get('Type') == 4: # Portainer Edge Agent
+            nodes[nname]['url'] = docker['Name']
+        nodes[nname]['host'] = hinfo
         nodes[nname]['networks'] = self._parse_portainer_networks(nets)
         nodes[nname]['images'] = self._parse_portainer_images(imgs)
+        nodes[nname]['docker'] = docker
         if cb:
             cb(nodes[nname], nname, url)
         return nodes[nname]
@@ -198,6 +211,14 @@ class PortainerDockerApi(Service):
     def remove_node(self, nid):
         eapi = EndpointsApi(self.client)
         return eapi.endpoint_delete(nid)
+
+    # Info
+    def _get_docker_info(self, nid: int, **kwargs):
+        kwargs['_return_http_data_only'] = True
+        res = self._call("/endpoints/{}/docker/info".format(nid),
+                         "GET", None, **kwargs)
+        string = res.read().decode('utf-8')
+        return json.loads(string)
 
     # Images
     def get_images(self, node: Node, **kwargs):
