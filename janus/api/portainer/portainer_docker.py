@@ -40,7 +40,7 @@ from janus.api.utils import (
 
 
 log = logging.getLogger(__name__)
-
+EDGE_AGENT_TYPE = 4
 
 def auth(func):
     def wrapper(self, *args, **kwargs):
@@ -95,9 +95,10 @@ class PortainerDockerApi(Service):
                 'backend_type': e['Type'],
                 'id': e['Id'],
                 'gid': e['GroupId'],
-                'url': e['URL'],
                 'public_url': e['PublicURL']
             }
+            if e['Type'] != EDGE_AGENT_TYPE:
+                ret[e['Name']]['url'] = e['URL']
         return ret
 
     def _parse_portainer_networks(self, res):
@@ -148,7 +149,7 @@ class PortainerDockerApi(Service):
                 "total": docker.get("MemTotal")
             }
         }
-        if nodes[nname].get('backend_type') == 4: # Portainer Edge Agent
+        if nodes[nname].get('backend_type') == EDGE_AGENT_TYPE:
             nodes[nname]['url'] = docker['Name']
         nodes[nname]['host'] = hinfo
         nodes[nname]['networks'] = self._parse_portainer_networks(nets)
