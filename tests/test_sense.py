@@ -152,8 +152,40 @@ class SENSEFakeTasks:
             'uuid': "dtask"
         }
 
+        etask = {
+            'config': {
+                "command": "handle-sense-instance",
+                "targets": [
+                    {
+                        "name": "k8s-gen5-01.sdsc.optiputer.net",
+                        "vlan": 3911,
+                        "bw": 1000,
+                        "ip": None,
+                        "portName": "vlan.1786",  # "portName": "?name?",
+                        "principals": [
+                            "aessiari@lbl.gov"
+                        ]
+                    },
+                    {
+                        "name": "k8s-gen5-02.sdsc.optiputer.net",
+                        "vlan": 3911,
+                        "bw": 1000,
+                        "ip": "10.251.88.242/28",
+                        "portName": "vlan.1786",  # "?name?",
+                        "principals": [
+                            "aessiari@lbl.gov"
+                        ]
+                    }
+                ],
+                "context": {
+                    "alias": "einstance",
+                    "uuid": "einstance"
+                }},
+            'uuid': "etask"
+        }
+
         # atask, dtask and btask worked
-        return [atask, btask, ctask, dtask]
+        return [etask]  # [atask, btask, ctask, dtask]
 
     @staticmethod
     def fake_terminate_instance_tasks():

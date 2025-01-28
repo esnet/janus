@@ -65,6 +65,10 @@ class SENSEApiHandler:
         data = {"message": message}
         return self._update_task(data, uuid=uuid, state='REJECTED')
 
+    def fail_task(self, uuid, message):
+        data = {"message": message}
+        return self._update_task(data, uuid=uuid, state='FAILED')
+
     def finish_task(self, uuid, data):
         return self._update_task(data, uuid=uuid, state='FINISHED')
 

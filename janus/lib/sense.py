@@ -314,7 +314,7 @@ class SENSEMetaManager(DBHandler):
 
         return sense_sessions
 
-    def _finish_handle_sense_instance_command(self, sense_session):
+    def _finish_handle_sense_instance_command(self, task_id, sense_session):
         if sense_session['state'] == 'MODIFIED':
             error = False
 
@@ -369,13 +369,9 @@ class SENSEMetaManager(DBHandler):
         self.update_janus_sessions(sense_session=sense_session)
         targets = SenseUtils.to_target_summary(sum(sense_session.get('task_info', dict()).values(), []))
         message = dict(url=self.properties[SenseConstants.SENSE_METADATA_URL], targets=targets, message=mesg)
-        uuids = [uuid for uuid in sense_session['task_info']]
-        assert len(uuids) == 1
-        self.sense_api_handler.finish_task(uuids[0], message)
+        self.sense_api_handler.finish_task(task_id, message)
 
-    def _finish_instance_termination_notice_command(self, sense_session):
-        assert 'termination_task' in sense_session
-
+    def _finish_instance_termination_notice_command(self, task_id, sense_session):
         try:
             self.terminate_janus_sessions(sense_session=sense_session)
             self.remove_profiles(sense_session=sense_session)
@@ -396,7 +392,7 @@ class SENSEMetaManager(DBHandler):
             mesg = f'giving up on terminating session for {sense_session["key"]}'
 
         message = dict(url=self.properties[SenseConstants.SENSE_METADATA_URL], targets=[], message=mesg)
-        self.sense_api_handler.finish_task(sense_session['termination_task'], message)
+        self.sense_api_handler.finish_task(task_id, message)
         sense_session['status'] = 'DELETED'
         log.warning(f'removing sense session from db: {mesg}')
         self.db.remove(self.sense_session_table, name=sense_session['name'])
@@ -408,10 +404,22 @@ class SENSEMetaManager(DBHandler):
             if 'errors' not in sense_session:
                 sense_session['errors'] = 0
 
-            if sense_session['command'] != 'handle-sense-instance':
-                self._finish_instance_termination_notice_command(sense_session)
-            else:
-                self._finish_handle_sense_instance_command(sense_session)
+            task_id = None
+
+            try:
+                if sense_session['command'] != 'handle-sense-instance':
+                    assert 'termination_task' in sense_session
+                    task_id = sense_session['termination_task']
+                    self._finish_instance_termination_notice_command(task_id, sense_session)
+                else:
+                    uuids = [uuid for uuid in sense_session['task_info']]
+                    assert len(uuids) == 1
+                    task_id = uuids[0]
+                    self._finish_handle_sense_instance_command(task_id, sense_session)
+            except Exception as e:
+                self.sense_api_handler.fail_task(task_id, f'{type(e)}:{e}')
+                sense_session['status'] = 'FAILED'
+                self.db.remove(self.sense_session_table, name=sense_session['name'])
 
         return sense_sessions
 
@@ -427,7 +435,7 @@ class SENSEMetaManager(DBHandler):
             return
 
         sense_sessions, rejected_tasks = self.retrieve_tasks(agents=agents)
-        counters = dict(retrieved=0, rejected=0, accepted=0, terminated=0, finished=0)
+        counters = dict(retrieved=0, rejected=0, accepted=0, terminated=0, finished=0, failed=0)
         print_summary = False
 
         if sense_sessions:
@@ -451,18 +459,16 @@ class SENSEMetaManager(DBHandler):
             self.update_builtin_host_network_profile()
             counters['finished'] = len([s for s in sense_sessions if s['status'] == 'FINISHED'])
             counters['terminated'] = len([s for s in sense_sessions if s['status'] == 'DELETED'])
+            counters['failed'] = len([s for s in sense_sessions if s['status'] == 'FAILED'])
             print_summary = True
 
         if print_summary:
-            s = sense_sessions[0]
-            self.find_janus_session(host_profile_names=s['host_profile'])
-
             to_session_summary = SenseUtils.to_sense_session_summary
 
             sense_session_summaries = [
                 to_session_summary(s,
                                    self.find_janus_session(host_profile_names=s['host_profile'])
-                                   ) for s in sense_sessions
+                                   ) for s in sense_sessions if 'FAILED' != s['status']
             ]
             existing_sessions = self.db.all(self.sense_session_table)
             existing_sessions = [
