@@ -259,7 +259,7 @@ class SENSEMetaManager(DBHandler):
 
                 if len(targets) == 1 and saved_targets:
                     target_names = [target['name'] for target in targets]
-                    saved_targets = [target['name'] for target in saved_targets if target['name'] not in target_names]
+                    saved_targets = [target for target in saved_targets if target['name'] not in target_names]
                     targets.extend(saved_targets)
 
                 if len(targets) > 2:
