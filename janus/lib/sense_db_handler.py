@@ -292,6 +292,26 @@ class DBHandler(object):
         for cluster in clusters:
             if 'cluster_nodes' in cluster:
                 for node in cluster['cluster_nodes']:
+                    cluster_info = (dict(cluster_name=cluster['name']))
+                    temp_node = dict(host_addresses=node['host_addresses'])
+                    temp_node['cluster_info'] = cluster_info
+                    agents[node['name']] = temp_node
+            else:
+                agent_name = cluster['url']
+                cluster_info = (dict(cluster_name=cluster['name']))
+                node = dict(host_addresses=[agent_name])
+                node['cluster_info'] = cluster_info
+                agents[agent_name] = node
+
+        return agents
+
+    def old_get_agents(self):
+        agents = dict()
+        clusters = self.db.all(self.nodes_table)
+
+        for cluster in clusters:
+            if 'cluster_nodes' in cluster:
+                for node in cluster['cluster_nodes']:
                     cluster_info = (dict(cluster_id=cluster['id'],
                                          cluster_name=cluster['name'],
                                          namespace=cluster['namespace']))
