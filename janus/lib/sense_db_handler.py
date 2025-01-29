@@ -296,7 +296,7 @@ class DBHandler(object):
                     temp_node = dict(host_addresses=node['host_addresses'])
                     temp_node['cluster_info'] = cluster_info
                     agents[node['name']] = temp_node
-            else:
+            elif 'url' in cluster:
                 agent_name = cluster['url']
                 cluster_info = (dict(cluster_name=cluster['name']))
                 node = dict(host_addresses=[agent_name])
