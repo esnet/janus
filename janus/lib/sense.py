@@ -6,7 +6,7 @@ from threading import Thread
 from kubernetes.client import ApiException
 from sense.client.requestwrapper import RequestWrapper
 
-from janus.api.kubernetes import KubernetesApi
+# from janus.api.kubernetes import KubernetesApi
 from janus.api.models import Node
 from janus.api.session_manager import SessionManager
 from janus.lib.sense_api_handler import SENSEApiHandler
@@ -21,7 +21,7 @@ class SENSEMetaManager(DBHandler):
     def __init__(self, cfg: JanusConfig, properties: dict, sense_api_handler=None):
         super().__init__(cfg)
         self.sense_api_handler = sense_api_handler or SENSEApiHandler(req_wrapper=RequestWrapper())
-        self.kube_api = KubernetesApi()
+        # self.kube_api = KubernetesApi()
         self.properties = properties
         self.session_manager = SessionManager()
         self.retries = SenseConstants.SENSE_PLUGIN_RETRIES
@@ -49,23 +49,28 @@ class SENSEMetaManager(DBHandler):
         self.counter += 1
         return ret
 
-    def delete_network(self, cluster_id, name):
-        node = Node(id=1, name=cluster_id)
+    def delete_network(self, cluster_name, name):
+        ntable = self.db.get_table('nodes')
+        node = self.db.get(ntable, name=cluster_name)
+        handler = self.cfg.sm.get_handler(node)
 
         try:
-            self.kube_api.remove_network(node, name)
+            handler.remove_network(Node(**node), name)
         except ApiException as ae:
             if str(ae.status) != "404":
                 raise ae
 
-    def delete_pod(self, cluster_id, name):
-        node = Node(id=1, name=cluster_id)
+    @staticmethod
+    def _instances(targets):
+        instances = list()
 
-        try:
-            self.kube_api.stop_container(node, name)
-        except ApiException as ae:
-            if str(ae.status) != "404":
-                raise ae
+        for t in targets:
+            if 'cluster_info' in t:
+                instances.append(dict(name=t['cluster_info']['cluster_name'], nodeName=t['name']))
+            else:
+                instances.append(dict(name=t['name']))
+
+        return instances
 
     def create_janus_session(self, sense_session):
         targets = sum(sense_session['task_info'].values(), [])
@@ -82,10 +87,10 @@ class SENSEMetaManager(DBHandler):
                 remove_container=False
             )
 
-            instances = [dict(name=t['cluster_info']['cluster_id'], nodeName=t['name']) for t in targets]
+            instances = self._instances(targets)
             req['instances'] = instances
             req['profile'] = host_profiles[0]
-            log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{instances}')
+            log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{req}')
             janus_session_id = self.session_manager.create_session(None, None, req, owner,
                                                                    sense_session["users"])
             return [janus_session_id]
@@ -101,7 +106,7 @@ class SENSEMetaManager(DBHandler):
                 remove_container=False
             )
             target = targets[idx]
-            instances = [dict(name=target['cluster_info']['cluster_id'], nodeName=target['name'])]
+            instances = self._instances([target])
             req['instances'] = instances
             req['profile'] = host_profile
             log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{instances}')
@@ -132,19 +137,23 @@ class SENSEMetaManager(DBHandler):
     def terminate_janus_sessions(self, sense_session: dict):
         for janus_session in self.find_janus_session(host_profile_names=sense_session['host_profile']):
             self.session_manager.stop_session(janus_session['id'])
-            self.db.remove(self.janus_session_table, ids=janus_session['id'])
+            self.session_manager.delete(janus_session['id'], force=False)
 
-        cluster_id = sense_session['clusters'][0]
-        clusters = self.find_cluster(cluster_id=cluster_id)
-        cluster = clusters[0]
+        for cluster_name in set(sense_session['clusters']):
+            clusters = self.find_cluster(name=cluster_name)
+            cluster = clusters[0] if clusters else None
 
-        for network_profile_name in sense_session['network_profile']:
-            self.delete_network(cluster_id=cluster_id, name=network_profile_name)
-            self.db.remove(self.networks_table, name=network_profile_name)
+            if not cluster:
+                log.warning(f'did not find cluster {cluster_name} while terminating sessions {sense_session}')
+                continue
 
-            if network_profile_name in cluster['networks']:
-                del cluster['networks'][network_profile_name]
-                self.db.upsert(self.nodes_table, cluster, 'name', cluster['name'])
+            for network_profile_name in sense_session['network_profile']:
+                self.delete_network(cluster_name=cluster_name, name=network_profile_name)
+                self.db.remove(self.networks_table, name=network_profile_name)
+
+                if network_profile_name in cluster['networks']:
+                    del cluster['networks'][network_profile_name]
+                    self.db.upsert(self.nodes_table, cluster, 'name', cluster_name)
 
     def update_janus_sessions(self, sense_session: dict):
         for network_profile_name in sense_session['network_profile']:
@@ -240,9 +249,13 @@ class SENSEMetaManager(DBHandler):
 
                 for target in targets:
                     agent = node_cluster_map[target['name']]
-                    cluster_info = agent['cluster_info']  # TODO HERE WE ARE ASSUMING KUBERNETES
-                    target['cluster_info'] = cluster_info
-                    clusters.append(cluster_info['cluster_id'])
+
+                    if 'cluster_info' in agent:
+                        cluster_info = agent['cluster_info']
+                        target['cluster_info'] = cluster_info
+                        clusters.append(cluster_info['cluster_name'])
+                    else:
+                        clusters.append(target['name'])
 
                 if len(targets) == 1 and saved_targets:
                     target_names = [target['name'] for target in targets]
@@ -336,9 +349,8 @@ class SENSEMetaManager(DBHandler):
                 error = True
 
             if not error:
-                self.create_profiles(sense_session=sense_session)
-
                 try:
+                    self.create_profiles(sense_session=sense_session)
                     janus_session_ids = self.create_janus_session(sense_session=sense_session)
                     sense_session['janus_session_id'] = janus_session_ids
                     sense_session['errors'] = 0

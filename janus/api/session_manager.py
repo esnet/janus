@@ -1,6 +1,9 @@
+import concurrent
 import logging.config
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
+from janus.api.ansible_job import AnsibleJob
 from janus.api.constants import State
 from janus.api.db import QueryUser
 from janus.api.models import SessionConstraints, SessionRequest, Node, Network
@@ -176,10 +179,38 @@ class SessionManager(QueryUser):
         commit_db(record, db_id)
         return db_id
 
-    def _do_poststart(self, s):
-        pass
+    @staticmethod
+    def _do_poststart(s):
+        #
+        # Ansible job is requested if configured
+        # - Enviroment variabls must be set to access Ansible Tower server:
+        #   TOWER_HOST, TOWER_USERNAME, TOWER_PASSWORD, TOWER_SSL_VERIFY
+        # - It may take some time for the ansible job to finish or timeout (300 seconds)
+        #
+        prof = cfg.pm.get_profile(Constants.HOST, s['profile'])
+        for psname in prof.settings.post_starts:
+            ps = cfg.get_poststart(psname)
+            if ps['type'] == 'ansible':
+                jt_name = ps['jobtemplate']
+                gateway = ps['gateway']
+                ipprot = ps['ipprot']
+                inf = ps['interface']
+                limit = ps['limit']
+                default_name = ps['container_name']
+                container_name = s.get('container_name', default_name)
+                ex_vars = (f'{{"ipprot": "{ipprot}", "interface": "{inf}", "gateway": "{gateway}", '
+                           f'"container": "{container_name}"}}')
+                job = AnsibleJob()
 
-    def start_session(self, session_id):
+                try:
+                    # noinspection PyTypeChecker
+                    job.launch(job_template=jt_name, monitor=True, wait=True, timeout=600,
+                               extra_vars=ex_vars, limits=limit)
+                except Exception as e:
+                    error_svc(s, e)
+                    continue
+
+    def start_session(self, session_id, user=None, group=None):
         """
         Handle the starting of container services
         """
@@ -187,7 +218,7 @@ class SessionManager(QueryUser):
         table = dbase.get_table('active')
         ntable = dbase.get_table('nodes')
         assert session_id
-        query = self.query_builder(None, None, {"id": session_id})
+        query = self.query_builder(user, group, {"id": session_id})
         svc = dbase.get(table, query=query)
 
         if not svc:
@@ -290,4 +321,65 @@ class SessionManager(QueryUser):
         if error:
             raise Exception(str(svc['errors']))
 
+        if svc.get('peer'):
+            peer = svc.get('peer')
+
+            if isinstance(svc.get('peer'), list):
+                peer = peer[0]
+
+            try:
+                self.stop_session(peer['id'])
+            except Exception as e:
+                log.error(f"Could not stop peer container using {peer['id']}: {e}")
+
         return svc
+
+    def delete(self, aid, force=False, user=None, group=None):
+        """
+        Deletes an active allocation (e.g. stops containers)
+        """
+        query = self.query_builder(user, group, {"id": aid})
+        dbase = cfg.db
+        nodes = dbase.get_table('nodes')
+        table = dbase.get_table('active')
+        doc = dbase.get(table, query=query)
+
+        if doc is None:
+            raise Exception(f"Session Not found {id}")
+
+        futures = list()
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            for k, v in doc['services'].items():
+                try:
+                    n = dbase.get(nodes, name=k)
+                    if not n:
+                        log.error(f"Node {k} not found")
+                        return {"error": f"Node not found: {k}"}, 404
+                    handler = cfg.sm.get_handler(n)
+                    if not cfg.dryrun:
+                        for s in v:
+                            futures.append(executor.submit(handler.stop_container,
+                                                           Node(**n), s.get('container_id'),
+                                                           **{'service': s,
+                                                              'name': k}))
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    log.error(f"Could not find node/container to stop, or already stopped: {k}:{e}")
+        if not cfg.dryrun:
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    res = future.result()
+                    if "container_id" in res:
+                        log.debug(f"Removing container {res['container_id']}")
+                        handler = cfg.sm.get_handler(nname=res['node_name'])
+                        handler.remove_container(Node(name=res['node_name'], id=res['node_id']), res['container_id'])
+                except Exception as e:
+                    log.error(f"Could not remove container on remote node: {e}")
+                    if not force:
+                        return {"error": str(e)}, 503
+        # delete always removes realized state info
+        commit_db(doc, aid, delete=True, realized=True)
+        commit_db(doc, aid, delete=True)
+        return None, 204

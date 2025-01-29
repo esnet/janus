@@ -126,14 +126,17 @@ class DBHandler(object):
     def find_images(self, *, name):
         images = self.db.search(self.image_table, query=(Query().name == name))
         return images
+    #
+    # def find_cluster(self, *, cluster_id=None, name=None):
+    #     if id:
+    #         clusters = self.db.search(self.nodes_table, query=(Query().id == cluster_id))
+    #     else:
+    #         clusters = self.db.search(self.nodes_table, query=(Query().name == name))
+    #
+    #     return clusters
 
-    def find_cluster(self, *, cluster_id=None, name=None):
-        if id:
-            clusters = self.db.search(self.nodes_table, query=(Query().id == cluster_id))
-        else:
-            clusters = self.db.search(self.nodes_table, query=(Query().name == name))
-
-        return clusters
+    def find_cluster(self, name):
+        return self.db.search(self.nodes_table, query=(Query().name == name))
 
     def save_network_profile(self, network_profile):
         self.db.upsert(self.network_table, network_profile, 'name', network_profile['name'])
@@ -199,12 +202,14 @@ class DBHandler(object):
         if len(set(vlans)) == 1:
             vlans = list(set(vlans))
 
+        subnets = ['192.168.1.0/24', '192.168.2.0/24']
+
         for tindex, vlan in enumerate(vlans):
             target = targets[tindex]
             parent = target.get('portName')
             parent = parent if parent and '?' not in parent else f'vlan.{vlan}'
             # TODO subnet = target.get('ip') or '192.168.1.0/24'
-            subnet = '192.168.1.0/24'
+            subnet = subnets[tindex]  # '192.168.1.0/24'
             bw = target.get('bw')
             config = list()
 
@@ -287,7 +292,9 @@ class DBHandler(object):
         for cluster in clusters:
             if 'cluster_nodes' in cluster:
                 for node in cluster['cluster_nodes']:
-                    cluster_info = (dict(cluster_id=cluster['id'], namespace=cluster['namespace']))
+                    cluster_info = (dict(cluster_id=cluster['id'],
+                                         cluster_name=cluster['name'],
+                                         namespace=cluster['namespace']))
                     node['cluster_info'] = cluster_info
                     agents[node['name']] = node
             else:
