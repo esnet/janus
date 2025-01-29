@@ -137,7 +137,7 @@ class SENSEMetaManager(DBHandler):
     def terminate_janus_sessions(self, sense_session: dict):
         for janus_session in self.find_janus_session(host_profile_names=sense_session['host_profile']):
             self.session_manager.stop_session(janus_session['id'])
-            self.session_manager.delete(janus_session['id'], force=False)
+            self.session_manager.delete(janus_session['id'], force=True)
 
         for cluster_name in set(sense_session['clusters']):
             clusters = self.find_cluster(name=cluster_name)
