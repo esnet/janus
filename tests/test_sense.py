@@ -48,8 +48,8 @@ class SENSEFakeTasks:
                     }
                 ],
                 "context": {
-                    "alias": "aes-dev-tue-with-ip",
-                    "uuid": "61e92ecc-69a6-4263-965c-ef33f9390a3e"
+                    "alias": "atask",
+                    "uuid": "atask"
                 }},
             'uuid': "atask"
         }
@@ -185,7 +185,41 @@ class SENSEFakeTasks:
         }
 
         # atask, dtask and btask worked
-        return [etask]  # [atask, btask, ctask, dtask]
+
+        ftask = {
+            'config': {
+                "command": "handle-sense-instance",
+                "targets": [
+                    {
+                        "name": "mac-en0",
+                        "vlan": 3911,
+                        "bw": 1000,
+                        "ip": None,
+                        "portName": "vlan.1786",  # "portName": "?name?",
+                        "principals": [
+                            "aessiari@lbl.gov"
+                        ]
+                    },
+                    {
+                        "name": "k8s-gen5-02.sdsc.optiputer.net",
+                        "vlan": 3911,
+                        "bw": 1000,
+                        "ip": "10.251.88.242/28",
+                        "portName": "vlan.1786",  # "?name?",
+                        "principals": [
+                            "aessiari@lbl.gov"
+                        ]
+                    }
+                ],
+                "context": {
+                    "alias": "finstance",
+                    "uuid": "finstance"
+                }},
+            'uuid': "ftask"
+        }
+
+        # [ctask, dtask]  two vlans with ip and without ip
+        return [ctask, dtask]  # [atask]  # [atask, btask, ctask, dtask, etask]  # [ftask]
 
     @staticmethod
     def fake_terminate_instance_tasks():
@@ -233,6 +267,20 @@ class TestSenseWorkflow:
         self.node_name_filter = node_name_filter or list()
         parser = ConfigParser(allow_no_value=True)
         parser.read(config_file)
+
+        config = parser['JANUS']
+        cfg.PORTAINER_URI = str(config.get('PORTAINER_URI', None))
+        cfg.PORTAINER_WS = str(config.get('PORTAINER_WS', None))
+        cfg.PORTAINER_USER = str(config.get('PORTAINER_USER', None))
+        cfg.PORTAINER_PASSWORD = str(config.get('PORTAINER_PASSWORD', None))
+        vssl = str(config.get('PORTAINER_VERIFY_SSL', 'True'))
+        if vssl == 'False':
+            cfg.PORTAINER_VERIFY_SSL = False
+            import urllib3
+            urllib3.disable_warnings()
+        else:
+            cfg.PORTAINER_VERIFY_SSL = True
+
         sense_properties = SenseUtils.parse_from_config(cfg=cfg, parser=parser)
         self.mngr = SENSEMetaManager(cfg, sense_properties, sense_api_handler=FakeSENSEApiHandler())
 

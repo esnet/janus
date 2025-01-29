@@ -357,12 +357,11 @@ class PortainerDockerApi(Service):
                 body[k] = v
         kwargs = dict()
         kwargs['_return_http_data_only'] = True
-        res = self._call("/endpoints/{}/docker/networks/create".format(node.id),
-                         "POST", body, **kwargs)
-        string = res.read().decode('utf-8')
-        if (res.status == 200):
-            return {'status': '200 OK'}
-        return json.loads(string)
+        self._call("/endpoints/{}/docker/networks/create".format(node.id),
+                   "POST", body, **kwargs)
+        res = self.get_networks(node, name)
+        ninfo = self._parse_portainer_networks([res])[name]
+        return ninfo
 
     def remove_network(self, node: Node, nid, **kwargs):
         kwargs['_return_http_data_only'] = True
@@ -501,8 +500,8 @@ class PortainerDockerApi(Service):
             _request_timeout=params.get('_request_timeout'),
             collection_formats=collection_formats)
 
-
-    def resolve_networks(self, node: Node, prof):
+    # TODO Note node is of type tinydb.table.Document
+    def resolve_networks(self, node, prof):
         def _build_kwargs(p):
             docker_kwargs = {
                 "Name": p.name,
@@ -537,24 +536,30 @@ class PortainerDockerApi(Service):
             nprof = cfg.pm.get_profile(Constants.NET, net.name)
             if not nprof:
                 raise Exception(f"Network profile {net.name} not found")
-            kwargs = _build_kwargs(nprof)
-            ninfo = node.get('networks').get(net.name)
-            # We are done if the node already has a network and it matches our profile
-            if ninfo and is_subset(kwargs, ninfo.get('_data')):
-                continue
-            # Otherwise we need to either create or recreate the network
-            if not ninfo:
-                log.info(f"Network {net.name} not found on {nname}, attempting to create")
-            elif ninfo and not is_subset(kwargs, ninfo.get('_data')):
-                log.info(f"Network {net.name} found on {nname} but differs from profile, attempting to recreate")
-                try:
-                    self.remove_network(Node(**node), net.name)
-                except Exception as e:
-                    log.warn(f"Removing network {net.name} on {nname} failed: {e}")
-            self.create_network(Node(**node), net.name, **kwargs)
-            created = True
-        return created
 
+            kwargs = _build_kwargs(nprof)
+            ninfo = None
+
+            try:
+                res = self.get_networks(Node(**node), net.name)
+                ninfo = self._parse_portainer_networks([res])[net.name]
+
+                if is_subset(kwargs, ninfo.get('_data')):
+                    log.info(f"Matching Network {net.name} found on {nname}")
+                    continue
+            except ApiException as ae:
+                if str(ae.status) != "404":
+                    raise ae
+
+            if ninfo:
+                log.warning(f"Removing non matching network {net.name} on {nname}")
+                self.remove_network(Node(**node), net.name)
+
+            ninfo = self.create_network(Node(**node), net.name, **kwargs)
+            node['networks'][net.name] = ninfo
+            created = True
+
+        return created
 
     def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
         srec = dict()
