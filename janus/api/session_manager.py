@@ -282,11 +282,11 @@ class SessionManager(QueryUser):
             raise Exception(f"janus session {session_id} not found")
 
         if svc['state'] == State.STOPPED.name:
-            log.warning(f"Service {svc['uuid']} already stopped")
+            # log.warning(f"Service {svc['uuid']} already stopped")
             return svc
 
         if svc['state'] == State.INITIALIZED.name:
-            log.warning(f"Service {svc['uuid']} already in initialized state")
+            # log.warning(f"Service {svc['uuid']} already in initialized state")
             return svc
 
         # stop the services
@@ -369,16 +369,30 @@ class SessionManager(QueryUser):
                     log.error(f"Could not find node/container to stop, or already stopped: {k}:{e}")
         if not cfg.dryrun:
             for future in concurrent.futures.as_completed(futures):
+                from kubernetes.client import ApiException as KubeApiException
+                from portainer_api.rest import ApiException as PortainerApiException
+
+                ex = None
+
                 try:
                     res = future.result()
                     if "container_id" in res:
                         log.debug(f"Removing container {res['container_id']}")
                         handler = cfg.sm.get_handler(nname=res['node_name'])
                         handler.remove_container(Node(name=res['node_name'], id=res['node_id']), res['container_id'])
+                except (KubeApiException, PortainerApiException) as ae:
+                    if str(ae.status) == "404":
+                        continue
+
+                    ex = ae
                 except Exception as e:
-                    log.error(f"Could not remove container on remote node: {e}")
+                    ex = e
+
+                if ex:
+                    log.error(f"Could not remove container on remote node: {type(ex)}:{ex}")
                     if not force:
                         return {"error": str(e)}, 503
+
         # delete always removes realized state info
         commit_db(doc, aid, delete=True, realized=True)
         commit_db(doc, aid, delete=True)

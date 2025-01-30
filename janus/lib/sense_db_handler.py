@@ -195,21 +195,21 @@ class DBHandler(object):
 
         return resource
 
-    def get_or_create_network_profile(self, name, targets, users, groups=None):
+    def get_or_create_network_profile(self, name, targets, users, subnets, groups=None):
         network_profiles = list()
         vlans = list([t['vlan'] for t in targets])
 
         if len(set(vlans)) == 1:
             vlans = list(set(vlans))
 
-        subnets = ['192.168.1.0/24', '192.168.2.0/24']
+        # subnets = ['192.168.1.0/24', '192.168.2.0/24']
 
         for tindex, vlan in enumerate(vlans):
             target = targets[tindex]
             parent = target.get('portName')
             parent = parent if parent and '?' not in parent else f'vlan.{vlan}'
             # TODO subnet = target.get('ip') or '192.168.1.0/24'
-            subnet = subnets[tindex]  # '192.168.1.0/24'
+            subnet = subnets[tindex] if tindex < len(subnets) else subnets[0]
             bw = target.get('bw')
             config = list()
 
@@ -327,7 +327,10 @@ class DBHandler(object):
         name = sense_session['name'].lower()
         users = sense_session['users']
         targets = sorted(sum(task_info.values(), []), key=lambda t: t['name'])
-        nprofs = self.get_or_create_network_profile(name=name + '-net', targets=targets, users=users)
+        subnets = ['192.168.1.0/24']
+
+        nprofs = self.get_or_create_network_profile(name=name + '-net', targets=targets,
+                                                    subnets=subnets, users=users)
         # addrs = [t['ip'] for t in targets if t.get('ip')]
         # addrs = [addr[:addr.index('/')] for addr in addrs]
         hprofs = list()
@@ -345,9 +348,14 @@ class DBHandler(object):
         #                                                 addr=addrs[idx], users=users)
         #         hprofs.append(hprof)
         else:
+            from ipaddress import IPv4Network
+
+            ipv4_net = IPv4Network(subnets[0], strict=False)
+            hosts = [str(h) for h in ipv4_net.hosts()]
+
             for idx, nprof in enumerate(nprofs):
                 hprof = self.get_or_create_host_profile(name=name + f'-{idx}', network_profile=nprof,
-                                                        addr=None, users=users)
+                                                        addr=hosts[idx + 1], users=users)
                 hprofs.append(hprof)
 
         sense_session['network_profile'] = [nprof['name'] for nprof in nprofs]
