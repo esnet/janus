@@ -3,10 +3,10 @@ import logging
 import time
 from threading import Thread
 
-from kubernetes.client import ApiException
 from sense.client.requestwrapper import RequestWrapper
+from kubernetes.client import ApiException as KubeApiException
+from portainer_api.rest import ApiException as PortainerApiException
 
-# from janus.api.kubernetes import KubernetesApi
 from janus.api.models import Node
 from janus.api.session_manager import SessionManager
 from janus.lib.sense_api_handler import SENSEApiHandler
@@ -56,7 +56,7 @@ class SENSEMetaManager(DBHandler):
 
         try:
             handler.remove_network(Node(**node), name)
-        except ApiException as ae:
+        except (KubeApiException, PortainerApiException) as ae:
             if str(ae.status) != "404":
                 raise ae
 
@@ -172,141 +172,167 @@ class SENSEMetaManager(DBHandler):
             janus_session['users'] = sense_session['users']
             self.db.update(self.janus_session_table, janus_session, ids=janus_session['id'])
 
+    def _retrieve_instance_termination_notice_command(self, task):
+        config = task['config']
+        command = config['command']
+        task_id = task['uuid']
+        instance_id = config['context']['uuid']
+        alias = config['context']['alias']
+        sense_sessions = self.find_sense_session(sense_session_key=instance_id)
+        sense_session = sense_sessions[0] if sense_sessions else dict()
+
+        if not sense_session:
+            self.sense_api_handler.finish_task(task_id, f'no session found for {instance_id}:{alias}')
+            return None
+
+        sense_session['command'] = command
+        sense_session['status'] = 'PENDING'
+        sense_session['termination_task'] = task_id
+        self.save_sense_session(sense_session=sense_session)
+        return sense_session
+
+    def _retrieve_handle_sense_instance_command(self, task, agents=None, node_names=None):
+        node_cluster_map = agents or self.get_agents()
+        node_names = node_names or [n for n in node_cluster_map]
+        config = task['config']
+        command = config['command']
+        task_id = task['uuid']
+        instance_id = config['context']['uuid']
+        alias = config['context']['alias']
+        sense_sessions = self.find_sense_session(sense_session_key=instance_id)
+        sense_session = sense_sessions[0] if sense_sessions else dict()
+        saved_targets = sum(sense_session.get('task_info', dict()).values(), [])
+        targets = config['targets']
+
+        if len(targets) == 0:
+            log.warning(f'no targets for instance {instance_id}')
+            self.sense_api_handler.reject_task(task_id, f"no targets")
+            return None
+        elif len(targets) > 2:
+            log.warning(f'unknown endpoint for instance {instance_id}:too many targets:{len(targets)}')
+            self.sense_api_handler.reject_task(task_id, f"too many targets:{len(targets)}")
+            return None
+
+        task_info = dict()
+        task_info[task_id] = targets
+        endpoints = [target['name'] for target in targets]
+        unknown_endpoints = [endpoint for endpoint in endpoints if endpoint not in node_names]
+
+        if unknown_endpoints:
+            log.warning(f'unknown endpoint for instance {instance_id}:endpoints={unknown_endpoints}')
+            self.sense_api_handler.reject_task(task_id, f"unkown targets:{unknown_endpoints}")
+            return None
+
+        clusters = sense_session['clusters'] if 'clusters' in sense_session else list()
+        users = sense_session['users'] if 'users' in sense_session else list()
+
+        for target in targets:
+            users.extend(target['principals'])
+
+        for target in targets:
+            agent = node_cluster_map[target['name']]
+
+            if 'cluster_info' in agent:
+                cluster_info = agent['cluster_info']
+                target['cluster_info'] = cluster_info
+                clusters.append(cluster_info['cluster_name'])
+            else:
+                clusters.append(target['name'])
+
+        if len(targets) == 1 and saved_targets:
+            target_names = [target['name'] for target in targets]
+            saved_targets = [target for target in saved_targets if target['name'] not in target_names]
+            targets.extend(saved_targets)
+
+        if len(targets) > 2:
+            self.sense_api_handler.reject_task(task_id, f"too many targets after merging:{len(targets)}")
+            return None
+
+        if not alias:
+            alias = f'sense-janus-{"-".join(instance_id.split("-")[0:2])}'
+        else:
+            alias = f'sense-janus-{alias.replace(" ", "-")}-{"-".join(instance_id.split("-")[0:2])}'
+
+        users = sorted(list(set(users)))
+        text = 'other than admin' if 'admin' in users else ''
+
+        if 'admin' in users:
+            users.remove('admin')
+
+        if not users:
+            self.sense_api_handler.reject_task(task_id, f'must specify at least one principal {text}'.strip())
+            return None
+
+        sense_session = dict(key=instance_id,
+                             name=alias,
+                             task_info=task_info,
+                             users=users,
+                             status='PENDING',
+                             command=command,
+                             clusters=list(set(clusters)))
+
+        sense_session['state'] = 'MODIFIED' if self.check_modified(sense_session) else 'OK'
+
+        if sense_session['state'] == 'MODIFIED' and saved_targets:
+            log.warning(f'detected modified:{instance_id}:saved_targets={saved_targets}:new_targets={targets}')
+
+        self.save_sense_session(sense_session=sense_session)
+
+        if sense_session['state'] == 'MODIFIED':
+            log.debug(f'saved pending sense session:{json.dumps(sense_session)}')
+
+        return sense_session
+
     def retrieve_tasks(self, agents=None):
         assigned = self.properties[SenseConstants.SENSE_METADATA_ASSIGNED]
         tasks = self.sense_api_handler.retrieve_tasks(assigned=assigned, status='PENDING')
 
         if not tasks:
-            return None, None
+            return None, None, None
 
         node_cluster_map = agents or self.get_agents()
         node_names = [n for n in node_cluster_map]
         validated_sense_sessions = list()
         rejected_tasks = list()
+        failed_tasks = list()
 
         for task in tasks:
-            config = task['config']
-            command = config['command']
-            task_id = task['uuid']
+            task_id = None
 
-            if command not in ['handle-sense-instance', 'instance-termination-notice']:
-                self.sense_api_handler.reject_task(task_id, f"unknown command:{command}")
-                rejected_tasks.append(task)
-                continue
+            try:
+                config = task['config']
+                command = config['command']
+                task_id = task['uuid']
 
-            instance_id = config['context']['uuid']
-            alias = config['context']['alias']
-            sense_sessions = self.find_sense_session(sense_session_key=instance_id)
-            assert len(sense_sessions) <= 1
-            sense_session = sense_sessions[0] if sense_sessions else dict()
-
-            if sense_session and sense_session['status'] == 'PENDING':
-                continue
-
-            if command == 'instance-termination-notice':
-                if not sense_session:
-                    message = {'url': self.properties[SenseConstants.SENSE_METADATA_URL],
-                               'targets': [],
-                               'message': f'no session found for {instance_id}'}
-                    self.sense_api_handler.finish_task(task_id, message)
-                    continue
-
-                sense_session['command'] = command
-                sense_session['status'] = 'PENDING'
-                sense_session['termination_task'] = task_id
-            else:
-                saved_targets = sum(sense_session.get('task_info', dict()).values(), [])
-                targets = config['targets']
-
-                if len(targets) == 0:
-                    # TODO should we finish task with existing targets?
-                    log.warning(f'no targets for instance {instance_id}')
-                    self.sense_api_handler.reject_task(task_id, f"no targets")
-                    rejected_tasks.append(task)
-                    continue
-                elif len(targets) > 2:
-                    log.warning(f'unknown endpoint for instance {instance_id}:too many targets:{len(targets)}')
-                    self.sense_api_handler.reject_task(task_id, f"too many targets:{len(targets)}")
+                if command not in ['handle-sense-instance', 'instance-termination-notice']:
+                    self.sense_api_handler.reject_task(task_id, f"unknown command:{command}")
                     rejected_tasks.append(task)
                     continue
 
-                task_info = dict()
-                task_info[task_id] = targets
-                endpoints = [target['name'] for target in targets]
-                unknown_endpoints = [endpoint for endpoint in endpoints if endpoint not in node_names]
+                instance_id = config['context']['uuid']
+                sense_sessions = self.find_sense_session(sense_session_key=instance_id)
+                assert len(sense_sessions) <= 1
+                sense_session = sense_sessions[0] if sense_sessions else dict()
 
-                if unknown_endpoints:
-                    log.warning(f'unknown endpoint for instance {instance_id}:endpoints={unknown_endpoints}')
-                    self.sense_api_handler.reject_task(task_id, f"unkown targets:{unknown_endpoints}")
-                    rejected_tasks.append(task)
+                if sense_session and sense_session['status'] == 'PENDING':
                     continue
 
-                clusters = sense_session['clusters'] if 'clusters' in sense_session else list()
-                users = sense_session['users'] if 'users' in sense_session else list()
-
-                for target in targets:
-                    users.extend(target['principals'])
-
-                for target in targets:
-                    agent = node_cluster_map[target['name']]
-
-                    if 'cluster_info' in agent:
-                        cluster_info = agent['cluster_info']
-                        target['cluster_info'] = cluster_info
-                        clusters.append(cluster_info['cluster_name'])
-                    else:
-                        clusters.append(target['name'])
-
-                if len(targets) == 1 and saved_targets:
-                    target_names = [target['name'] for target in targets]
-                    saved_targets = [target for target in saved_targets if target['name'] not in target_names]
-                    targets.extend(saved_targets)
-
-                if len(targets) > 2:
-                    self.sense_api_handler.reject_task(task_id,
-                                                       f"too many targets after merging:{len(targets)}")
-                    rejected_tasks.append(task)
-                    continue
-
-                if not alias:
-                    alias = f'sense-janus-{"-".join(instance_id.split("-")[0:2])}'
+                if command == 'instance-termination-notice':
+                    ret = self._retrieve_instance_termination_notice_command(task)
                 else:
-                    alias = f'sense-janus-{alias.replace(" ", "-")}-{"-".join(instance_id.split("-")[0:2])}'
+                    ret = self._retrieve_handle_sense_instance_command(task, agents, node_names)
 
-                users = sorted(list(set(users)))
-                text = 'other than admin' if 'admin' in users else ''
-
-                if 'admin' in users:
-                    users.remove('admin')
-
-                if not users:
-                    self.sense_api_handler.reject_task(task_id,
-                                                       f'must specify at least one principal {text}'.strip())
+                if ret:
+                    validated_sense_sessions.append(ret)
+                else:
                     rejected_tasks.append(task)
-                    continue
+            except Exception as e:
+                if task_id:
+                    self.sense_api_handler.fail_task(task_id, f'{type(e)}:{e}')
 
-                sense_session = dict(key=instance_id,
-                                     name=alias,
-                                     task_info=task_info,
-                                     users=users,
-                                     status='PENDING',
-                                     command=command,
-                                     clusters=list(set(clusters)))
+                failed_tasks.append(task)
 
-                sense_session['state'] = 'MODIFIED' if self.check_modified(sense_session) else 'OK'
-
-                if sense_session['state'] == 'MODIFIED' and saved_targets:
-                    log.warning(
-                        f'detected modified instance {instance_id}:saved_targets={saved_targets}:new_targets={targets}')
-
-            self.save_sense_session(sense_session=sense_session)
-
-            if 'state' in sense_session and sense_session['state'] == 'MODIFIED':
-                log.debug(f'saved pending sense session:{json.dumps(sense_session)}')
-
-            validated_sense_sessions.append(sense_session)
-
-        return validated_sense_sessions, rejected_tasks
+        return validated_sense_sessions, rejected_tasks, failed_tasks
 
     def accept_tasks(self):
         sense_sessions = self.find_sense_session(status='PENDING')
@@ -446,7 +472,7 @@ class SENSEMetaManager(DBHandler):
         if not self.update_metadata(agents=agents):
             return
 
-        sense_sessions, rejected_tasks = self.retrieve_tasks(agents=agents)
+        sense_sessions, rejected_tasks, failed_tasks = self.retrieve_tasks(agents=agents)
         counters = dict(retrieved=0, rejected=0, accepted=0, terminated=0, finished=0, failed=0)
         print_summary = False
 
@@ -456,6 +482,11 @@ class SENSEMetaManager(DBHandler):
 
         if rejected_tasks:
             counters['rejected'] = len(rejected_tasks)
+            print_summary = True
+
+        if failed_tasks:
+            counters['failed'] = len(failed_tasks)
+            print_summary = True
 
         sense_sessions = self.accept_tasks()
 
