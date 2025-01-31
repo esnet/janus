@@ -279,150 +279,20 @@ class Create(Resource, QueryUser):
 
     @httpauth.login_required
     def post(self):
-        """
-        Handle the creation of a container service
-        """
-        (user,group) = get_authinfo(request)
+        (user, group) = get_authinfo(request)
         req = request.get_json()
         if not req:
             raise BadRequest("Body is empty")
-        if type(req) is dict:
+        elif type(req) is dict:
             req = [req]
-        log.debug(req)
 
-        dbase = cfg.db
-        ntable = dbase.get_table('nodes')
-        ptable = dbase.get_table('profiles')
-        itable = dbase.get_table('images')
+        from janus.api.session_manager import SessionManager
 
-        # Do auth and resource availability checks first
-        create = list()
-        for r in req:
-            instances = r.get("instances", None)
-            profile = r.get("profile", None)
-            image = r.get("image", None)
-            arguments = r.get("arguments", None)
-            remove_container = r.get("remove_container", None)
-            if instances == None or profile == None or image == None:
-                raise BadRequest("Missing fields in POST data")
-            # Profile
-            if not profile or profile == "default":
-                profile = settings.DEFAULT_PROFILE
-            query = self.query_builder(user, group, {"name": profile})
-            prof = cfg.pm.get_profile(Constants.HOST, profile, user, group)
-            if not prof:
-                return {"error": f"Profile {profile} not found"}, 404
-            # Image
-            # By default try to pull the specified image name even if
-            # we don't know about it
-            if not user and not group:
-                img = image
-            else:
-                parts = image.split(":")
-                query = self.query_builder(user, group, {"name": parts[0]})
-                img = dbase.get(itable, query=query)
-                if not img:
-                    return {"error": f"Image {image} not found"}, 404
-                img = image
-            # Endpoints and Networks
-            for ep in instances:
-                c = dict()
-                if isinstance(ep, dict):
-                    c = SessionConstraints(**ep)
-                    ename = ep.get('name', None)
-                elif isinstance(ep, str):
-                    ename = ep
-                else:
-                    return {"error": f"Invalid endpoint type: {ep}"}, 400
-                if not ename:
-                    return {"error": f"Invalid endpoint name: {ename}"}, 400
-                query = self.query_builder(user, group, {"name": ename})
-                node = dbase.get(ntable, query=query)
-                if not node:
-                    return {"error": f"Endpoint {ename} not found"}, 404
-                try:
-                    handler = cfg.sm.get_handler(node)
-                    init_db(node.get('name'), refresh=True)
-                    ret = handler.resolve_networks(node, prof)
-                    if ret:
-                        # Networks were updated by the handler, refresh Node DB
-                        init_db(node.get('name'), refresh=True)
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    return {"error": f"Endpoint {ename} has invalid network: {e}"}, 400
-                # refresh node handle from DB since node state may have been updated above
-                node = dbase.get(ntable, query=query)
-                create.append(SessionRequest(node=node,
-                                             profile=prof,
-                                             image=img,
-                                             arguments=arguments,
-                                             remove_container=remove_container,
-                                             constraints=c,
-                                             kwargs=r.get("kwargs", dict())))
-
-        # get an ID from the DB
-        Id = precommit_db()
-        svcs = dict()
-        try:
-            # keep a running set of addresses and ports allocated for this request
-            addrs_v4 = set()
-            addrs_v6 = set()
-            cports = set()
-            sports = set()
-            i = 1
-            for s in create:
-                nname = s.node.get('name')
-                if nname not in svcs:
-                    svcs[nname] = list()
-                # AES CHANGE_NAME
-                if s.profile.name.startswith('sense-janus'):
-                    sname = cname_from_id(Id, i, s.profile.name)
-                else:
-                    sname = cname_from_id(Id, i)
-                handler = cfg.sm.get_handler(s.node)
-                rec = handler.create_service_record(sname, s, addrs_v4, addrs_v6, cports, sports)
-                if not rec:
-                    raise Exception(f"No service record created for node {nname}")
-                svcs[nname].append(rec)
-                i+=1
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            log.error(f"Could not allocate request: {e}")
-            return {"error": str(e)}, 503
-
-        # setup simple accounting
-        record = {'uuid': str(uuid.uuid4()),
-                  'user': user if user else httpauth.current_user(),
-                  'state': State.INITIALIZED.name}
-
-        errs = False
-        for k, services in svcs.items():
-            for s in services:
-                if (cfg.dryrun):
-                    ret = {'Id': str(uuid.uuid4())}
-                    name = "janus_dryrun"
-                else:
-                    try:
-                        cfg.sm.init_service(s, errs)
-                    except Exception as e:
-                        import traceback
-                        traceback.print_exc()
-                        log.error(f"Could not initialize service: {e}")
-                        continue
-
-        # complete accounting
-        record['id'] = Id
-        record['services'] = svcs
-        record['request'] = req
-        record['users'] = user.split(",") if user else []
-        record['groups'] = group.split(",") if group else []
-        if errs:
-            precommit_db(Id, delete=True)
-            return {Id: record}
-        else:
-            return commit_db(record, Id)
+        session_manager = SessionManager()
+        current_user = user if user else httpauth.current_user()
+        users = user.split(",") if user else []
+        janus_sessionid = session_manager.create_session(user, group, req, current_user, users)
+        return {janus_sessionid: dict(id=janus_sessionid)}
 
 @ns.response(200, 'OK')
 @ns.response(404, 'Not found')
@@ -430,114 +300,13 @@ class Create(Resource, QueryUser):
 @ns.route('/start/<int:id>')
 class Start(Resource, QueryUser):
 
-    def _do_poststart(self, s):
-        #
-        # Ansible job is requested if configured
-        # - Enviroment variabls must be set to access Ansible Tower server:
-        #   TOWER_HOST, TOWER_USERNAME, TOWER_PASSWORD, TOWER_SSL_VERIFY
-        # - It may take some time for the ansible job to finish or timeout (300 seconds)
-        #
-        prof = cfg.pm.get_profile(Constants.HOST, s['profile'])
-        for psname in prof.settings.post_starts:
-            ps = cfg.get_poststart(psname)
-            if ps['type'] == 'ansible':
-                jt_name = ps['jobtemplate']
-                gateway = ps['gateway']
-                ipprot = ps['ipprot']
-                inf = ps['interface']
-                limit = ps['limit']
-                default_name= ps['container_name']
-                container_name= s.get('container_name', default_name)
-                ex_vars = f'{{"ipprot": "{ipprot}", "interface": "{inf}", "gateway": "{gateway}", "container": "{container_name}"}}'
-                job = AnsibleJob()
-                try:
-                    result = job.launch(job_template=jt_name, monitor=True, wait=True, timeout=600, extra_vars=ex_vars, limits=limit)
-                except Exception as e:
-                    error_svc(s, e)
-                    continue
-
     @httpauth.login_required
-    def put(self, id=None):
-        """
-        Handle the starting of container services
-        """
-        (user,group) = get_authinfo(request)
-        query = self.query_builder(user, group, {"id": id})
-        dbase = cfg.db
-        table = dbase.get_table('active')
-        ntable = dbase.get_table('nodes')
-        if id:
-            svc = dbase.get(table, query=query)
-        if not svc:
-            return {"error": "id not found"}, 404
+    def put(self, id):
+        from janus.api.session_manager import SessionManager
 
-        if svc['state'] == State.STARTED.name:
-            return {"error": f"Service {svc['uuid']} already started"}, 503
-
-        # start the services
-        error = False
-        services = svc.get("services", dict())
-        for k,v in services.items():
-            for s in v:
-                cid = s.get("container_id")
-                if not cid:
-                    log.warn(f"Skipping service with no container_id: {k}")
-                    error = True
-                    continue
-                node = dbase.get(ntable, name=k)
-                if not node:
-                    log.error(f"Container node {k} not found for container_id: {cid}")
-                    return {"error": f"Node not found: {k}"}, 404
-                handler = cfg.sm.get_handler(node)
-                log.debug(f"Starting container {cid} on {k}")
-
-                if not (cfg.dryrun):
-                    # Error acconting
-                    orig_errcnt = len(s.get('errors'))
-
-                    try:
-                        handler.start_container(Node(**node), cid, s)
-                        if s.get('qos'):
-                            qos = s["qos"]
-                            qos["container"] = c
-                            set_qos(node["public_url"], qos)
-                    except Exception as e:
-                        import traceback
-                        traceback.print_exc()
-                        log.error(f"Could not start container on {k}: {e}")
-                        error_svc(s, e)
-                        error = True
-                        continue
-
-                    # Handle post_start tasks
-                    self._do_poststart(s)
-
-                    # Trim logged errors
-                    errcnt = len(s.get('errors'))
-                    if not errcnt-orig_errcnt:
-                        s['errors'] = list()
-                    else:
-                        s['errors'] = s['errors'][orig_errcnt-errcnt:]
-                # End of Ansible job
-        svc['state'] = State.MIXED.name if error else State.STARTED.name
-
-        if not error and svc.get('peer'):
-            peer = svc.get('peer')
-
-            if isinstance(svc.get('peer'), list):
-                peer = peer[0]
-
-            from janus.api.session_manager import SessionManager
-
-            session_manager = SessionManager()
-
-            try:
-                session_manager.start_session(peer['id'])
-            except Exception as e:
-                log.error(f"Could not start peer container using {peer['id']}: {e}")
-
-        ret = commit_db(svc, id, realized=True)
-        return ret
+        (user, group) = get_authinfo(request)
+        session_manager = SessionManager()
+        return session_manager.start_session(id, user, group)
 
 @ns.response(200, 'OK')
 @ns.response(404, 'Not found')
@@ -546,64 +315,14 @@ class Start(Resource, QueryUser):
 class Stop(Resource, QueryUser):
 
     @httpauth.login_required
-    def put(self, id=None):
+    def put(self, id):
         """
         Handle the stopping of container services
         """
-        dbase = cfg.db
-        table = dbase.get_table('active')
-        ntable = dbase.get_table('nodes')
-        if id:
-            svc = dbase.get(table, ids=id)
-        if not svc:
-            return {"error": "id not found"}, 404
+        from janus.api.session_manager import SessionManager
 
-        if svc['state'] == State.STOPPED.name:
-            return {"error": f"Service {svc['uuid']} already stopped"}, 503
-        if svc['state'] == State.INITIALIZED.name:
-            return {"error": f"Service {svc['uuid']} is in initialized state"}, 503
-
-        # stop the services
-        error = False
-        for k,v in svc['services'].items():
-            for s in v:
-                cid = s.get('container_id')
-                if not cid:
-                    log.warn(f"Skipping service with no container_id: {k}")
-                    continue
-                node = dbase.get(ntable, name=k)
-                handler = cfg.sm.get_handler(node)
-                if not node:
-                    log.error(f"Container node {k} not found for container_id: {cid}")
-                    return {"error": f"Node not found: {k}"}, 404
-                log.debug(f"Stopping container {cid} on {k}")
-                if not (cfg.dryrun):
-                    try:
-                        handler.stop_container(Node(**node), cid, **{'service': s})
-                    except Exception as e:
-                        log.error(f"Could not stop container on {k}: {e}")
-                        error_svc(s, e)
-                        error = True
-                        continue
-        svc['state'] = State.MIXED.name if error else State.STOPPED.name
-        ret = commit_db(svc, id, delete=True, realized=True)
-
-        if not error and svc.get('peer'):
-            peer = svc.get('peer')
-
-            if isinstance(svc.get('peer'), list):
-                peer = peer[0]
-
-            from janus.api.session_manager import SessionManager
-
-            session_manager = SessionManager()
-
-            try:
-                session_manager.stop_session(peer['id'])
-            except Exception as e:
-                log.error(f"Could not stop peer container using {peer['id']}: {e}")
-
-        return ret
+        session_manager = SessionManager()
+        return session_manager.stop_session(id)
 
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
