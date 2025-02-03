@@ -20,8 +20,8 @@ log = logging.getLogger(__name__)
 class SENSEMetaManager(DBHandler):
     def __init__(self, cfg: JanusConfig, properties: dict, sense_api_handler=None):
         super().__init__(cfg)
-        self.sense_api_handler = sense_api_handler or SENSEApiHandler(req_wrapper=RequestWrapper())
-        # self.kube_api = KubernetesApi()
+        url = properties[SenseConstants.SENSE_METADATA_URL]
+        self.sense_api_handler = sense_api_handler or SENSEApiHandler(url=url, req_wrapper=RequestWrapper())
         self.properties = properties
         self.session_manager = SessionManager()
         self.retries = SenseConstants.SENSE_PLUGIN_RETRIES
@@ -79,39 +79,45 @@ class SENSEMetaManager(DBHandler):
         owner = sense_session["users"][0]
 
         if len(host_profiles) == 1:
-            req = dict(
+            requests = [dict(
+                instances=self._instances(targets),
+                profile=host_profiles[0],
                 errors=[],
                 image='dtnaas/tools:latest',
                 arguments=str(),
                 kwargs=dict(USER_NAME=str(), PUBLIC_KEY=str()),
                 remove_container=False
-            )
+            )]
 
-            instances = self._instances(targets)
-            req['instances'] = instances
-            req['profile'] = host_profiles[0]
-            log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{req}')
-            janus_session_id = self.session_manager.create_session(None, None, req, owner,
-                                                                   sense_session["users"])
+            log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{requests}')
+            self.session_manager.validate_request(requests)
+            session_requests = self.session_manager.parse_requests(None, None, requests)
+            self.session_manager.create_networks(session_requests)
+            janus_session_id = self.session_manager.create_session(
+                None, None, session_requests, requests, owner, sense_session["users"]
+            )
             return [janus_session_id]
 
         janus_session_ids = list()
 
         for idx, host_profile in enumerate(host_profiles):
-            req = dict(
+            requests = [dict(
+                instances=self._instances([targets[idx]]),
+                profile=host_profile,
                 errors=[],
                 image='dtnaas/tools:latest',
                 arguments=str(),
                 kwargs=dict(USER_NAME=str(), PUBLIC_KEY=str()),
                 remove_container=False
+            )]
+
+            log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{requests}')
+            self.session_manager.validate_request(requests)
+            session_requests = self.session_manager.parse_requests(None, None, requests)
+            self.session_manager.create_networks(session_requests)
+            janus_session_id = self.session_manager.create_session(
+                None, None, session_requests, requests, owner, sense_session["users"]
             )
-            target = targets[idx]
-            instances = self._instances([target])
-            req['instances'] = instances
-            req['profile'] = host_profile
-            log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{instances}')
-            janus_session_id = self.session_manager.create_session(None,
-                                                                   None, req, owner, sense_session["users"])
             janus_session_ids.append(janus_session_id)
 
         janus_sessions = list()
@@ -182,7 +188,7 @@ class SENSEMetaManager(DBHandler):
         sense_session = sense_sessions[0] if sense_sessions else dict()
 
         if not sense_session:
-            self.sense_api_handler.finish_task(task_id, f'no session found for {instance_id}:{alias}')
+            self.sense_api_handler.finish_task(task_id, list(), f'no session found for {instance_id}:{alias}')
             return None
 
         sense_session['command'] = command
@@ -206,11 +212,11 @@ class SENSEMetaManager(DBHandler):
 
         if len(targets) == 0:
             log.warning(f'no targets for instance {instance_id}')
-            self.sense_api_handler.reject_task(task_id, f"no targets")
+            self.sense_api_handler.reject_task(task_id, targets, f"no targets")
             return None
         elif len(targets) > 2:
             log.warning(f'unknown endpoint for instance {instance_id}:too many targets:{len(targets)}')
-            self.sense_api_handler.reject_task(task_id, f"too many targets:{len(targets)}")
+            self.sense_api_handler.reject_task(task_id, targets, f"too many targets:{len(targets)}")
             return None
 
         task_info = dict()
@@ -220,7 +226,7 @@ class SENSEMetaManager(DBHandler):
 
         if unknown_endpoints:
             log.warning(f'unknown endpoint for instance {instance_id}:endpoints={unknown_endpoints}')
-            self.sense_api_handler.reject_task(task_id, f"unkown targets:{unknown_endpoints}")
+            self.sense_api_handler.reject_task(task_id, targets, f"unkown targets:{unknown_endpoints}")
             return None
 
         clusters = sense_session['clusters'] if 'clusters' in sense_session else list()
@@ -245,7 +251,8 @@ class SENSEMetaManager(DBHandler):
             targets.extend(saved_targets)
 
         if len(targets) > 2:
-            self.sense_api_handler.reject_task(task_id, f"too many targets after merging:{len(targets)}")
+            self.sense_api_handler.reject_task(task_id,
+                                               targets, f"too many targets after merging:{len(targets)}")
             return None
 
         if not alias:
@@ -260,7 +267,7 @@ class SENSEMetaManager(DBHandler):
             users.remove('admin')
 
         if not users:
-            self.sense_api_handler.reject_task(task_id, f'must specify at least one principal {text}'.strip())
+            self.sense_api_handler.reject_task(task_id, targets, f'must specify at least one principal {text}'.strip())
             return None
 
         sense_session = dict(key=instance_id,
@@ -298,14 +305,16 @@ class SENSEMetaManager(DBHandler):
 
         for task in tasks:
             task_id = None
+            targets = list()
 
             try:
                 config = task['config']
+                targets = config['targets']
                 command = config['command']
                 task_id = task['uuid']
 
                 if command not in ['handle-sense-instance', 'instance-termination-notice']:
-                    self.sense_api_handler.reject_task(task_id, f"unknown command:{command}")
+                    self.sense_api_handler.reject_task(task_id, targets, f"unknown command:{command}")
                     rejected_tasks.append(task)
                     continue
 
@@ -328,7 +337,7 @@ class SENSEMetaManager(DBHandler):
                     rejected_tasks.append(task)
             except Exception as e:
                 if task_id:
-                    self.sense_api_handler.fail_task(task_id, f'{type(e)}:{e}')
+                    self.sense_api_handler.fail_task(task_id, targets, f'{type(e)}:{e}')
 
                 failed_tasks.append(task)
 
@@ -339,14 +348,16 @@ class SENSEMetaManager(DBHandler):
 
         for sense_session in sense_sessions:
             task_info = sense_session['task_info']
+            targets = sum(task_info.values(), [])
 
             if 'termination_task' in sense_session:
-                self.sense_api_handler.accept_task(sense_session['termination_task'])
+                uuid = sense_session['termination_task']
+                self.sense_api_handler.accept_task(uuid, targets, '')
             else:
                 uuids = [uuid for uuid in task_info]
 
                 for uuid in uuids:
-                    self.sense_api_handler.accept_task(uuid)
+                    self.sense_api_handler.accept_task(uuid, targets, '')
 
             sense_session['status'] = 'ACCEPTED'
             self.save_sense_session(sense_session=sense_session)
@@ -354,7 +365,9 @@ class SENSEMetaManager(DBHandler):
         return sense_sessions
 
     def _finish_handle_sense_instance_command(self, task_id, sense_session):
-        if sense_session['state'] == 'MODIFIED':
+        modified = sense_session['state'] == 'MODIFIED'
+
+        if modified:
             error = False
 
             if 'network_profile' not in sense_session:
@@ -366,6 +379,7 @@ class SENSEMetaManager(DBHandler):
             try:
                 self.terminate_janus_sessions(sense_session=sense_session)
                 self.remove_profiles(sense_session=sense_session)
+                sense_session['terminate_error_message'] = None
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -380,6 +394,7 @@ class SENSEMetaManager(DBHandler):
                     janus_session_ids = self.create_janus_session(sense_session=sense_session)
                     sense_session['janus_session_id'] = janus_session_ids
                     sense_session['errors'] = 0
+                    sense_session['error_message'] = None
                     # self.start_janus_session(janus_session_ids)
                 except Exception as e:
                     import traceback
@@ -389,12 +404,16 @@ class SENSEMetaManager(DBHandler):
                     sense_session['error_message'] = f'error creating janus session: {e}'
 
         if 0 < sense_session['errors'] < self.retries:
+            targets = SenseUtils.to_target_summary(sum(sense_session.get('task_info', dict()).values(), []))
+            mesg = sense_session['terminate_error_message'] \
+                if sense_session['terminate_error_message'] else sense_session['error_message']
+            self.sense_api_handler.wait_task(task_id, targets, mesg)
             self.save_sense_session(sense_session=sense_session)
             return
 
         if sense_session['errors'] == 0:
             sense_session['status'] = 'FINISHED'
-            sense_session['state'] = 'OK'
+            sense_session['state'] = 'MODIFIED_OK' if modified else 'OK'
             mesg = f'session for {sense_session["key"]} has been handled'
         else:
             sense_session['status'] = 'FINISHED'
@@ -406,8 +425,7 @@ class SENSEMetaManager(DBHandler):
         self.save_sense_session(sense_session=sense_session)
         self.update_janus_sessions(sense_session=sense_session)
         targets = SenseUtils.to_target_summary(sum(sense_session.get('task_info', dict()).values(), []))
-        message = dict(url=self.properties[SenseConstants.SENSE_METADATA_URL], targets=targets, message=mesg)
-        self.sense_api_handler.finish_task(task_id, message)
+        self.sense_api_handler.finish_task(task_id, targets, mesg)
 
     def _finish_instance_termination_notice_command(self, task_id, sense_session):
         try:
@@ -429,8 +447,7 @@ class SENSEMetaManager(DBHandler):
         else:
             mesg = f'giving up on terminating session for {sense_session["key"]}'
 
-        message = dict(url=self.properties[SenseConstants.SENSE_METADATA_URL], targets=[], message=mesg)
-        self.sense_api_handler.finish_task(task_id, message)
+        self.sense_api_handler.finish_task(task_id, list(), mesg)
         sense_session['status'] = 'DELETED'
         log.warning(f'removing sense session from db: {mesg}')
         self.db.remove(self.sense_session_table, name=sense_session['name'])
@@ -443,19 +460,25 @@ class SENSEMetaManager(DBHandler):
                 sense_session['errors'] = 0
 
             task_id = None
+            targets = list()
 
             try:
+                task_info = sense_session['task_info']
+                targets = sum(task_info.values(), [])
+
                 if sense_session['command'] != 'handle-sense-instance':
                     assert 'termination_task' in sense_session
                     task_id = sense_session['termination_task']
                     self._finish_instance_termination_notice_command(task_id, sense_session)
                 else:
+                    task_info = sense_session['task_info']
+                    targets = sum(task_info.values(), [])
                     uuids = [uuid for uuid in sense_session['task_info']]
                     assert len(uuids) == 1
                     task_id = uuids[0]
                     self._finish_handle_sense_instance_command(task_id, sense_session)
             except Exception as e:
-                self.sense_api_handler.fail_task(task_id, f'{type(e)}:{e}')
+                self.sense_api_handler.fail_task(task_id, targets, f'{type(e)}:{e}')
                 sense_session['status'] = 'FAILED'
                 self.db.remove(self.sense_session_table, name=sense_session['name'])
 

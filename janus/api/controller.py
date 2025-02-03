@@ -1,44 +1,28 @@
 import logging
-import uuid
-from tinydb import where
-import concurrent
-from concurrent.futures.thread import ThreadPoolExecutor
-from operator import eq
 from functools import reduce
+from operator import eq
+from urllib.parse import urlsplit
 
 from flask import request, jsonify
-from flask_restx import Namespace, Resource
 from flask_httpauth import HTTPBasicAuth
-from werkzeug.security import check_password_hash
-from werkzeug.exceptions import BadRequest
-
+from flask_restx import Namespace, Resource
 from pydantic import ValidationError
-from urllib.parse import urlsplit
-from janus import settings
-from janus.lib import AgentMonitor
-from janus.settings import cfg
-from janus.api.constants import State, EPType
+from tinydb import where
+from werkzeug.exceptions import BadRequest, NotFound, InternalServerError
+from werkzeug.security import check_password_hash
+
 from janus.api.db import init_db, QueryUser
-from janus.api.ansible_job import AnsibleJob
 from janus.api.models import (
     Node,
-    Network,
     ContainerProfile,
     NetworkProfile,
     VolumeProfile,
-    SessionRequest,
-    SessionConstraints,
     AddEndpointRequest
 )
 from janus.api.utils import (
-    commit_db,
-    cname_from_id,
-    precommit_db,
-    set_qos,
-    error_svc,
     Constants
 )
-
+from janus.settings import cfg
 
 # Basic auth
 httpauth = HTTPBasicAuth()
@@ -133,52 +117,22 @@ class ActiveCollection(Resource, QueryUser):
         """
         Deletes an active allocation (e.g. stops containers)
         """
-        (user,group) = get_authinfo(request)
-        query = self.query_builder(user, group, {"id": aid})
-        dbase = cfg.db
-        nodes = dbase.get_table('nodes')
-        table = dbase.get_table('active')
-        doc = dbase.get(table, query=query)
-        if doc == None:
-            return {"error": "Not found", "id": aid}, 404
+        (user, group) = get_authinfo(request)
 
-        force = request.args.get('force', None)
-        futures = list()
+        from janus.api.session_manager import SessionManager, ResourceNotFoundException, SessionManagerException
 
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            for k,v in doc['services'].items():
-                try:
-                    n = dbase.get(nodes, name=k)
-                    if not n:
-                        log.error(f"Node {k} not found")
-                        return {"error": f"Node not found: {k}"}, 404
-                    handler = cfg.sm.get_handler(n)
-                    if not (cfg.dryrun):
-                        for s in v:
-                            futures.append(executor.submit(handler.stop_container,
-                                                           Node(**n), s.get('container_id'),
-                                                           **{'service': s,
-                                                              'name': k}))
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    log.error(f"Could not find node/container to stop, or already stopped: {k}")
-        if not (cfg.dryrun):
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    res = future.result()
-                    if "container_id" in res:
-                        log.debug(f"Removing container {res['container_id']}")
-                        handler = cfg.sm.get_handler(nname=res['node_name'])
-                        handler.remove_container(Node(name=res['node_name'], id=res['node_id']), res['container_id'])
-                except Exception as e:
-                    log.error(f"Could not remove container on remote node: {e}")
-                    if not force:
-                        return {"error": str(e)}, 503
-        # delete always removes realized state info
-        commit_db(doc, aid, delete=True, realized=True)
-        commit_db(doc, aid, delete=True)
-        return None, 204
+        try:
+            force = request.args.get('force', None)
+            session_manager = SessionManager()
+            session_manager.delete(aid, force, user, group)
+            return None, 204
+        except ResourceNotFoundException as e:
+            raise NotFound(f'Creating session failed:{e}')
+        except SessionManagerException as e:
+            raise InternalServerError(f'Stopping session failed:{e}')
+        except Exception as e:
+            raise InternalServerError(f'Stopping session failed:FATAL:{type(e)}:{e}')
+
 
 @ns.response(400, 'Bad Request')
 @ns.route('/nodes')
@@ -286,13 +240,29 @@ class Create(Resource, QueryUser):
         elif type(req) is dict:
             req = [req]
 
-        from janus.api.session_manager import SessionManager
+        from janus.api.session_manager import (SessionManager,
+                                               InvalidSessionRequestException,
+                                               ResourceNotFoundException,
+                                               SessionManagerException)
 
-        session_manager = SessionManager()
-        current_user = user if user else httpauth.current_user()
-        users = user.split(",") if user else []
-        janus_sessionid = session_manager.create_session(user, group, req, current_user, users)
-        return {janus_sessionid: dict(id=janus_sessionid)}
+        try:
+            session_manager = SessionManager()
+            current_user = user if user else httpauth.current_user()
+            users = user.split(",") if user else []
+            session_manager.validate_request(req)
+            session_requests = session_manager.parse_requests(user, group, req)
+            session_manager.create_networks(session_requests)
+            janus_sessionid = session_manager.create_session(user, group, session_requests, req, current_user, users)
+            return {janus_sessionid: dict(id=janus_sessionid)}
+        except InvalidSessionRequestException as e:
+            raise BadRequest(f'Creating session failed:{e}')
+        except ResourceNotFoundException as e:
+            raise NotFound(f'Creating session failed:{e}')
+        except SessionManagerException as e:
+            raise InternalServerError(f'Creating session failed:{e}')
+        except Exception as e:
+            raise InternalServerError(f'Creating session failed.Unexpected:{type(e)}:{e}')
+
 
 @ns.response(200, 'OK')
 @ns.response(404, 'Not found')
@@ -302,11 +272,20 @@ class Start(Resource, QueryUser):
 
     @httpauth.login_required
     def put(self, id):
-        from janus.api.session_manager import SessionManager
+        from janus.api.session_manager import SessionManager, ResourceNotFoundException, SessionManagerException
 
         (user, group) = get_authinfo(request)
-        session_manager = SessionManager()
-        return session_manager.start_session(id, user, group)
+
+        try:
+            session_manager = SessionManager()
+            return session_manager.start_session(id, user, group)
+        except ResourceNotFoundException as e:
+            raise NotFound(f'Creating session failed:{e}')
+        except SessionManagerException as e:
+            raise InternalServerError(f'Starting session failed:{e}')
+        except Exception as e:
+            raise InternalServerError(f'Starting ession failed:FATAL:{type(e)}:{e}')
+
 
 @ns.response(200, 'OK')
 @ns.response(404, 'Not found')
@@ -319,10 +298,17 @@ class Stop(Resource, QueryUser):
         """
         Handle the stopping of container services
         """
-        from janus.api.session_manager import SessionManager
+        from janus.api.session_manager import SessionManager, ResourceNotFoundException, SessionManagerException
 
-        session_manager = SessionManager()
-        return session_manager.stop_session(id)
+        try:
+            session_manager = SessionManager()
+            return session_manager.stop_session(id)
+        except ResourceNotFoundException as e:
+            raise NotFound(f'Creating session failed:{e}')
+        except SessionManagerException as e:
+            raise InternalServerError(f'Stopping session failed:{e}')
+        except Exception as e:
+            raise InternalServerError(f'Stopping session failed:FATAL:{type(e)}:{e}')
 
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')

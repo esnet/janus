@@ -11,8 +11,9 @@ log = logging.getLogger(__name__)
 
 
 class SENSEApiHandler:
-    def __init__(self, req_wrapper=None):
+    def __init__(self, url, req_wrapper=None):
         req_wrapper = req_wrapper or RequestWrapper()
+        self.url = url
         self.task_client = TaskApi(req_wrapper=req_wrapper)
         self.metadata_client = MetadataApi(req_wrapper=req_wrapper)
         self.retries = SenseConstants.SENSE_PLUGIN_RETRIES
@@ -57,19 +58,24 @@ class SENSEApiHandler:
         log.error(f'Giving up on updating task after {self.retries} attempts:{kwargs}: error={err}')
         return False
 
-    def accept_task(self, uuid):
-        data = None
+    def accept_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets,  message=message)
         return self._update_task(data, uuid=uuid, state='ACCEPTED')
 
-    def reject_task(self, uuid, message):
-        data = {"message": message}
+    def reject_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets, message=message)
         return self._update_task(data, uuid=uuid, state='REJECTED')
 
-    def fail_task(self, uuid, message):
-        data = {"message": message}
+    def fail_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets, message=message)
         return self._update_task(data, uuid=uuid, state='FAILED')
 
-    def finish_task(self, uuid, data):
+    def wait_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets, message=message)
+        return self._update_task(data, uuid=uuid, state='WAITING')
+
+    def finish_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets, message=message)
         return self._update_task(data, uuid=uuid, state='FINISHED')
 
     def get_metadata(self, domain, name):

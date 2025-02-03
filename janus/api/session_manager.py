@@ -2,6 +2,10 @@ import concurrent
 import logging.config
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from typing import List, Dict
+
+from kubernetes.client import ApiException as KubeApiException
+from portainer_api.rest import ApiException as PortainerApiException
 
 from janus.api.ansible_job import AnsibleJob
 from janus.api.constants import State
@@ -21,15 +25,31 @@ from janus.settings import cfg
 log = logging.getLogger(__name__)
 
 
+class InvalidSessionRequestException(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+
+
+class ResourceNotFoundException(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+
+
+class SessionManagerException(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+
+
+# noinspection PyMethodMayBeStatic
 class SessionManager(QueryUser):
 
-    def __init__(self, db=None):
-        self.db = db
+    def __init__(self):
+        pass
 
     def update_networks(self, node):
         data_nets = list()
         profs = cfg.pm.get_profiles(Constants.HOST)
-        dbase = self.db or cfg.db
+        dbase = cfg.db
 
         for p in profs:
             for net in [Network(p.settings.mgmt_net), Network(p.settings.data_net)]:
@@ -70,26 +90,43 @@ class SessionManager(QueryUser):
                 net['subnet'] = list(subnet)
             dbase.upsert(net_table, net, 'key', key)
 
-    def create_session(self, user, group, req, current_user, users=None):
-        users = users or list()
-
-        if type(req) is dict:
-            req = [req]
-
-        log.debug(req)
-        dbase = self.db or cfg.db
-        ntable = dbase.get_table('nodes')
-
-        # Do auth and resource availability checks first
-        create = list()
+    def validate_request(self, req: List[Dict]):
         for r in req:
+            instances = r.get("instances", list())
+            profile = r.get("profile", None)
+            image = r.get("image", None)
+
+            if not instances or not profile or not image:
+                raise InvalidSessionRequestException("Missing fields in POST data")
+
+            for ep in instances:
+                ename = None
+
+                if isinstance(ep, dict):
+                    ename = ep.get('name', None)
+                elif isinstance(ep, str):
+                    ename = ep
+
+                if not ename:
+                    raise InvalidSessionRequestException(f"Invalid endpoint type: {ep}")
+
+    def parse_requests(self, user, group, requests: List[Dict]) -> List[SessionRequest]:
+        dbase = cfg.db
+        ntable = dbase.get_table('nodes')
+        itable = dbase.get_table('images')
+        session_requests = list()
+
+        for r in requests:
             instances = r["instances"]
-            profile = r["profile"]
-            img = r['image']
-            arguments = r.get("arguments", None)
-            remove_container = r.get("remove_container", None)
-            prof = cfg.pm.get_profile(Constants.HOST, profile, user, group)
-            assert prof is not None
+            prof = cfg.pm.get_profile(Constants.HOST, r["profile"], user, group)
+
+            if not prof:
+                raise ResourceNotFoundException(f"Profile {r['profile']} not found")
+
+            query = self.query_builder(user, group, {"name": r['image'].split(":")[0]})
+
+            if not dbase.get(itable, query=query):
+                raise ResourceNotFoundException(f"Image {r['image']} not found")
 
             # Endpoints and Networks
             for ep in instances:
@@ -104,73 +141,76 @@ class SessionManager(QueryUser):
                 assert ename is not None, f"invalid endpoint {ep}"
                 query = self.query_builder(user, group, {"name": ename})
                 node = dbase.get(ntable, query=query)
-                assert node is not None, f"did not find endpoint {ename}"
 
-                # TODO should we just update regardless???
-                # The db.json has beeen delered
+                if not node:
+                    raise ResourceNotFoundException(f"Ednpoint {ename} not found")
 
-                # if cfg.sm.get_handler(node).resolve_networks(node, prof):
-                cfg.sm.get_handler(node).resolve_networks(node, prof)
-                dbase.upsert(ntable, node, 'name', node['name'])
-                self.update_networks(node)
+                session_requests.append(SessionRequest(node=node,
+                                                       profile=prof,
+                                                       image=r['image'],
+                                                       arguments=r.get("arguments", None),
+                                                       remove_container=r.get("remove_container", None),
+                                                       constraints=c,
+                                                       kwargs=r.get("kwargs", dict())))
 
-                create.append(SessionRequest(node=node,
-                                             profile=prof,
-                                             image=img,
-                                             arguments=arguments,
-                                             remove_container=remove_container,
-                                             constraints=c,
-                                             kwargs=r.get("kwargs", dict())))
+        return session_requests
 
-        assert 0 < len(create) <= 2, 'expected one or two requests'
+    def create_networks(self, session_requests: List[SessionRequest]):
+        dbase = cfg.db
+        ntable = dbase.get_table('nodes')
 
-        # get an ID from the DB
+        for sesssion_request in session_requests:
+            node = sesssion_request.node
+            prof = sesssion_request.profile
+            node = dbase.get(ntable, name=node['name'])
+            cfg.sm.get_handler(sesssion_request.node).resolve_networks(node, prof)
+            dbase.upsert(ntable, node, 'name', node['name'])
+            self.update_networks(node)
+
+    def create_session(self, user, group, session_requests: List[SessionRequest], req, current_user, users=None):
+        users = users or list()
         db_id = precommit_db()
-        svcs = dict()
-
-        # keep a running set of addresses and ports allocated for this request
-        addrs_v4 = set()
+        svcs = dict()  # get an ID from the DB
+        addrs_v4 = set()  # keep a running set of addresses and ports allocated for this request
         addrs_v6 = set()
         cports = set()
         sports = set()
-        i = 1
-        for s in create:
-            nname = s.node.get('name')
-            if nname not in svcs:
-                svcs[nname] = list()
 
-            if s.profile.name.startswith('sense-janus'):
-                sname = cname_from_id(db_id, i, s.profile.name)
-            else:
-                sname = cname_from_id(db_id, i)
+        try:
+            for i, s in enumerate(session_requests):
+                nname = s.node.get('name')
+                if nname not in svcs:
+                    svcs[nname] = list()
 
-            # noinspection PyBroadException
+                if s.profile.name.startswith('sense-janus'):
+                    sname = cname_from_id(db_id, i + 1, s.profile.name)
+                else:
+                    sname = cname_from_id(db_id, i + 1, 'janus' + '-' + s.profile.name)
+
+                rec = cfg.sm.get_handler(s.node).create_service_record(
+                    sname, s, addrs_v4, addrs_v6, cports, sports
+                )
+
+                assert rec is not None
+                svcs[nname].append(rec)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            precommit_db(Id=db_id, delete=True)
+            raise SessionManagerException(f'Was not able to create all services:{e}')
+
+        if not cfg.dryrun:
             try:
-                rec = cfg.sm.get_handler(s.node).create_service_record(sname, s, addrs_v4, addrs_v6, cports, sports)
-
-                if rec:
-                    svcs[nname].append(rec)
-            except Exception:
+                for k, services in svcs.items():
+                    for s in services:
+                        cfg.sm.init_service(s)
+            except Exception as e:
                 import traceback
                 traceback.print_exc()
-                break
+                precommit_db(Id=db_id, delete=True)
+                raise SessionManagerException(f'Was not able to able to initialize all services:{e}')
 
-            i += 1
-
-        if (i - 1) != len(create):
-            precommit_db(Id=db_id, delete=True)
-            raise Exception("Was not able to create all services")
-
-        # setup simple accounting
-        record = {'uuid': str(uuid.uuid4()),
-                  'user': user if user else current_user,
-                  'state': State.INITIALIZED.name}
-
-        for k, services in svcs.items():
-            for s in services:
-                cfg.sm.init_service(s)
-
-        # complete accounting
+        record = dict(uuid=str(uuid.uuid4()), user=user if user else current_user, state=State.INITIALIZED.name)
         record['id'] = db_id
         record['services'] = svcs
         record['request'] = req
@@ -214,7 +254,7 @@ class SessionManager(QueryUser):
         """
         Handle the starting of container services
         """
-        dbase = self.db or cfg.db
+        dbase = cfg.db
         table = dbase.get_table('active')
         ntable = dbase.get_table('nodes')
         assert session_id
@@ -222,7 +262,7 @@ class SessionManager(QueryUser):
         svc = dbase.get(table, query=query)
 
         if not svc:
-            raise Exception(f'no janus session found for {session_id}')
+            raise ResourceNotFoundException(f'no janus session found for {session_id}')
 
         if svc['state'] == State.STARTED.name:
             return svc
@@ -232,20 +272,17 @@ class SessionManager(QueryUser):
         services = svc.get("services", dict())
         for k, v in services.items():
             for s in v:
-                cid = s.get("container_id")
-                if not cid:
-                    log.warning(f"Skipping service with no container_id: {k}")
-                    error = True
-                    continue
                 node = dbase.get(ntable, name=k)
+
                 if not node:
-                    log.error(f"Container node {k} not found for container_id: {cid}")
-                    return {"error": f"Node not found: {k}"}, 404
+                    raise ResourceNotFoundException(f"Node not found: {k}")
+
                 handler = cfg.sm.get_handler(node)
+                cid = s["container_id"]
                 log.debug(f"Starting container {cid} on {k}")
 
                 if not cfg.dryrun:
-                    # Error acconting
+                    # Error accounting
                     orig_errcnt = len(s.get('errors'))
 
                     try:
@@ -263,46 +300,51 @@ class SessionManager(QueryUser):
 
                     # Trim logged errors
                     errcnt = len(s.get('errors'))
-                    if not errcnt-orig_errcnt:
+                    if not errcnt - orig_errcnt:
                         s['errors'] = list()
                     else:
-                        s['errors'] = s['errors'][orig_errcnt-errcnt:]
+                        s['errors'] = s['errors'][orig_errcnt - errcnt:]
                 # End of Ansible job
+
+        if not error and svc.get('peer'):
+            peer = svc.get('peer')
+
+            if isinstance(svc.get('peer'), list):
+                peer = peer[0]
+
+            try:
+                self.start_session(peer['id'])
+            except Exception as e:
+                log.error(f"Could not start peer session using {peer['id']}: {e}")
+
         svc['state'] = State.MIXED.name if error else State.STARTED.name
         return commit_db(svc, session_id, realized=True)
 
     def stop_session(self, session_id):
-        dbase = self.db or cfg.db
+        dbase = cfg.db
         table = dbase.get_table('active')
         ntable = dbase.get_table('nodes')
         assert session_id is not None
         svc = dbase.get(table, ids=session_id)
 
         if not svc:
-            raise Exception(f"janus session {session_id} not found")
+            raise ResourceNotFoundException(f'no janus session found for {session_id}')
 
         if svc['state'] == State.STOPPED.name:
-            # log.warning(f"Service {svc['uuid']} already stopped")
             return svc
 
         if svc['state'] == State.INITIALIZED.name:
-            # log.warning(f"Service {svc['uuid']} already in initialized state")
             return svc
 
         # stop the services
         error = False
         for k, v in svc['services'].items():
             for s in v:
-                cid = s.get('container_id')
-
-                if not cid:
-                    log.warning(f"Skipping service with no container_id: {k}")
-                    continue
-
+                cid = s['container_id']
                 node = dbase.get(ntable, name=k)
 
                 if not node:
-                    raise Exception(f"Container node {k} not found for container_id: {cid}")
+                    raise ResourceNotFoundException(f"Container node {k} not found for container_id: {cid}")
 
                 log.debug(f"Stopping container {cid} on {k}")
 
@@ -319,7 +361,7 @@ class SessionManager(QueryUser):
         svc = commit_db(svc, session_id, delete=True, realized=True)
 
         if error:
-            raise Exception(str(svc['errors']))
+            raise SessionManagerException(str(svc['errors']))
 
         if svc.get('peer'):
             peer = svc.get('peer')
@@ -330,7 +372,7 @@ class SessionManager(QueryUser):
             try:
                 self.stop_session(peer['id'])
             except Exception as e:
-                log.error(f"Could not stop peer container using {peer['id']}: {e}")
+                log.error(f"Could not stop peer session using {peer['id']}: {e}")
 
         return svc
 
@@ -345,17 +387,17 @@ class SessionManager(QueryUser):
         doc = dbase.get(table, query=query)
 
         if doc is None:
-            raise Exception(f"Session Not found {id}")
+            return
 
         futures = list()
 
         with ThreadPoolExecutor(max_workers=8) as executor:
             for k, v in doc['services'].items():
+                ex = None
                 try:
                     n = dbase.get(nodes, name=k)
                     if not n:
-                        log.error(f"Node {k} not found")
-                        return {"error": f"Node not found: {k}"}, 404
+                        raise ResourceNotFoundException(f"Node {k} not found")
                     handler = cfg.sm.get_handler(n)
                     if not cfg.dryrun:
                         for s in v:
@@ -363,15 +405,21 @@ class SessionManager(QueryUser):
                                                            Node(**n), s.get('container_id'),
                                                            **{'service': s,
                                                               'name': k}))
+                except (KubeApiException, PortainerApiException) as ae:
+                    if str(ae.status) == "404":
+                        continue
+
+                    ex = ae
                 except Exception as e:
+                    ex = e
+
+                if ex:
                     import traceback
                     traceback.print_exc()
-                    log.error(f"Could not find node/container to stop, or already stopped: {k}:{e}")
+                    log.error(f"Could not stop container: {k}:{ex}")
+
         if not cfg.dryrun:
             for future in concurrent.futures.as_completed(futures):
-                from kubernetes.client import ApiException as KubeApiException
-                from portainer_api.rest import ApiException as PortainerApiException
-
                 ex = None
 
                 try:
@@ -388,12 +436,10 @@ class SessionManager(QueryUser):
                 except Exception as e:
                     ex = e
 
-                if ex:
+                if ex and not force:
                     log.error(f"Could not remove container on remote node: {type(ex)}:{ex}")
-                    if not force:
-                        return {"error": str(e)}, 503
+                    raise ex
 
         # delete always removes realized state info
         commit_db(doc, aid, delete=True, realized=True)
         commit_db(doc, aid, delete=True)
-        return None, 204

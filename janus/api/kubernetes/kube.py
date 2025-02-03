@@ -442,7 +442,8 @@ class KubernetesApi(Service):
                 ninfo = self.get_network(Node(**node), net.name)
 
                 if is_subset(kwargs, ninfo.get('_data')):
-                    log.info(f"Matching Network {net.name} found on {nname}")
+                    log.info(f"Found matching network {net.name} found on {nname}")
+                    node['networks'][net.name] = ninfo
                     continue
             except ApiException as ae:
                 if str(ae.status) != "404":
@@ -452,6 +453,10 @@ class KubernetesApi(Service):
                 log.warning(f"Removing non matching network {net.name} on {nname}")
                 self.remove_network(Node(**node), net.name)
 
+                if net.name in node['networks']:
+                    del node['networks'][net.name]
+
+            log.info(f"Creating: No matching network {net.name} found on {nname}")
             ninfo = self.create_network(Node(**node), net.name, **kwargs)
             node['networks'][net.name] = ninfo
             created = True
