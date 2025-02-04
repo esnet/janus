@@ -205,19 +205,18 @@ class SENSEMetaManager(DBHandler):
         task_info = dict()
         task_info[task_id] = targets
         endpoints = [target['name'] for target in targets]
-        unknown_endpoints = [endpoint for endpoint in endpoints if endpoint not in node_names]
 
+        unknown_endpoints = [endpoint for endpoint in endpoints if endpoint not in node_names]
         if unknown_endpoints:
             log.warning(f'unknown endpoint for instance {instance_id}:endpoints={unknown_endpoints}')
             self.sense_api_handler.reject_task(task_id, targets, f"unkown targets:{unknown_endpoints}")
             return None
 
-        clusters = sense_session['clusters'] if 'clusters' in sense_session else list()
         users = list()  # sense_session['users'] if 'users' in sense_session else list()
-
         for target in targets:
             users.extend(target['principals'])
 
+        clusters = sense_session['clusters'] if 'clusters' in sense_session else list()
         for target in targets:
             agent = node_cluster_map[target['name']]
 
@@ -244,14 +243,9 @@ class SENSEMetaManager(DBHandler):
             alias = f'sense-janus-{alias.replace(" ", "-")}-{"-".join(instance_id.split("-")[0:2])}'
 
         users = sorted(list(set(users)))
-        text = 'other than admin' if 'admin' in users else ''
 
         if 'admin' in users:
             users.remove('admin')
-
-        if not users:
-            self.sense_api_handler.reject_task(task_id, targets, f'must specify at least one principal {text}'.strip())
-            return None
 
         sense_session = dict(key=instance_id,
                              name=alias,
