@@ -126,6 +126,7 @@ class DBHandler(object):
     def find_images(self, *, name):
         images = self.db.search(self.image_table, query=(Query().name == name))
         return images
+
     #
     # def find_cluster(self, *, cluster_id=None, name=None):
     #     if id:
@@ -305,23 +306,6 @@ class DBHandler(object):
 
         return agents
 
-    def old_get_agents(self):
-        agents = dict()
-        clusters = self.db.all(self.nodes_table)
-
-        for cluster in clusters:
-            if 'cluster_nodes' in cluster:
-                for node in cluster['cluster_nodes']:
-                    cluster_info = (dict(cluster_id=cluster['id'],
-                                         cluster_name=cluster['name'],
-                                         namespace=cluster['namespace']))
-                    node['cluster_info'] = cluster_info
-                    agents[node['name']] = node
-            else:
-                agents[cluster['name']] = cluster
-
-        return agents
-
     def create_profiles(self, sense_session):
         task_info = sense_session['task_info']
         name = sense_session['name'].lower()
@@ -415,3 +399,20 @@ class DBHandler(object):
         for network_profile in network_profiles:
             network_profile['users'] = list(set(users))
             self.save_network_profile(network_profile)
+
+    def update_janus_sessions(self, sense_session: dict):
+        for network_profile_name in sense_session['network_profile']:
+            network_profiles = self.find_network_profiles(name=network_profile_name)
+            assert len(network_profiles) == 1
+            network_profiles[0]['users'] = sense_session['users']
+            self.save_network_profile(network_profiles[0])
+
+        for host_profile_name in sense_session['host_profile']:
+            host_profiles = self.find_host_profiles(name=host_profile_name)
+            assert len(host_profiles) == 1
+            host_profiles[0]['users'] = sense_session['users']
+            self.save_host_profile(host_profiles[0])
+
+        for janus_session in self.find_janus_session(host_profile_names=sense_session['host_profile']):
+            janus_session['users'] = sense_session['users']
+            self.db.update(self.janus_session_table, janus_session, ids=janus_session['id'])

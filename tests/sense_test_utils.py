@@ -105,7 +105,7 @@ class ComplexScript(BaseScript):
     def ptask4(self, vlan1, vlan2):
         task = self._create_template("ptask4", "handle-sense-instance")
         task['config']['targets'] = [
-            self._create_target(self.nodes[0], vlan1, None, self.principals),
+            self._create_target(self.nodes[0], vlan1, None, []),
             self._create_target(self.nodes[1], vlan2, None, ['extra_user2'])
         ]
 
