@@ -546,6 +546,7 @@ class PortainerDockerApi(Service):
 
                 if is_subset(kwargs, ninfo.get('_data')):
                     log.info(f"Matching Network {net.name} found on {nname}")
+                    node['networks'][net.name] = ninfo
                     continue
             except ApiException as ae:
                 if str(ae.status) != "404":
@@ -554,6 +555,9 @@ class PortainerDockerApi(Service):
             if ninfo:
                 log.warning(f"Removing non matching network {net.name} on {nname}")
                 self.remove_network(Node(**node), net.name)
+
+                if net.name in node['networks']:
+                    del node['networks'][net.name]
 
             ninfo = self.create_network(Node(**node), net.name, **kwargs)
             node['networks'][net.name] = ninfo
