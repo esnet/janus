@@ -415,4 +415,5 @@ class DBHandler(object):
 
         for janus_session in self.find_janus_session(host_profile_names=sense_session['host_profile']):
             janus_session['users'] = sense_session['users']
+            janus_session['user'] = sense_session['users'][0] if sense_session['users'] else 'admin'
             self.db.update(self.janus_session_table, janus_session, ids=janus_session['id'])

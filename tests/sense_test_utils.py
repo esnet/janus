@@ -51,14 +51,14 @@ class BaseScript:
     def ptask1(self, vlan) -> list:
         task = self._create_template("ptask1", "handle-sense-instance")
         task['config']['targets'] = [
-            self._create_target(self.nodes[0], vlan, self.ips[0], self.principals)
+            self._create_target(self.nodes[0], vlan, self.ips[0], ['admin'])
         ]
         return [task]
 
     def ptask2(self, vlan):
         task = self._create_template("ptask2", "handle-sense-instance")
         task['config']['targets'] = [
-            self._create_target(self.nodes[1], vlan, None, ['admin'])
+            self._create_target(self.nodes[1], vlan, None, self.principals)
         ]
 
         return [task]

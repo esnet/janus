@@ -76,7 +76,7 @@ class SENSEMetaManager(DBHandler):
         targets = sum(sense_session['task_info'].values(), [])
         targets = sorted(targets, key=lambda t: t['name'])
         host_profiles = sense_session['host_profile']
-        owner = sense_session["users"][0]
+        owner = sense_session["users"][0] if sense_session['users'] else 'admin'
 
         if len(host_profiles) == 1:
             requests = [dict(
@@ -212,10 +212,6 @@ class SENSEMetaManager(DBHandler):
             self.sense_api_handler.reject_task(task_id, targets, f"unkown targets:{unknown_endpoints}")
             return None
 
-        users = list()  # sense_session['users'] if 'users' in sense_session else list()
-        for target in targets:
-            users.extend(target['principals'])
-
         clusters = sense_session['clusters'] if 'clusters' in sense_session else list()
         for target in targets:
             agent = node_cluster_map[target['name']]
@@ -241,6 +237,10 @@ class SENSEMetaManager(DBHandler):
             alias = f'sense-janus-{"-".join(instance_id.split("-")[0:2])}'
         else:
             alias = f'sense-janus-{alias.replace(" ", "-")}-{"-".join(instance_id.split("-")[0:2])}'
+
+        users = list()  # sense_session['users'] if 'users' in sense_session else list()
+        for target in targets:
+            users.extend(target['principals'])
 
         users = sorted(list(set(users)))
 
