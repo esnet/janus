@@ -15,7 +15,7 @@ class SenseConstants:
 class SenseUtils:
     @staticmethod
     def parse_from_config(cfg: JanusConfig, parser: ConfigParser, plugin_section='PLUGINS'):
-        if plugin_section in plugin_section:
+        if plugin_section in parser:
             for plugin in parser[plugin_section]:
                 if plugin == 'sense-metadata-plugin':
                     sense_meta_plugin = parser.get("PLUGINS", 'sense-metadata-plugin', fallback=None)
