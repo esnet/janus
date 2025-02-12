@@ -40,7 +40,7 @@ from janus.api.utils import (
 
 
 log = logging.getLogger(__name__)
-
+EDGE_AGENT_TYPE = 4
 
 def auth(func):
     def wrapper(self, *args, **kwargs):
@@ -109,17 +109,18 @@ class PortainerDockerApi(Service):
 
     def _parse_portainer_endpoints(self, res):
         ret = dict()
-
         for e in res:
             ret[e['Name']] = {
                 'name': e['Name'],
                 'endpoint_status': e['Status'],
                 'endpoint_type': EPType.PORTAINER,
+                'backend_type': e['Type'],
                 'id': e['Id'],
                 'gid': e['GroupId'],
-                'url': e['URL'],
                 'public_url': e['PublicURL']
             }
+            if e['Type'] != EDGE_AGENT_TYPE:
+                ret[e['Name']]['url'] = e['URL']
         return ret
 
     def _parse_portainer_networks(self, res):
@@ -155,13 +156,27 @@ class PortainerDockerApi(Service):
         try:
             nets = self.get_networks(Node(id=Id, name=nname))
             imgs = self.get_images(Node(id=Id, name=nname))
+            docker = self._get_docker_info(Id)
         except Exception as e:
             import traceback
             traceback.print_exc()
             log.error("No response from {}: {}".format(url, e))
             return nodes[nname]
+        hinfo = {
+            "cpu": {
+                "count": docker.get("NCPU"),
+                "brand_raw": docker.get("Architecture"),
+            },
+            "mem": {
+                "total": docker.get("MemTotal")
+            }
+        }
+        if nodes[nname].get('backend_type') == EDGE_AGENT_TYPE:
+            nodes[nname]['url'] = docker['Name']
+        nodes[nname]['host'] = hinfo
         nodes[nname]['networks'] = self._parse_portainer_networks(nets)
         nodes[nname]['images'] = self._parse_portainer_images(imgs)
+        nodes[nname]['docker'] = docker
         if cb:
             cb(nodes[nname], nname, url)
         return nodes[nname]
@@ -220,6 +235,14 @@ class PortainerDockerApi(Service):
     def remove_node(self, nid):
         eapi = EndpointsApi(self.client)
         return eapi.endpoint_delete(nid)
+
+    # Info
+    def _get_docker_info(self, nid: int, **kwargs):
+        kwargs['_return_http_data_only'] = True
+        res = self._call("/endpoints/{}/docker/info".format(nid),
+                         "GET", None, **kwargs)
+        string = res.read().decode('utf-8')
+        return json.loads(string)
 
     # Images
     def get_images(self, node: Node, **kwargs):
@@ -356,12 +379,11 @@ class PortainerDockerApi(Service):
                 body[k] = v
         kwargs = dict()
         kwargs['_return_http_data_only'] = True
-        res = self._call("/endpoints/{}/docker/networks/create".format(node.id),
-                         "POST", body, **kwargs)
-        string = res.read().decode('utf-8')
-        if (res.status == 200):
-            return {'status': '200 OK'}
-        return json.loads(string)
+        self._call("/endpoints/{}/docker/networks/create".format(node.id),
+                   "POST", body, **kwargs)
+        res = self.get_networks(node, name)
+        ninfo = self._parse_portainer_networks([res])[name]
+        return ninfo
 
     def remove_network(self, node: Node, nid, **kwargs):
         kwargs['_return_http_data_only'] = True
@@ -500,8 +522,8 @@ class PortainerDockerApi(Service):
             _request_timeout=params.get('_request_timeout'),
             collection_formats=collection_formats)
 
-
-    def resolve_networks(self, node: Node, prof):
+    # TODO Note node is of type tinydb.table.Document
+    def resolve_networks(self, node, prof):
         def _build_kwargs(p):
             docker_kwargs = {
                 "Name": p.name,
@@ -536,24 +558,34 @@ class PortainerDockerApi(Service):
             nprof = cfg.pm.get_profile(Constants.NET, net.name)
             if not nprof:
                 raise Exception(f"Network profile {net.name} not found")
-            kwargs = _build_kwargs(nprof)
-            ninfo = node.get('networks').get(net.name)
-            # We are done if the node already has a network and it matches our profile
-            if ninfo and is_subset(kwargs, ninfo.get('_data')):
-                continue
-            # Otherwise we need to either create or recreate the network
-            if not ninfo:
-                log.info(f"Network {net.name} not found on {nname}, attempting to create")
-            elif ninfo and not is_subset(kwargs, ninfo.get('_data')):
-                log.info(f"Network {net.name} found on {nname} but differs from profile, attempting to recreate")
-                try:
-                    self.remove_network(Node(**node), net.name)
-                except Exception as e:
-                    log.warn(f"Removing network {net.name} on {nname} failed: {e}")
-            self.create_network(Node(**node), net.name, **kwargs)
-            created = True
-        return created
 
+            kwargs = _build_kwargs(nprof)
+            ninfo = None
+
+            try:
+                res = self.get_networks(Node(**node), net.name)
+                ninfo = self._parse_portainer_networks([res])[net.name]
+
+                if is_subset(kwargs, ninfo.get('_data')):
+                    log.info(f"Matching Network {net.name} found on {nname}")
+                    node['networks'][net.name] = ninfo
+                    continue
+            except ApiException as ae:
+                if str(ae.status) != "404":
+                    raise ae
+
+            if ninfo:
+                log.warning(f"Removing non matching network {net.name} on {nname}")
+                self.remove_network(Node(**node), net.name)
+
+                if net.name in node['networks']:
+                    del node['networks'][net.name]
+
+            ninfo = self.create_network(Node(**node), net.name, **kwargs)
+            node['networks'][net.name] = ninfo
+            created = True
+
+        return created
 
     def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
         srec = dict()

@@ -48,10 +48,12 @@ class JanusConfig():
         self._dry_run = False
         self._agent = False
         self._controller = False
+        self._plugins = list()
         self.PORTAINER_URI = None
         self.PORTAINER_USER = None
         self.PORTAINER_PASSWORD = None
         self.PORTAINER_VERIFY_SSL = True
+        self.sense_metadata = False
 
         user = os.getenv("JANUS_USER")
         pwd = os.getenv("JANUS_PASSWORD")
@@ -147,6 +149,10 @@ class JanusConfig():
     def sm(self):
         return self._sm
 
+    @property
+    def plugins(self):
+        return self._plugins
+    
     def setdb(self, db, pm, sm):
         self._db = db
         self._pm = pm

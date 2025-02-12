@@ -19,3 +19,4 @@ ansible-tower-cli==3.3.8
 pytest-xprocess
 kubernetes==29.0.0
 openapi-slurm-0.0.38-client
+sense-o-api==1.37

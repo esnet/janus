@@ -99,7 +99,7 @@ class JanusEdgeApi(Service):
     def remove_container(self, node: Node, container):
         pass
 
-    def connect_network(self, node: Node, network, container):
+    def connect_network(self, node: Node, network, container, **kwargs):
         pass
 
     def exec_create(self, node: Node, container, **kwargs):

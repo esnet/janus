@@ -4,14 +4,7 @@ import platform
 import argparse
 import logging.config
 from configparser import ConfigParser
-
-# XXX Temporary fix for https://github.com/jarus/flask-testing/issues/143
-#import werkzeug
-#werkzeug.cached_property = werkzeug.utils.cached_property
-
-# XXX More monkeypatching
-#import flask.scaffold
-#flask.helpers._endpoint_from_view_func = flask.scaffold._endpoint_from_view_func
+import werkzeug
 
 from flask_restx import Api
 from flask import Flask, Blueprint
@@ -20,6 +13,7 @@ from flask_sock import Sock
 from janus.api.controller import ns as controller_ns
 from janus.api.agent import ns as agent_ns
 from janus import settings
+from janus.lib.sense_utils import SenseUtils
 from janus.settings import cfg
 from janus.api.db import DBLayer
 from janus.api.profile import ProfileManager
@@ -36,6 +30,7 @@ except:
     logging_conf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), 'config/logging.conf'))
     logging.config.fileConfig(logging_conf_path)
 log = logging.getLogger(__name__)
+
 
 def parse_config(fpath):
     parser = ConfigParser(allow_no_value=True)
@@ -59,9 +54,20 @@ def parse_config(fpath):
         else:
             cfg.PORTAINER_VERIFY_SSL = True
     except Exception as e:
-        raise AttributeError('Config file parser error: {}'.format(e))
+        raise AttributeError(f"Config file parser error: {e}")
 
+    try:
+        from janus.lib.sense_utils import SenseUtils
 
+        sense_properties = SenseUtils.parse_from_config(cfg=cfg, parser=parser)
+
+        if cfg.sense_metadata:
+            from janus.lib.sense import SENSEMetaRunner
+
+            cfg.plugins.append(SENSEMetaRunner(cfg=cfg, properties=sense_properties))
+    except Exception as e:
+        raise AttributeError(f"Config file parser error: {e}")
+    
 def register_api(name, title, version, desc, prefix, nslist):
     blueprint = Blueprint(name, __name__, url_prefix=prefix)
     api = Api(blueprint,
@@ -129,6 +135,11 @@ def main():
             log.error(e)
             exit(1)
         cfg._controller = True
+        # start any enabled plugins
+        if not settings.FLASK_DEBUG or (settings.FLASK_DEBUG and werkzeug.serving.is_running_from_reloader()):
+            for plugin in cfg.plugins:
+                plugin.start()
+
     if args.agent:
         cfg._agent = True
     if args.dryrun:
@@ -150,8 +161,12 @@ def main():
         app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
 
     ssl = 'adhoc' if args.ssl else None
-    app.run(host=args.bind, port=args.port, ssl_context=ssl,
-            debug=settings.FLASK_DEBUG, threaded=True)
+    try:
+        app.run(host=args.bind, port=args.port, ssl_context=ssl,
+                debug=settings.FLASK_DEBUG, threaded=True)
+    finally:
+        for p in cfg.plugins:
+            p.stop()
 
 if __name__ == '__main__':
     main()
