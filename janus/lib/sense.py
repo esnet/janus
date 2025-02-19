@@ -73,6 +73,49 @@ class SENSEMetaManager(DBHandler):
         return instances
 
     def create_janus_session(self, sense_session):
+        session_manager = SessionManager()
+        targets = sum(sense_session['task_info'].values(), [])
+        targets = sorted(targets, key=lambda t: t['name'])
+        host_profiles = sense_session['host_profile']
+        owner = sense_session["users"][0] if sense_session['users'] else 'admin'
+
+        if len(host_profiles) == 1:
+            requests = [dict(
+                instances=self._instances(targets),
+                profile=host_profiles[0],
+                errors=[],
+                image='dtnaas/tools:latest',
+                arguments=str(),
+                kwargs=dict(USER_NAME=str(), PUBLIC_KEY=str()),
+                remove_container=False
+            )]
+
+        else:
+            requests = list()
+
+            for idx, host_profile in enumerate(host_profiles):
+                request = dict(
+                    instances=self._instances([targets[idx]]),
+                    profile=host_profile,
+                    errors=[],
+                    image='dtnaas/tools:latest',
+                    arguments=str(),
+                    kwargs=dict(USER_NAME=str(), PUBLIC_KEY=str()),
+                    remove_container=False
+                )
+                requests.append(request)
+
+        log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{requests}')
+        session_manager.validate_request(requests)
+        session_requests = session_manager.parse_requests(None, None, requests)
+        session_manager.create_networks(session_requests)
+        janus_session_id = session_manager.create_session(
+            None, None, session_requests, requests, owner, sense_session["users"]
+        )
+
+        return [janus_session_id]
+
+    def old_create_janus_session(self, sense_session):
         targets = sum(sense_session['task_info'].values(), [])
         targets = sorted(targets, key=lambda t: t['name'])
         host_profiles = sense_session['host_profile']
@@ -424,7 +467,8 @@ class SENSEMetaManager(DBHandler):
         else:
             mesg = f'giving up on terminating session for {sense_session["key"]}'
 
-        self.sense_api_handler.finish_task(task_id, list(), mesg)
+        targets = SenseUtils.to_target_summary(sum(sense_session.get('task_info', dict()).values(), []))
+        self.sense_api_handler.finish_task(task_id, targets, mesg)
         sense_session['status'] = 'DELETED'
         log.warning(f'removing sense session from db: {mesg}')
         self.db.remove(self.sense_session_table, name=sense_session['name'])
