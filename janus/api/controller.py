@@ -336,12 +336,12 @@ class Exec(Resource):
         log.debug(req)
 
         nname = req["node"]
-        if "start" in req:
-            start = req["start"]
-        if "attach" in req:
-            attach = req["attach"]
-        if "tty" in req:
-            tty = req["tty"]
+        if str(req.get("start", "")).lower() == "true":
+            start = True
+        if str(req.get("attach", "")).lower() == "false":
+            attach = False
+        if str(req.get("tty", "")).lower() == "true":
+            tty = True
 
         dbase = cfg.db
         table = dbase.get_table('nodes')
@@ -352,7 +352,7 @@ class Exec(Resource):
         container = req["container"]
         cmd = req["Cmd"]
 
-        kwargs = {'AttachStdin': False,
+        kwargs = {'AttachStdin': attach,
                   'AttachStdout': attach,
                   'AttachStderr': attach,
                   'Tty': tty,

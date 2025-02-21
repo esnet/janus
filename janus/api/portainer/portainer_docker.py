@@ -451,7 +451,7 @@ class PortainerDockerApi(Service):
         q = queue.Queue()
         t = Thread(target=_get_stream, args=(ws, q))
         t.start()
-        return q
+        return ws, q
 
     @auth
     def _call(self, url, method, body, headers=[], **kwargs):

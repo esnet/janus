@@ -1,5 +1,6 @@
 import json
 import logging
+import asyncio
 
 from janus.settings import cfg
 from janus.api.constants import WSType
@@ -10,26 +11,26 @@ from janus.api.pubsub import Subscriber, TOPIC
 
 log = logging.getLogger(__name__)
 
-def handle_websocket(sock):
-    data = sock.receive()
+async def handle_websocket(sock):
+    data = await sock.receive()
     try:
         js = json.loads(data)
     except Exception as e:
         log.error(f"Invalid websocket request: {e}")
-        sock.send(json.dumps({"error": "Invalid request"}))
+        await sock.send(json.dumps({"error": "Invalid request"}))
         return
 
     typ = js.get("type")
     if typ is None or typ not in [*WSType]:
-        sock.send(json.dumps({"error": f"Invalid websocket request type: {typ}"}))
+        await sock.send(json.dumps({"error": f"Invalid websocket request type: {typ}"}))
         return
 
     if typ == WSType.AGENT_COMM:
         while True:
-            msg = sock.receive()
+            msg = await sock.receive()
             if msg.strip() == "q" or msg.strip() == "quit":
                 return
-            sock.send(msg)
+            await sock.send(msg)
 
     if typ == WSType.AGENT_REGISTER:
         peer = sock.sock.getpeername()
@@ -38,7 +39,7 @@ def handle_websocket(sock):
             cfg.sm.add_node(req)
         except Exception as e:
             log.error(f"Invalid request: {e}")
-            sock.send(json.dumps({"error": f"Invalid request: {e}"}))
+            await sock.send(json.dumps({"error": f"Invalid request: {e}"}))
             return
 
     if typ == WSType.EVENTS:
@@ -50,20 +51,51 @@ def handle_websocket(sock):
             r = sub.read()
             if r.get("eof"):
                 break
-            sock.send(json.dumps(r.get("msg")))
+            await sock.send(json.dumps(r.get("msg")))
+
+    # if typ == WSType.EXEC_STREAM:
+    #     log.debug(f"Got exec stream request from {sock.sock.getpeername()}")
+    #     req = WSExecStream(**js)
+    #     handler = cfg.sm.get_handler(nname=req.node)
+    #     try:
+    #         res = handler.exec_stream(Node(id=req.node_id, name=req.node), req.container, req.exec_id)
+    #     except Exception as e:
+    #         log.error(f"No exec stream found for node {req.node} and container {req.container}: {e}")
+    #         sock.send(json.dumps({"error": "Exec stream not found"}))
+    #         return
+    #     while True:
+    #         r = res.get()
+    #         if r.get("eof"):
+    #             break
+    #         sock.send(r.get("msg"))
 
     if typ == WSType.EXEC_STREAM:
         log.debug(f"Got exec stream request from {sock.sock.getpeername()}")
         req = WSExecStream(**js)
         handler = cfg.sm.get_handler(nname=req.node)
         try:
-            res = handler.exec_stream(Node(id=req.node_id, name=req.node), req.container, req.exec_id)
+            exec_id = handler.exec_create(Node(id=req.node_id, name=req.node), req.container, req.cmd)
+            exec_response = handler.exec_start(Node(id=req.node_id, name=req.node), exec_id)
+            # ws, q = handler.exec_stream(Node(id=req.node_id, name=req.node), exec_id)
+            ws, q = handler.exec_stream(Node(id=req.node_id, name=req.node), req.container, req.exec_id)
         except Exception as e:
             log.error(f"No exec stream found for node {req.node} and container {req.container}: {e}")
-            sock.send(json.dumps({"error": "Exec stream not found"}))
+            await sock.send(json.dumps({"error": "Exec stream not found"}))
             return
-        while True:
-            r = res.get()
-            if r.get("eof"):
-                break
-            sock.send(r.get("msg"))
+
+        async def send_input():
+            while True:
+                user_input = await sock.receive()
+                if user_input.strip().lower() in ["q", "quit"]:
+                    break
+                # sock.send(user_input)
+                ws.send(user_input)
+
+        async def receive_output():
+            while True:
+                r = q.get()
+                if r.get("eof"):
+                    break
+                await sock.send(r.get("msg"))
+
+        await asyncio.gather(send_input(), receive_output())
