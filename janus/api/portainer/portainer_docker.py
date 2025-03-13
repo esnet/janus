@@ -434,24 +434,45 @@ class PortainerDockerApi(Service):
         string = res.read().decode('utf-8')
         return {"response": string}
 
-    def exec_stream(self, node: Node, container, eid, **kwargs):
-        ws_url = f"{cfg.PORTAINER_WS}/exec?token={self.client.jwt}&id={eid}&endpointId={node.id}"
+    def exec_stream(self, node, container, exec_id):
+        ws_url = f"{cfg.PORTAINER_WS}/exec?token={self.client.jwt}&id={exec_id}&endpointId={node.id}"
         ws = websocket.create_connection(ws_url)
 
-        def _get_stream(ws, q):
+        send_queue = queue.Queue()
+        receive_queue = queue.Queue()
+
+        def send_messages(ws, send_queue):
+            while True:
+                message = send_queue.get()
+                if message is None:
+                    break
+                # ws.send(json.dumps(message))
+                ws.send(message)
+                send_queue.task_done()
+
+        def receive_messages(ws, receive_queue):
             while True:
                 try:
-                    msg = ws.recv()
-                    q.put({"msg": msg, "eof": False})
-                except:
-                    ws.close()
+                    response = ws.recv()
+                    receive_queue.put(response)
+                except websocket.WebSocketConnectionClosedException:
+                    log.error("WebSocket connection closed")
                     break
-            q.put({"msg": None, "eof": True})
 
-        q = queue.Queue()
-        t = Thread(target=_get_stream, args=(ws, q))
-        t.start()
-        return ws, q
+        sender_thread = Thread(target=send_messages, args=(ws, send_queue))
+        receiver_thread = Thread(target=receive_messages, args=(ws, receive_queue))
+
+        sender_thread.start()
+        receiver_thread.start()
+
+        return receive_queue, send_queue, ws, sender_thread, receiver_thread
+
+    def close_stream(self, ws, send_queue, receive_queue, sender_thread, receiver_thread):
+        send_queue.put(None)
+        sender_thread.join()
+        ws.close()
+        receive_queue.put(None)
+        receiver_thread.join()
 
     @auth
     def _call(self, url, method, body, headers=[], **kwargs):

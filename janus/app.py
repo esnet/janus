@@ -90,10 +90,8 @@ def init(app):
         api.add_namespace(controller_ns)
 
     @sock.route("/ws")
-    # def WebSocket(sock):
-    #     handle_websocket(sock)
-    async def WebSocket(ws):
-        await handle_websocket(ws)
+    def WebSocket(sock):
+        handle_websocket(sock)
 
 def main():
     parser = argparse.ArgumentParser(description='Janus Controller/Agent')
