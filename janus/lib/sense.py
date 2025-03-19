@@ -424,7 +424,7 @@ class SENSEMetaManager(DBHandler):
                     sense_session['error_message'] = f'error creating janus session: {e}'
 
         if 0 < sense_session['errors'] < self.retries:
-            targets = SenseUtils.to_target_summary(sum(sense_session.get('task_info', dict()).values(), []))
+            targets = SenseUtils.to_targets(sense_session)
             mesg = sense_session['terminate_error_message'] \
                 if sense_session['terminate_error_message'] else sense_session['error_message']
             self.sense_api_handler.wait_task(task_id, targets, mesg)
@@ -444,7 +444,7 @@ class SENSEMetaManager(DBHandler):
 
         self.save_sense_session(sense_session=sense_session)
         self.update_janus_sessions(sense_session=sense_session)
-        targets = SenseUtils.to_target_summary(sum(sense_session.get('task_info', dict()).values(), []))
+        targets = SenseUtils.to_targets(sense_session=sense_session)
         self.sense_api_handler.finish_task(task_id, targets, mesg)
 
     def _finish_instance_termination_notice_command(self, task_id, sense_session):
@@ -467,7 +467,7 @@ class SENSEMetaManager(DBHandler):
         else:
             mesg = f'giving up on terminating session for {sense_session["key"]}'
 
-        targets = SenseUtils.to_target_summary(sum(sense_session.get('task_info', dict()).values(), []))
+        targets = SenseUtils.to_targets(sense_session)
         self.sense_api_handler.finish_task(task_id, targets, mesg)
         sense_session['status'] = 'DELETED'
         log.warning(f'removing sense session from db: {mesg}')
@@ -481,24 +481,19 @@ class SENSEMetaManager(DBHandler):
                 sense_session['errors'] = 0
 
             task_id = None
-            targets = list()
 
             try:
-                task_info = sense_session['task_info']
-                targets = sum(task_info.values(), [])
-
                 if sense_session['command'] != 'handle-sense-instance':
                     assert 'termination_task' in sense_session
                     task_id = sense_session['termination_task']
                     self._finish_instance_termination_notice_command(task_id, sense_session)
                 else:
-                    task_info = sense_session['task_info']
-                    targets = sum(task_info.values(), [])
                     uuids = [uuid for uuid in sense_session['task_info']]
                     assert len(uuids) == 1
                     task_id = uuids[0]
                     self._finish_handle_sense_instance_command(task_id, sense_session)
             except Exception as e:
+                targets = SenseUtils.to_targets(sense_session)
                 self.sense_api_handler.fail_task(task_id, targets, f'{type(e)}:{e}')
                 sense_session['status'] = 'FAILED'
                 self.db.remove(self.sense_session_table, name=sense_session['name'])

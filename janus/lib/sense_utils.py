@@ -48,6 +48,36 @@ class SenseUtils:
         return ret
 
     @staticmethod
+    def to_targets(sense_session):
+        task_info = sense_session.get('task_info', dict())
+        targets = sum(task_info.values(), [])
+        targets = sorted(targets, key=lambda t: t['name'])
+        targets = [t.copy() for t in targets]
+
+        for target in targets:
+            target['principals'] = sense_session.get('users', list)
+            target['janus_network_profile'] = None
+            target['janus_host_profile'] = None
+            target['janus_session'] = None
+
+        if network_profiles := sense_session.get('network_profile', list()):
+            for idx, target in enumerate(targets):
+                network_profile = network_profiles[idx] if idx < len(network_profiles) else network_profiles[0]
+                target['janus_network_profile'] = network_profile
+
+        if host_profiles := sense_session.get('host_profile', list()):
+            for idx, target in enumerate(targets):
+                host_profile = host_profiles[idx] if idx < len(host_profiles) else host_profiles[0]
+                target['janus_host_profile'] = host_profile
+
+        if janus_sessions := sense_session.get('janus_session_id', list()):
+            for idx, target in enumerate(targets):
+                janus_session = janus_sessions[idx] if idx < len(janus_sessions) else janus_sessions[0]
+                target['janus_session'] = janus_session
+
+        return targets
+
+    @staticmethod
     def get_service_info(janus_session):
         pods = list()
         clusters = janus_session['services']
