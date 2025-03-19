@@ -1,6 +1,7 @@
 import json
 import logging
 import queue
+import websocket
 from threading import Thread
 
 from janus.settings import cfg
@@ -74,8 +75,17 @@ def handle_websocket(sock):
                 sock.send(response)
 
                 user_input = sock.receive()
+                if user_input.strip().lower() in ["exit", "quit"]:
+                    break
+                if user_input == '\x03':
+                    log.debug("Received Ctrl+C (SIGINT), exiting...")
+                    break
                 send_queue.put(user_input)
                 log.debug(f"Sent: {user_input}")
+        except websocket.WebSocketConnectionClosedException:
+            log.debug("WebSocket connection closed by client")
+        except Exception as e:
+            log.error(f"Unexpected error: {e}")
 
         finally:
             handler.close_stream(ws, send_queue, receive_queue, sender_thread, receiver_thread)

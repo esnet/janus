@@ -451,13 +451,22 @@ class PortainerDockerApi(Service):
                 send_queue.task_done()
 
         def receive_messages(ws, receive_queue):
-            while True:
-                try:
-                    response = ws.recv()
-                    receive_queue.put(response)
-                except websocket.WebSocketConnectionClosedException:
-                    log.error("WebSocket connection closed")
-                    break
+            try:
+                while True:
+                    try:
+                        response = ws.recv()
+                        receive_queue.put(response)
+                    except websocket.WebSocketConnectionClosedException:
+                        log.error("WebSocket connection closed unexpectedly")
+                        break
+                    except websocket.WebSocketProtocolException as e:
+                        log.error(f"WebSocket protocol exception: {e}")
+                        break
+                    except Exception as e:
+                        log.error(f"Unexpected error: {e}")
+                        break
+            finally:
+                receive_queue.put(None)
 
         sender_thread = Thread(target=send_messages, args=(ws, send_queue))
         receiver_thread = Thread(target=receive_messages, args=(ws, receive_queue))
