@@ -22,8 +22,8 @@ class BaseScript:
         self.context = {"alias": "fake", "uuid": "base"}
         self.principals = ["aessiari@lbl.gov"]
 
-        # self.nodes = ['k8s-gen5-01.sdsc.optiputer.net', 'k8s-gen5-02.sdsc.optiputer.net']
-        self.nodes = ['sandie-3.ultralight.org', 'sandie-5.ultralight.org']
+        self.nodes = ['k8s-gen5-01.sdsc.optiputer.net', 'k8s-gen5-02.sdsc.optiputer.net']
+        # self.nodes = ['sandie-3.ultralight.org', 'sandie-5.ultralight.org']
         self.ips = ['10.251.88.241/28', '10.251.88.242/28']
 
     def script(self):

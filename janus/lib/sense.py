@@ -146,19 +146,20 @@ class SENSEMetaManager(DBHandler):
                 log.warning(f'did not find cluster {cluster_name} while terminating sessions {sense_session}')
                 continue
 
-            net_names = set()
+            if sense_session['network_profile']:
+                net_names = set()
 
-            for target in sum(sense_session['task_info'].values(), []):
-                vlan = target['vlan']
-                net_names.add(f"{sense_session['network_profile'][0]}-{vlan}")
+                for target in sum(sense_session['task_info'].values(), []):
+                    vlan = target['vlan']
+                    net_names.add(f"{sense_session['network_profile'][0]}-{vlan}")
 
-            for net_name in net_names:
-                self.delete_network(cluster_name=cluster_name, name=net_name)
-                self.db.remove(self.networks_table, name=net_name)
+                for net_name in net_names:
+                    self.delete_network(cluster_name=cluster_name, name=net_name)
+                    self.db.remove(self.networks_table, name=net_name)
 
-                if net_name in cluster['networks']:
-                    del cluster['networks'][net_name]
-                    self.db.upsert(self.nodes_table, cluster, 'name', cluster_name)
+                    if net_name in cluster['networks']:
+                        del cluster['networks'][net_name]
+                        self.db.upsert(self.nodes_table, cluster, 'name', cluster_name)
 
     def _retrieve_instance_termination_notice_command(self, task):
         config = task['config']
