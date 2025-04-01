@@ -1,6 +1,14 @@
 import logging
+from configparser import ConfigParser
 
+from janus.api.db import DBLayer
+from janus.api.kubernetes import KubernetesApi
+from janus.api.manager import ServiceManager
+from janus.api.profile import ProfileManager
+from janus.lib.sense import SENSEMetaManager
 from janus.lib.sense_api_handler import SENSEApiHandler
+from janus.lib.sense_utils import SenseUtils
+from janus.settings import cfg, SUPPORTED_IMAGES
 
 log = logging.getLogger(__name__)
 
@@ -124,6 +132,17 @@ class TaskGenerator:
         raise GeneratorDone()
 
 
+class NoopSENSEApiHandler(SENSEApiHandler):
+    def __init__(self):
+        super().__init__('noop_url')
+
+    def retrieve_tasks(self, assigned, status):
+        pass
+
+    def post_metadata(self, metadata, domain, name):
+        return False
+
+
 class FakeSENSEApiHandler(SENSEApiHandler):
     def __init__(self, gen):
         super().__init__('fake_url')
@@ -158,5 +177,63 @@ class FakeSENSEApiHandler(SENSEApiHandler):
         else:
             self.task_state_map[kwargs['uuid']] += ',' + kwargs['state']
 
-        log.debug(f'faking updating task attempts:{data}:{kwargs}')
+        import json
+
+        log.debug(f'faking updating task attempts:{json.dumps(data, indent=2)}:{kwargs}')
         return True
+
+
+def create_sense_meta_manager(database, config_file, sense_api_handler=None):
+    db = DBLayer(path=database)
+    pm = ProfileManager(db, None)
+    sm = ServiceManager(db)
+    cfg.setdb(db, pm, sm)
+    parser = ConfigParser(allow_no_value=True)
+    parser.read(config_file)
+
+    config = parser['JANUS']
+    cfg.PORTAINER_URI = str(config.get('PORTAINER_URI', None))
+    cfg.PORTAINER_WS = str(config.get('PORTAINER_WS', None))
+    cfg.PORTAINER_USER = str(config.get('PORTAINER_USER', None))
+    cfg.PORTAINER_PASSWORD = str(config.get('PORTAINER_PASSWORD', None))
+    vssl = str(config.get('PORTAINER_VERIFY_SSL', 'True'))
+
+    if vssl == 'False':
+        cfg.PORTAINER_VERIFY_SSL = False
+        import urllib3
+        urllib3.disable_warnings()
+    else:
+        cfg.PORTAINER_VERIFY_SSL = True
+
+    sense_properties = SenseUtils.parse_from_config(cfg=cfg, parser=parser)
+    return SENSEMetaManager(cfg, sense_properties, sense_api_handler=sense_api_handler)
+
+
+def load_images_if_needed(db, image_table):
+    if not db.all(image_table):
+        for img in SUPPORTED_IMAGES:
+            db.upsert(image_table, img, 'name', img['name'])
+
+
+def load_nodes_if_needed(db, node_table, node_name_filter):
+    if not db.all(node_table):
+        log.info(f"Loading nodes ....")
+        kube_api = KubernetesApi()
+        clusters = kube_api.get_nodes(refresh=True)
+
+        for cluster in clusters:
+            if node_name_filter:
+                filtered_nodes = list()
+
+                for node in cluster['cluster_nodes']:
+                    if node['name'] in node_name_filter:
+                        filtered_nodes.append(node)
+
+                cluster['cluster_nodes'] = filtered_nodes
+                cluster['users'] = list()
+
+            cluster['allocated_ports'] = list()
+            db.upsert(node_table, cluster, 'name', cluster['name'])
+
+        cluster_names = [cluster['name'] for cluster in clusters]
+        log.info(f"saved nodes to db from cluster={cluster_names}")

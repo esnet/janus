@@ -390,14 +390,18 @@ class KubernetesApi(Service):
         )
         log.info(f"Removed network {network} on {node.name}")
 
-    def resolve_networks(self, node: dict, prof):
-        def _build_net(p):
-            addrs = list()
-            if p.settings.ipam:
-                for s in p.settings.ipam.get('config', []):
-                    addrs.append({'address': s['subnet'],
-                                  'gateway': s['gateway']
-                                  })
+    def resolve_networks(self, node: dict, prof, net_options=None):
+        def _build_net(p, opt=None):
+            # addrs = list()
+            # if p.settings.ipam:
+            #     for s in p.settings.ipam.get('config', []):
+            #         addrs.append({'address': s['subnet'],
+            #                       'gateway': s['gateway']
+            #                       })
+
+            if opt:
+                p.settings.options = opt
+
             net_cfg = {
                 "cniVersion": self.CNI_VERSION,
                 "plugins": [
@@ -413,11 +417,12 @@ class KubernetesApi(Service):
                     }
                 ]
             }
+
             ret = {
                 "apiVersion": "k8s.cni.cncf.io/v1",
                 "kind": "NetworkAttachmentDefinition",
                 "metadata": {
-                    "name": p.name,
+                    "name": p.settings.options.get('name', p.name)
                 },
                 "spec": {
                     "config": json.dumps(net_cfg)
@@ -430,41 +435,45 @@ class KubernetesApi(Service):
         for net in [Network(prof.settings.mgmt_net), Network(prof.settings.data_net)]:
             if not net.name or net.name in [Constants.NET_NONE, Constants.NET_HOST, Constants.NET_BRIDGE]:
                 continue
+
             nname = node.get('name')
             nprof = cfg.pm.get_profile(Constants.NET, net.name)
 
             if not nprof:
                 raise Exception(f"Network profile {net.name} not found")
-            kwargs = _build_net(nprof)
-            ninfo = None  # node.get('networks').get(net.name)
+
+            kwargs = _build_net(nprof, net_options)
+            net_name = net_options['name'] if net_options else net.name
+            ninfo = None
 
             try:
-                ninfo = self.get_network(Node(**node), net.name)
+                ninfo = self.get_network(Node(**node), net_name)
 
                 if is_subset(kwargs, ninfo.get('_data')):
-                    log.info(f"Found matching network {net.name} found on {nname}")
-                    node['networks'][net.name] = ninfo
+                    log.info(f"Found matching network {net_name} found on {nname}")
+                    node['networks'][net_name] = ninfo
                     continue
             except ApiException as ae:
                 if str(ae.status) != "404":
                     raise ae
 
             if ninfo:
-                log.warning(f"Removing non matching network {net.name} on {nname}")
-                self.remove_network(Node(**node), net.name)
+                log.warning(f"Removing non matching network {net_name} on {nname}")
+                self.remove_network(Node(**node), net_name)
 
-                if net.name in node['networks']:
-                    del node['networks'][net.name]
+                if net_name in node['networks']:
+                    del node['networks'][net_name]
 
-            log.info(f"Creating: No matching network {net.name} found on {nname}")
-            ninfo = self.create_network(Node(**node), net.name, **kwargs)
-            node['networks'][net.name] = ninfo
+            log.info(f"Creating: No matching network {net_name} found on {nname}")
+            ninfo = self.create_network(Node(**node), net_name, **kwargs)
+            node['networks'][net_name] = ninfo
             created = True
 
         return created
 
     # noinspection PyTypeChecker
-    def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
+    def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports, options=None):
+        options = options or dict()
         srec = dict()
         node = sreq.node
         prof = sreq.profile
@@ -521,17 +530,31 @@ class KubernetesApi(Service):
 
         if mnet.is_host():
             kwargs['spec'].update({"hostNetwork": True})
+
+        # AES
+        srec['data_net'] = None
+        srec['data_net_name'] = None
+
         if dnet.name:
             ips = []
-            data_ipv4 = get_next_ipv4(dnet, addrs_v4, cidr=True)
-            data_ipv6 = get_next_ipv6(dnet, addrs_v6, cidr=True)
+
+            if options:
+                dnet_name = options['name']
+                key = f"{nname}-{dnet_name}"
+                data_ipv4 = get_next_ipv4(dnet, addrs_v4, cidr=True, key=key, name=dnet_name)
+                data_ipv6 = get_next_ipv6(dnet, addrs_v6, cidr=True, key=key, name=dnet_name)
+            else:
+                data_ipv4 = get_next_ipv4(dnet, addrs_v4, cidr=True)
+                data_ipv6 = get_next_ipv6(dnet, addrs_v6, cidr=True)
+
             if data_ipv4:
                 ips.append(data_ipv4)
             if data_ipv6:
                 ips.append(data_ipv6)
+
             dnet_conf = [
                 {
-                    "name": dnet.name,
+                    "name": options.get('name', dnet.name),
                     "ips": ips
                 }
             ]
@@ -542,11 +565,12 @@ class KubernetesApi(Service):
             }
             kwargs['metadata'].update(anno)
 
+            srec['data_net'] = node['networks'][options.get('name', dnet.name)]
+            srec['data_net_name'] = options.get('name', dnet.name)
+
         srec['mgmt_net'] = node['networks'].get(mnet.name, None)
         srec['mgmt_ipv4'] = mgmt_ipv4
         srec['mgmt_ipv6'] = mgmt_ipv6
-        srec['data_net'] = node['networks'].get(dnet.name, None)
-        srec['data_net_name'] = dnet.name
         srec['data_ipv4'] = data_ipv4.split("/")[0] if data_ipv4 else None
         srec['data_ipv6'] = data_ipv6.split("/")[0] if data_ipv6 else None
         srec['container_user'] = kwargs.get("USER_NAME", None)

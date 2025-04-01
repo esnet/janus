@@ -77,22 +77,32 @@ class SENSEMetaManager(DBHandler):
         targets = sum(sense_session['task_info'].values(), [])
         targets = sorted(targets, key=lambda t: t['name'])
         host_profiles = sense_session['host_profile']
+        network_profiles = sense_session['network_profile']
         owner = sense_session["users"][0] if sense_session['users'] else 'admin'
+        options = list()
+        requests = list()
 
         if len(host_profiles) == 1:
-            requests = [dict(
-                instances=self._instances(targets),
-                profile=host_profiles[0],
-                errors=[],
-                image='dtnaas/tools:latest',
-                arguments=str(),
-                kwargs=dict(USER_NAME=str(), PUBLIC_KEY=str()),
-                remove_container=False
-            )]
+            for target in targets:
+                vlan = target['vlan']
+                option = dict(name=f"{network_profiles[0]}-{vlan}",
+                              vlan=str(vlan),
+                              parent=f"vlan.{vlan}",
+                              mtu=1500)
+                options.append(option)
 
+            for instance in self._instances(targets):
+                request = dict(
+                    instances=[instance],
+                    profile=host_profiles[0],
+                    errors=[],
+                    image='dtnaas/tools:latest',
+                    arguments=str(),
+                    kwargs=dict(USER_NAME=str(), PUBLIC_KEY=str()),
+                    remove_container=False
+                )
+                requests.append(request)
         else:
-            requests = list()
-
             for idx, host_profile in enumerate(host_profiles):
                 request = dict(
                     instances=self._instances([targets[idx]]),
@@ -108,73 +118,13 @@ class SENSEMetaManager(DBHandler):
         log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{requests}')
         session_manager.validate_request(requests)
         session_requests = session_manager.parse_requests(None, None, requests)
-        session_manager.create_networks(session_requests)
+        SenseUtils.dump_sessions_requests(session_requests)
+        session_manager.create_networks(session_requests, options)
         janus_session_id = session_manager.create_session(
-            None, None, session_requests, requests, owner, sense_session["users"]
+            None, None, session_requests, requests, owner, users=sense_session["users"], options=options
         )
 
         return [janus_session_id]
-
-    def old_create_janus_session(self, sense_session):
-        targets = sum(sense_session['task_info'].values(), [])
-        targets = sorted(targets, key=lambda t: t['name'])
-        host_profiles = sense_session['host_profile']
-        owner = sense_session["users"][0] if sense_session['users'] else 'admin'
-
-        if len(host_profiles) == 1:
-            requests = [dict(
-                instances=self._instances(targets),
-                profile=host_profiles[0],
-                errors=[],
-                image='dtnaas/tools:latest',
-                arguments=str(),
-                kwargs=dict(USER_NAME=str(), PUBLIC_KEY=str()),
-                remove_container=False
-            )]
-
-            log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{requests}')
-            self.session_manager.validate_request(requests)
-            session_requests = self.session_manager.parse_requests(None, None, requests)
-            self.session_manager.create_networks(session_requests)
-            janus_session_id = self.session_manager.create_session(
-                None, None, session_requests, requests, owner, sense_session["users"]
-            )
-            return [janus_session_id]
-
-        janus_session_ids = list()
-
-        for idx, host_profile in enumerate(host_profiles):
-            requests = [dict(
-                instances=self._instances([targets[idx]]),
-                profile=host_profile,
-                errors=[],
-                image='dtnaas/tools:latest',
-                arguments=str(),
-                kwargs=dict(USER_NAME=str(), PUBLIC_KEY=str()),
-                remove_container=False
-            )]
-
-            log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{requests}')
-            self.session_manager.validate_request(requests)
-            session_requests = self.session_manager.parse_requests(None, None, requests)
-            self.session_manager.create_networks(session_requests)
-            janus_session_id = self.session_manager.create_session(
-                None, None, session_requests, requests, owner, sense_session["users"]
-            )
-            janus_session_ids.append(janus_session_id)
-
-        janus_sessions = list()
-        for janus_session_id in janus_session_ids:
-            janus_session = self.db.get(self.janus_session_table, ids=janus_session_id)
-            janus_sessions.append(janus_session)
-
-        assert len(janus_sessions) == 2
-        SenseUtils.peer_sessions(janus_sessions[0], janus_sessions[1])
-
-        for janus_session in janus_sessions:
-            self.db.update(self.janus_session_table, janus_session, ids=janus_session['id'])
-
-        return janus_session_ids
 
     def start_janus_session(self, janus_session_ids):
         for janus_session_id in janus_session_ids:
@@ -196,12 +146,18 @@ class SENSEMetaManager(DBHandler):
                 log.warning(f'did not find cluster {cluster_name} while terminating sessions {sense_session}')
                 continue
 
-            for network_profile_name in sense_session['network_profile']:
-                self.delete_network(cluster_name=cluster_name, name=network_profile_name)
-                self.db.remove(self.networks_table, name=network_profile_name)
+            net_names = set()
 
-                if network_profile_name in cluster['networks']:
-                    del cluster['networks'][network_profile_name]
+            for target in sum(sense_session['task_info'].values(), []):
+                vlan = target['vlan']
+                net_names.add(f"{sense_session['network_profile'][0]}-{vlan}")
+
+            for net_name in net_names:
+                self.delete_network(cluster_name=cluster_name, name=net_name)
+                self.db.remove(self.networks_table, name=net_name)
+
+                if net_name in cluster['networks']:
+                    del cluster['networks'][net_name]
                     self.db.upsert(self.nodes_table, cluster, 'name', cluster_name)
 
     def _retrieve_instance_termination_notice_command(self, task):
