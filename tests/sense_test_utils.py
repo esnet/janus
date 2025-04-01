@@ -1,3 +1,4 @@
+import json
 import logging
 from configparser import ConfigParser
 
@@ -237,3 +238,14 @@ def load_nodes_if_needed(db, node_table, node_name_filter):
 
         cluster_names = [cluster['name'] for cluster in clusters]
         log.info(f"saved nodes to db from cluster={cluster_names}")
+
+
+def dump_janus_sessions(janus_sessions):
+    janus_session_summaries = []
+
+    for janus_session in janus_sessions:
+        service_info = SenseUtils.get_service_info(janus_session)
+        janus_session_summaries.append(dict(id=janus_session['id'], service_info=service_info))
+
+    print(f"JanusSessionSummaries:", json.dumps(janus_session_summaries, indent=2))
+

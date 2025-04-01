@@ -89,7 +89,9 @@ class SenseUtils:
                      sname=service['sname'],
                      node_id=service['node_id'],
                      data_ipv4=service['data_ipv4'],
-                     data_ipv6=service['data_ipv6']
+                     data_ipv6=service['data_ipv6'],
+                     data_net_name=service['data_net_name'],
+                     profile=service['profile']
                      ) for service in services
             ])
 

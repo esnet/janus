@@ -1,9 +1,8 @@
-import json
 import logging.config
 import os
 
 from tests.sense_test_utils import NoopSENSEApiHandler, create_sense_meta_manager, load_nodes_if_needed, \
-    load_images_if_needed
+    load_images_if_needed, dump_janus_sessions
 
 logging_conf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), '../janus/config/logging.conf'))
 logging.config.fileConfig(logging_conf_path)
@@ -66,7 +65,7 @@ def test_create_janus_sessions():
         "key": "3cfd53bb-1788-4a4c-a1a9-1f481156afa3",
         "name": alias,
         "task_info": {
-            "0-ptask2": [
+            "test-multiple-vlan": [
                 {
                     "name": "k8s-gen5-01.sdsc.optiputer.net",
                     "vlan": 1779,
@@ -89,23 +88,25 @@ def test_create_janus_sessions():
         "clusters": ["nautilus"]
     }
 
-    # options1 = dict(name=f"{alias}-net-1786", vlan="1786", parent="vlan.1786", mtu=1500)
-    # options2 = dict(name=f"{alias}-net-1779", vlan="1779", parent="vlan.1779", mtu=1500)
-    # print(options1)
-    # print(options2)
-    # options = [options1, options2]
-
     smm.create_profiles(sense_session)
     smm.save_sense_session(sense_session=sense_session)
     janus_session_ids = smm.create_janus_session(sense_session)
     sense_session['janus_session_id'] = janus_session_ids
     smm.save_sense_session(sense_session=sense_session)
-    print("Done ...:", json.dumps(sense_session, indent=2))
 
     sense_sessions = smm.find_sense_session(sense_session_key=sense_session['key'])
+    assert len(sense_sessions) == 1
     sense_session = sense_sessions[0]
-    print("Done ...:", json.dumps(sense_session, indent=2))
+
+    print("******************* STARTING JANUS SESSIONS ...............")
     smm.session_manager.start_session(session_id=sense_session['janus_session_id'][0])
+    janus_sessions = smm.find_janus_session(host_profile_names=sense_session['host_profile'])
+    dump_janus_sessions(janus_sessions)
+
+    smm.terminate_janus_sessions(sense_session)
+    print("******************* TERMINATING JANUS SESSIONS ...............")
+    janus_sessions = smm.find_janus_session(host_profile_names=sense_session['host_profile'])
+    dump_janus_sessions(janus_sessions)
 
 
 def test_create_janus_sessions_single_vlan():
@@ -151,19 +152,23 @@ def test_create_janus_sessions_single_vlan():
     janus_session_ids = smm.create_janus_session(sense_session)
     sense_session['janus_session_id'] = janus_session_ids
     smm.save_sense_session(sense_session=sense_session)
-    print("Done ...:", json.dumps(sense_session, indent=2))
 
     sense_sessions = smm.find_sense_session(sense_session_key=sense_session['key'])
+    assert len(sense_sessions) == 1
     sense_session = sense_sessions[0]
-
-    print("Done ...:", json.dumps(sense_session, indent=2))
+    print("******************* STARTING JANUS SESSIONS ...............")
     smm.session_manager.start_session(session_id=sense_session['janus_session_id'][0])
+    janus_sessions = smm.find_janus_session(host_profile_names=sense_session['host_profile'])
+    dump_janus_sessions(janus_sessions)
 
+    print("******************* TERMINATING JANUS SESSIONS ...............")
     smm.terminate_janus_sessions(sense_session)
+    janus_sessions = smm.find_janus_session(host_profile_names=sense_session['host_profile'])
+    dump_janus_sessions(janus_sessions)
 
 
 # python test_create_janus_session.py > test_create_janus_session.logs  2>&1
 
 if __name__ == '__main__':
-    # test_create_janus_sessions()
+    test_create_janus_sessions()
     test_create_janus_sessions_single_vlan()

@@ -35,21 +35,26 @@ def precommit_db(Id=None, delete=False):
         Id = dbase.insert(table, dict())
     return Id
 
+
 def commit_db_realized(record, node_table, net_table, delete=False):
     dbase = cfg.db
     services = record.get("services", dict())
-    allocated_v4 = set()
-    allocated_v6 = set()
-    # AES
+    datanet_ipv4 = dict()
+    datanet_ipv6 = dict()
+
     for k, v in services.items():
         for s in v:
             if s.get('data_net'):
-                # nobj = Network(s['data_net_name'], k)
-                # net = dbase.get(net_table, key=nobj.key)
+                host_profile = s['profile']
+                if host_profile not in datanet_ipv4:
+                    datanet_ipv4[host_profile] = set()
+                    datanet_ipv6[host_profile] = set()
+
                 if s.get('data_ipv4'):
-                    allocated_v4.add(s['data_ipv4'])
+                    datanet_ipv4[host_profile].add(s['data_ipv4'])
+
                 if s.get('data_ipv6'):
-                    allocated_v6.add(s['data_ipv6'])
+                    datanet_ipv6[host_profile].add(s['data_ipv6'])
 
     for k,v in services.items():
         for s in v:
@@ -72,26 +77,19 @@ def commit_db_realized(record, node_table, net_table, delete=False):
             if s.get('data_net'):
                 nobj = Network(s['data_net_name'], k)
                 net = dbase.get(net_table, key=nobj.key)
+                host_profile = s['profile']
+
                 if delete:
-                    try:
-                        net['allocated_v4'].remove(s['data_ipv4'])
-                    except Exception as e:
-                        pass
-                    try:
-                        net['allocated_v6'].remove(s['data_ipv6'])
-                    except Exception as e:
-                        pass
+                    net['allocated_v4'] = [a for a in net['allocated_v4'] if a not in datanet_ipv4[host_profile]]
+                    net['allocated_v6'] = [a for a in net['allocated_v6'] if a not in datanet_ipv6[host_profile]]
                 else:
-                    if s.get('data_ipv4'):
-                        # AES net['allocated_v4'].append(s['data_ipv4'])
-                        net['allocated_v4'].extend(allocated_v4)
-                    if s.get('data_ipv6'):
-                        # AES net['allocated_v6'].append(s['data_ipv6'])
-                        net['allocated_v6'].extend(allocated_v6)
+                    net['allocated_v4'].extend(datanet_ipv4[host_profile])
+                    net['allocated_v6'].extend(datanet_ipv6[host_profile])
 
                 net['allocated_v4'] = sorted(list(set(net['allocated_v4'])))
                 net['allocated_v6'] = sorted(list(set(net['allocated_v6'])))
                 dbase.update(net_table, net, key=nobj.key)
+
 
 def commit_db(record, rid=None, delete=False, realized=False):
     dbase = cfg.db

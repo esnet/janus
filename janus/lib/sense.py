@@ -118,7 +118,7 @@ class SENSEMetaManager(DBHandler):
         log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{requests}')
         session_manager.validate_request(requests)
         session_requests = session_manager.parse_requests(None, None, requests)
-        SenseUtils.dump_sessions_requests(session_requests)
+        # SenseUtils.dump_sessions_requests(session_requests)
         session_manager.create_networks(session_requests, options)
         janus_session_id = session_manager.create_session(
             None, None, session_requests, requests, owner, users=sense_session["users"], options=options
