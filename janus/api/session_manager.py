@@ -143,6 +143,7 @@ class SessionManager(QueryUser):
     def create_networks(self, session_requests: List[SessionRequest], options=None):
         dbase = cfg.db
         ntable = dbase.get_table('nodes')
+        net_names = list()
 
         for idx, sesssion_request in enumerate(session_requests):
             prof = sesssion_request.profile
@@ -161,6 +162,9 @@ class SessionManager(QueryUser):
 
                 net_name = options[idx]['name'] if options else net.name
                 self.update_network(sesssion_request.node, net, net_name)
+                net_names.append(net_name)
+
+        return list(set(net_names))
 
     def create_session(self, user, group, session_requests: List[SessionRequest], req, current_user, users=None,
                        options=None):

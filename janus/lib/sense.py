@@ -82,44 +82,34 @@ class SENSEMetaManager(DBHandler):
         options = list()
         requests = list()
 
-        if len(host_profiles) == 1:
-            for target in targets:
-                vlan = target['vlan']
-                option = dict(name=f"{network_profiles[0]}-{vlan}",
-                              vlan=str(vlan),
-                              parent=f"vlan.{vlan}",
-                              mtu=1500)
-                options.append(option)
+        assert len(host_profiles) == 1
 
-            for instance in self._instances(targets):
-                request = dict(
-                    instances=[instance],
-                    profile=host_profiles[0],
-                    errors=[],
-                    image='dtnaas/tools:latest',
-                    arguments=str(),
-                    kwargs=dict(USER_NAME=str(), PUBLIC_KEY=str()),
-                    remove_container=False
-                )
-                requests.append(request)
-        else:
-            for idx, host_profile in enumerate(host_profiles):
-                request = dict(
-                    instances=self._instances([targets[idx]]),
-                    profile=host_profile,
-                    errors=[],
-                    image='dtnaas/tools:latest',
-                    arguments=str(),
-                    kwargs=dict(USER_NAME=str(), PUBLIC_KEY=str()),
-                    remove_container=False
-                )
-                requests.append(request)
+        for target in targets:
+            vlan = target['vlan']
+            option = dict(name=f"{network_profiles[0]}-{vlan}",
+                          vlan=str(vlan),
+                          parent=f"vlan.{vlan}",
+                          mtu=1500)
+            options.append(option)
+
+        for instance in self._instances(targets):
+            request = dict(
+                instances=[instance],
+                profile=host_profiles[0],
+                errors=[],
+                image='dtnaas/tools:latest',
+                arguments=str(),
+                kwargs=dict(USER_NAME=str(), PUBLIC_KEY=str()),
+                remove_container=False
+            )
+            requests.append(request)
 
         log.info(f'creating janus sample session using sense_session {sense_session["name"]}:{requests}')
         session_manager.validate_request(requests)
         session_requests = session_manager.parse_requests(None, None, requests)
         # SenseUtils.dump_sessions_requests(session_requests)
-        session_manager.create_networks(session_requests, options)
+        net_names = session_manager.create_networks(session_requests, options)
+        sense_session['networks'] = net_names
         janus_session_id = session_manager.create_session(
             None, None, session_requests, requests, owner, users=sense_session["users"], options=options
         )
@@ -146,20 +136,14 @@ class SENSEMetaManager(DBHandler):
                 log.warning(f'did not find cluster {cluster_name} while terminating sessions {sense_session}')
                 continue
 
-            if sense_session['network_profile']:
-                net_names = set()
+            # TODO better handling of multiple clusters per sense_session
+            for net_name in sense_session.get("networks", list()):
+                self.delete_network(cluster_name=cluster_name, name=net_name)
+                self.db.remove(self.networks_table, name=net_name)
 
-                for target in sum(sense_session['task_info'].values(), []):
-                    vlan = target['vlan']
-                    net_names.add(f"{sense_session['network_profile'][0]}-{vlan}")
-
-                for net_name in net_names:
-                    self.delete_network(cluster_name=cluster_name, name=net_name)
-                    self.db.remove(self.networks_table, name=net_name)
-
-                    if net_name in cluster['networks']:
-                        del cluster['networks'][net_name]
-                        self.db.upsert(self.nodes_table, cluster, 'name', cluster_name)
+                if net_name in cluster['networks']:
+                    del cluster['networks'][net_name]
+                    self.db.upsert(self.nodes_table, cluster, 'name', cluster_name)
 
     def _retrieve_instance_termination_notice_command(self, task):
         config = task['config']
@@ -190,18 +174,7 @@ class SENSEMetaManager(DBHandler):
         alias = config['context']['alias']
         sense_sessions = self.find_sense_session(sense_session_key=instance_id)
         sense_session = sense_sessions[0] if sense_sessions else dict()
-        saved_targets = sum(sense_session.get('task_info', dict()).values(), [])
         targets = config['targets']
-
-        if len(targets) == 0:
-            log.warning(f'no targets for instance {instance_id}')
-            self.sense_api_handler.reject_task(task_id, targets, f"no targets")
-            return None
-        elif len(targets) > 2:
-            log.warning(f'unknown endpoint for instance {instance_id}:too many targets:{len(targets)}')
-            self.sense_api_handler.reject_task(task_id, targets, f"too many targets:{len(targets)}")
-            return None
-
         task_info = dict()
         task_info[task_id] = targets
         endpoints = [target['name'] for target in targets]
@@ -212,7 +185,7 @@ class SENSEMetaManager(DBHandler):
             self.sense_api_handler.reject_task(task_id, targets, f"unkown targets:{unknown_endpoints}")
             return None
 
-        clusters = sense_session['clusters'] if 'clusters' in sense_session else list()
+        clusters = sense_session['clusters'] if 'clusters' in sense_session else list()  # TODO
         for target in targets:
             agent = node_cluster_map[target['name']]
 
@@ -223,22 +196,12 @@ class SENSEMetaManager(DBHandler):
             else:
                 clusters.append(target['name'])
 
-        if len(targets) == 1 and saved_targets:
-            target_names = [target['name'] for target in targets]
-            saved_targets = [target for target in saved_targets if target['name'] not in target_names]
-            targets.extend(saved_targets)
-
-        if len(targets) > 2:
-            self.sense_api_handler.reject_task(task_id,
-                                               targets, f"too many targets after merging:{len(targets)}")
-            return None
-
         if not alias:
             alias = f'sense-janus-{"-".join(instance_id.split("-")[0:2])}'
         else:
             alias = f'sense-janus-{alias.replace(" ", "-")}-{"-".join(instance_id.split("-")[0:2])}'
 
-        users = list()  # sense_session['users'] if 'users' in sense_session else list()
+        users = list()
         for target in targets:
             users.extend(target['principals'])
 
@@ -256,10 +219,6 @@ class SENSEMetaManager(DBHandler):
                              clusters=list(set(clusters)))
 
         sense_session['state'] = 'MODIFIED' if self.check_modified(sense_session) else 'OK'
-
-        if sense_session['state'] == 'MODIFIED' and saved_targets:
-            log.warning(f'detected modified:{instance_id}:saved_targets={saved_targets}:new_targets={targets}')
-
         self.save_sense_session(sense_session=sense_session)
 
         if sense_session['state'] == 'MODIFIED':
@@ -355,7 +314,11 @@ class SENSEMetaManager(DBHandler):
 
             try:
                 self.terminate_janus_sessions(sense_session=sense_session)
+                sense_session['janus_session_id'] = list()
+                sense_session['networks'] = list()
                 self.remove_profiles(sense_session=sense_session)
+                sense_session['network_profile'] = list()
+                sense_session['host_profile'] = list()
                 sense_session['terminate_error_message'] = None
             except Exception as e:
                 import traceback
@@ -367,12 +330,16 @@ class SENSEMetaManager(DBHandler):
 
             if not error:
                 try:
-                    self.create_profiles(sense_session=sense_session)
-                    janus_session_ids = self.create_janus_session(sense_session=sense_session)
-                    sense_session['janus_session_id'] = janus_session_ids
+                    if sum(sense_session['task_info'].values(), []):
+                        self.create_profiles(sense_session=sense_session)
+                        janus_session_ids = self.create_janus_session(sense_session=sense_session)
+                        sense_session['janus_session_id'] = janus_session_ids
+                    else:
+                        sense_session['users'] = list()
+                        sense_session['clusters'] = list()
+
                     sense_session['errors'] = 0
                     sense_session['error_message'] = None
-                    # self.start_janus_session(janus_session_ids)
                 except Exception as e:
                     import traceback
                     traceback.print_exc()

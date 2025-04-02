@@ -29,8 +29,12 @@ class BaseScript:
 
     def script(self):
         tasks = list()
-        tasks.append(self.ptask1(3910))  # target1
-        tasks.append(self.ptask2(3910))  # target2 with same vlan
+        tasks.append(self.atask1(3910))   # target1
+        tasks.append(self.atask2(3910))   # target2 with same vlan
+        tasks.append(self.empty_task())
+        tasks.append(self.atask3(3910))   # target3 and target2 with same vlan
+        tasks.append(self.atask4(3910))   # change the order
+        tasks.append(self.empty_task())
         tasks.append(self.terminate_task())
         return tasks
 
@@ -57,23 +61,46 @@ class BaseScript:
 
         return template
 
-    def ptask1(self, vlan) -> list:
-        task = self._create_template("ptask1", "handle-sense-instance")
+    def atask1(self, vlan) -> list:
+        task = self._create_template("atask1", "handle-sense-instance")
         task['config']['targets'] = [
             self._create_target(self.nodes[0], vlan, self.ips[0], ['admin'])
         ]
         return [task]
 
-    def ptask2(self, vlan):
-        task = self._create_template("ptask2", "handle-sense-instance")
+    def atask2(self, vlan):
+        task = self._create_template("atask2", "handle-sense-instance")
         task['config']['targets'] = [
             self._create_target(self.nodes[1], vlan, None, self.principals)
         ]
 
         return [task]
 
+    def atask3(self, vlan):
+        task = self._create_template("atask3", "handle-sense-instance")
+        task['config']['targets'] = [
+            self._create_target(self.nodes[0], vlan, self.ips[0], ['admin']),
+            self._create_target(self.nodes[1], vlan, None, self.principals)
+        ]
+
+        return [task]
+
+    def atask4(self, vlan):
+        task = self._create_template("atask4", "handle-sense-instance")
+        task['config']['targets'] = [
+            self._create_target(self.nodes[1], vlan, None, self.principals),
+            self._create_target(self.nodes[0], vlan, self.ips[0], ['admin']),
+        ]
+
+        return [task]
+
+    def empty_task(self):
+        task = self._create_template("atask5", "handle-sense-instance")
+        task['config']['targets'] = []
+        return [task]
+
     def terminate_task(self):
-        task = self._create_template("ptask_terminate", "instance-termination-notice")
+        task = self._create_template("atask_terminate", "instance-termination-notice")
         return [task]
 
 
@@ -102,6 +129,21 @@ class ComplexScript(BaseScript):
         tasks.append(self.terminate_task())
         return tasks
 
+    def ptask1(self, vlan) -> list:
+        task = self._create_template("ptask1", "handle-sense-instance")
+        task['config']['targets'] = [
+            self._create_target(self.nodes[0], vlan, self.ips[0], ['admin'])
+        ]
+        return [task]
+
+    def ptask2(self, vlan):
+        task = self._create_template("ptask2", "handle-sense-instance")
+        task['config']['targets'] = [
+            self._create_target(self.nodes[1], vlan, None, self.principals)
+        ]
+
+        return [task]
+
     def ptask3(self, vlan1, vlan2):
         task = self._create_template("ptask3", "handle-sense-instance")
         task['config']['targets'] = [
@@ -118,6 +160,10 @@ class ComplexScript(BaseScript):
             self._create_target(self.nodes[1], vlan2, None, ['extra_user2'])
         ]
 
+        return [task]
+
+    def terminate_task(self):
+        task = self._create_template("ptask_terminate", "instance-termination-notice")
         return [task]
 
 
@@ -248,4 +294,3 @@ def dump_janus_sessions(janus_sessions):
         janus_session_summaries.append(dict(id=janus_session['id'], service_info=service_info))
 
     print(f"JanusSessionSummaries:", json.dumps(janus_session_summaries, indent=2))
-

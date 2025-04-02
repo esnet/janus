@@ -311,7 +311,7 @@ class DBHandler(object):
         name = sense_session['name'].lower()
         users = sense_session['users']
         targets = sorted(sum(task_info.values(), []), key=lambda t: t['name'])
-        targets = [targets[0]] # TODO AES
+        targets = [targets[0]]  # TODO AES
         subnets = ['192.168.1.0/24']
 
         nprofs = self.get_or_create_network_profile(name=name + '-net', targets=targets,
