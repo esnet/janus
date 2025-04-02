@@ -128,7 +128,8 @@ class SENSEMetaManager(DBHandler):
             self.session_manager.stop_session(janus_session['id'])
             self.session_manager.delete(janus_session['id'], force=True)
 
-        for cluster_name in set(sense_session['clusters']):
+        for v in sense_session.get("networks", dict()).values():
+            cluster_name = v['cluster']
             clusters = self.find_cluster(name=cluster_name)
             cluster = clusters[0] if clusters else None
 
@@ -136,14 +137,13 @@ class SENSEMetaManager(DBHandler):
                 log.warning(f'did not find cluster {cluster_name} while terminating sessions {sense_session}')
                 continue
 
-            # TODO better handling of multiple clusters per sense_session
-            for net_name in sense_session.get("networks", list()):
-                self.delete_network(cluster_name=cluster_name, name=net_name)
-                self.db.remove(self.networks_table, name=net_name)
+            net_name = v['network']
+            self.delete_network(cluster_name=cluster_name, name=net_name)
+            self.db.remove(self.networks_table, name=net_name)
 
-                if net_name in cluster['networks']:
-                    del cluster['networks'][net_name]
-                    self.db.upsert(self.nodes_table, cluster, 'name', cluster_name)
+            if net_name in cluster['networks']:
+                del cluster['networks'][net_name]
+                self.db.upsert(self.nodes_table, cluster, 'name', cluster_name)
 
     def _retrieve_instance_termination_notice_command(self, task):
         config = task['config']
@@ -172,8 +172,6 @@ class SENSEMetaManager(DBHandler):
         task_id = task['uuid']
         instance_id = config['context']['uuid']
         alias = config['context']['alias']
-        sense_sessions = self.find_sense_session(sense_session_key=instance_id)
-        sense_session = sense_sessions[0] if sense_sessions else dict()
         targets = config['targets']
         task_info = dict()
         task_info[task_id] = targets
@@ -185,7 +183,7 @@ class SENSEMetaManager(DBHandler):
             self.sense_api_handler.reject_task(task_id, targets, f"unkown targets:{unknown_endpoints}")
             return None
 
-        clusters = sense_session['clusters'] if 'clusters' in sense_session else list()  # TODO
+        clusters = list()
         for target in targets:
             agent = node_cluster_map[target['name']]
 
@@ -315,7 +313,7 @@ class SENSEMetaManager(DBHandler):
             try:
                 self.terminate_janus_sessions(sense_session=sense_session)
                 sense_session['janus_session_id'] = list()
-                sense_session['networks'] = list()
+                sense_session['networks'] = dict()
                 self.remove_profiles(sense_session=sense_session)
                 sense_session['network_profile'] = list()
                 sense_session['host_profile'] = list()

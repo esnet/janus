@@ -171,4 +171,4 @@ def test_create_janus_sessions_single_vlan():
 
 if __name__ == '__main__':
     test_create_janus_sessions()
-    # test_create_janus_sessions_single_vlan()
+    test_create_janus_sessions_single_vlan()
