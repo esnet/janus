@@ -1,6 +1,15 @@
+import json
 import logging
+from configparser import ConfigParser
 
+from janus.api.db import DBLayer
+from janus.api.kubernetes import KubernetesApi
+from janus.api.manager import ServiceManager
+from janus.api.profile import ProfileManager
+from janus.lib.sense import SENSEMetaManager
 from janus.lib.sense_api_handler import SENSEApiHandler
+from janus.lib.sense_utils import SenseUtils
+from janus.settings import cfg, SUPPORTED_IMAGES
 
 log = logging.getLogger(__name__)
 
@@ -14,14 +23,18 @@ class BaseScript:
         self.context = {"alias": "fake", "uuid": "base"}
         self.principals = ["aessiari@lbl.gov"]
 
-        # self.nodes = ['k8s-gen5-01.sdsc.optiputer.net', 'k8s-gen5-02.sdsc.optiputer.net']
-        self.nodes = ['sandie-3.ultralight.org', 'sandie-5.ultralight.org']
+        self.nodes = ['k8s-gen5-01.sdsc.optiputer.net', 'k8s-gen5-02.sdsc.optiputer.net']
+        # self.nodes = ['sandie-3.ultralight.org', 'sandie-5.ultralight.org']
         self.ips = ['10.251.88.241/28', '10.251.88.242/28']
 
     def script(self):
         tasks = list()
-        tasks.append(self.ptask1(3910))  # target1
-        tasks.append(self.ptask2(3910))  # target2 with same vlan
+        tasks.append(self.atask1(3910))   # target1
+        tasks.append(self.atask2(3910))   # target2 with same vlan
+        tasks.append(self.empty_task())
+        tasks.append(self.atask3(3910))   # target3 and target2 with same vlan
+        tasks.append(self.atask4(3910))   # change the order
+        tasks.append(self.empty_task())
         tasks.append(self.terminate_task())
         return tasks
 
@@ -48,23 +61,46 @@ class BaseScript:
 
         return template
 
-    def ptask1(self, vlan) -> list:
-        task = self._create_template("ptask1", "handle-sense-instance")
+    def atask1(self, vlan) -> list:
+        task = self._create_template("atask1", "handle-sense-instance")
         task['config']['targets'] = [
             self._create_target(self.nodes[0], vlan, self.ips[0], ['admin'])
         ]
         return [task]
 
-    def ptask2(self, vlan):
-        task = self._create_template("ptask2", "handle-sense-instance")
+    def atask2(self, vlan):
+        task = self._create_template("atask2", "handle-sense-instance")
         task['config']['targets'] = [
             self._create_target(self.nodes[1], vlan, None, self.principals)
         ]
 
         return [task]
 
+    def atask3(self, vlan):
+        task = self._create_template("atask3", "handle-sense-instance")
+        task['config']['targets'] = [
+            self._create_target(self.nodes[0], vlan, self.ips[0], ['admin']),
+            self._create_target(self.nodes[1], vlan, None, self.principals)
+        ]
+
+        return [task]
+
+    def atask4(self, vlan):
+        task = self._create_template("atask4", "handle-sense-instance")
+        task['config']['targets'] = [
+            self._create_target(self.nodes[1], vlan, None, self.principals),
+            self._create_target(self.nodes[0], vlan, self.ips[0], ['admin']),
+        ]
+
+        return [task]
+
+    def empty_task(self):
+        task = self._create_template("atask5", "handle-sense-instance")
+        task['config']['targets'] = []
+        return [task]
+
     def terminate_task(self):
-        task = self._create_template("ptask_terminate", "instance-termination-notice")
+        task = self._create_template("atask_terminate", "instance-termination-notice")
         return [task]
 
 
@@ -93,6 +129,21 @@ class ComplexScript(BaseScript):
         tasks.append(self.terminate_task())
         return tasks
 
+    def ptask1(self, vlan) -> list:
+        task = self._create_template("ptask1", "handle-sense-instance")
+        task['config']['targets'] = [
+            self._create_target(self.nodes[0], vlan, self.ips[0], ['admin'])
+        ]
+        return [task]
+
+    def ptask2(self, vlan):
+        task = self._create_template("ptask2", "handle-sense-instance")
+        task['config']['targets'] = [
+            self._create_target(self.nodes[1], vlan, None, self.principals)
+        ]
+
+        return [task]
+
     def ptask3(self, vlan1, vlan2):
         task = self._create_template("ptask3", "handle-sense-instance")
         task['config']['targets'] = [
@@ -111,6 +162,10 @@ class ComplexScript(BaseScript):
 
         return [task]
 
+    def terminate_task(self):
+        task = self._create_template("ptask_terminate", "instance-termination-notice")
+        return [task]
+
 
 class TaskGenerator:
     def __init__(self, script=None):
@@ -122,6 +177,17 @@ class TaskGenerator:
             yield i
 
         raise GeneratorDone()
+
+
+class NoopSENSEApiHandler(SENSEApiHandler):
+    def __init__(self):
+        super().__init__('noop_url')
+
+    def retrieve_tasks(self, assigned, status):
+        pass
+
+    def post_metadata(self, metadata, domain, name):
+        return False
 
 
 class FakeSENSEApiHandler(SENSEApiHandler):
@@ -158,5 +224,73 @@ class FakeSENSEApiHandler(SENSEApiHandler):
         else:
             self.task_state_map[kwargs['uuid']] += ',' + kwargs['state']
 
-        log.debug(f'faking updating task attempts:{data}:{kwargs}')
+        import json
+
+        log.debug(f'faking updating task attempts:{json.dumps(data, indent=2)}:{kwargs}')
         return True
+
+
+def create_sense_meta_manager(database, config_file, sense_api_handler=None):
+    db = DBLayer(path=database)
+    pm = ProfileManager(db, None)
+    sm = ServiceManager(db)
+    cfg.setdb(db, pm, sm)
+    parser = ConfigParser(allow_no_value=True)
+    parser.read(config_file)
+
+    config = parser['JANUS']
+    cfg.PORTAINER_URI = str(config.get('PORTAINER_URI', None))
+    cfg.PORTAINER_WS = str(config.get('PORTAINER_WS', None))
+    cfg.PORTAINER_USER = str(config.get('PORTAINER_USER', None))
+    cfg.PORTAINER_PASSWORD = str(config.get('PORTAINER_PASSWORD', None))
+    vssl = str(config.get('PORTAINER_VERIFY_SSL', 'True'))
+
+    if vssl == 'False':
+        cfg.PORTAINER_VERIFY_SSL = False
+        import urllib3
+        urllib3.disable_warnings()
+    else:
+        cfg.PORTAINER_VERIFY_SSL = True
+
+    sense_properties = SenseUtils.parse_from_config(cfg=cfg, parser=parser)
+    return SENSEMetaManager(cfg, sense_properties, sense_api_handler=sense_api_handler)
+
+
+def load_images_if_needed(db, image_table):
+    if not db.all(image_table):
+        for img in SUPPORTED_IMAGES:
+            db.upsert(image_table, img, 'name', img['name'])
+
+
+def load_nodes_if_needed(db, node_table, node_name_filter):
+    if not db.all(node_table):
+        log.info(f"Loading nodes ....")
+        kube_api = KubernetesApi()
+        clusters = kube_api.get_nodes(refresh=True)
+
+        for cluster in clusters:
+            if node_name_filter:
+                filtered_nodes = list()
+
+                for node in cluster['cluster_nodes']:
+                    if node['name'] in node_name_filter:
+                        filtered_nodes.append(node)
+
+                cluster['cluster_nodes'] = filtered_nodes
+                cluster['users'] = list()
+
+            cluster['allocated_ports'] = list()
+            db.upsert(node_table, cluster, 'name', cluster['name'])
+
+        cluster_names = [cluster['name'] for cluster in clusters]
+        log.info(f"saved nodes to db from cluster={cluster_names}")
+
+
+def dump_janus_sessions(janus_sessions):
+    janus_session_summaries = []
+
+    for janus_session in janus_sessions:
+        service_info = SenseUtils.get_service_info(janus_session)
+        janus_session_summaries.append(dict(id=janus_session['id'], service_info=service_info))
+
+    print(f"JanusSessionSummaries:", json.dumps(janus_session_summaries, indent=2))

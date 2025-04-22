@@ -89,7 +89,9 @@ class SenseUtils:
                      sname=service['sname'],
                      node_id=service['node_id'],
                      data_ipv4=service['data_ipv4'],
-                     data_ipv6=service['data_ipv6']
+                     data_ipv6=service['data_ipv6'],
+                     data_net_name=service['data_net_name'],
+                     profile=service['profile']
                      ) for service in services
             ])
 
@@ -124,3 +126,28 @@ class SenseUtils:
         pods2 = SenseUtils.get_service_info(janus_session2)
         janus_session1['peer'] = [dict(id=janus_session2['id'], services=pods2)]
         janus_session2['peer'] = [dict(id=janus_session1['id'], services=pods1)]
+
+    @staticmethod
+    def dump_sessions_requests(session_requests):
+        import json
+
+        dumpable_session_requests = list()
+
+        for sr in session_requests:
+            dumpable_sr = sr.model_dump(mode="json")
+            dumpable_sr['node'] = dict(name=dumpable_sr['node']['name'])
+            # dumpable_sr['profile'] = dict(name=dumpable_sr['profile']['name'],
+            #                               data_net=dumpable_sr['profile']['data_net'])
+            profile = dict(name=dumpable_sr['profile']['name'],
+                           settings=dict(
+                               data_net=dumpable_sr['profile']['settings']['data_net']
+                           ))
+            dumpable_sr['profile'] = profile
+            dumpable_sr['constraints'] = dict()
+            print("*********")
+
+            print(dumpable_sr)
+            print("*********")
+            dumpable_session_requests.append(dumpable_sr)
+
+        print(json.dumps(dumpable_session_requests, indent=2))

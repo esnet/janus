@@ -95,4 +95,4 @@ def test_using_complex_script():
 if __name__ == '__main__':
     # test_server()
     test_using_base_script()
-    # test_using_complex_script()
+    test_using_complex_script()

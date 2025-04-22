@@ -35,12 +35,29 @@ def precommit_db(Id=None, delete=False):
         Id = dbase.insert(table, dict())
     return Id
 
+
 def commit_db_realized(record, node_table, net_table, delete=False):
     dbase = cfg.db
     services = record.get("services", dict())
+    datanet_ipv4 = dict()
+    datanet_ipv6 = dict()
+
+    for k, v in services.items():
+        for s in v:
+            if s.get('data_net'):
+                host_profile = s['profile']
+                if host_profile not in datanet_ipv4:
+                    datanet_ipv4[host_profile] = set()
+                    datanet_ipv6[host_profile] = set()
+
+                if s.get('data_ipv4'):
+                    datanet_ipv4[host_profile].add(s['data_ipv4'])
+
+                if s.get('data_ipv6'):
+                    datanet_ipv6[host_profile].add(s['data_ipv6'])
+
     for k,v in services.items():
         for s in v:
-
             node = dbase.get(node_table, name=k)
             if delete:
                 try:
@@ -60,21 +77,19 @@ def commit_db_realized(record, node_table, net_table, delete=False):
             if s.get('data_net'):
                 nobj = Network(s['data_net_name'], k)
                 net = dbase.get(net_table, key=nobj.key)
+                host_profile = s['profile']
+
                 if delete:
-                    try:
-                        net['allocated_v4'].remove(s['data_ipv4'])
-                    except Exception as e:
-                        pass
-                    try:
-                        net['allocated_v6'].remove(s['data_ipv6'])
-                    except Exception as e:
-                        pass
+                    net['allocated_v4'] = [a for a in net['allocated_v4'] if a not in datanet_ipv4[host_profile]]
+                    net['allocated_v6'] = [a for a in net['allocated_v6'] if a not in datanet_ipv6[host_profile]]
                 else:
-                    if s.get('data_ipv4'):
-                        net['allocated_v4'].append(s['data_ipv4'])
-                    if s.get('data_ipv6'):
-                        net['allocated_v6'].append(s['data_ipv6'])
+                    net['allocated_v4'].extend(datanet_ipv4[host_profile])
+                    net['allocated_v6'].extend(datanet_ipv6[host_profile])
+
+                net['allocated_v4'] = sorted(list(set(net['allocated_v4'])))
+                net['allocated_v6'] = sorted(list(set(net['allocated_v6'])))
                 dbase.update(net_table, net, key=nobj.key)
+
 
 def commit_db(record, rid=None, delete=False, realized=False):
     dbase = cfg.db
@@ -143,14 +158,20 @@ def get_next_sport(node, prof, curr=set()):
     curr.add(port)
     return str(port)
 
-def get_next_ipv4(net, curr=set(), cidr=False):
+
+def get_next_ipv4(net, curr, cidr=False, key=None, name=None):
     dbase = cfg.db
     nets = dbase.get_table('networks')
-    network = dbase.get(nets, key=net.key)
+    key = key or net.key
+    network = dbase.get(nets, key=key)
+    name = name or net.name
+
     if not network:
-        raise Exception(f"Network not found: {net.name}")
+        raise Exception(f"Network not found: {name}")
+
     # consider all similarly named networks using the same address space
-    named_nets = dbase.search(nets, name=net.name)
+    named_nets = dbase.search(nets, name=name)
+
     alloced = list()
     for n in named_nets:
         alloced.extend(n['allocated_v4'])
@@ -166,7 +187,7 @@ def get_next_ipv4(net, curr=set(), cidr=False):
             pass
 
     if net.ipv4 and not ipnet:
-        raise Exception(f"No IPv4 subnet found for network {net.name}")
+        raise Exception(f"No IPv4 subnet found for network {name}")
     # IPv4 is not configured
     if not net.ipv4 and not ipnet:
         return None
@@ -188,21 +209,25 @@ def get_next_ipv4(net, curr=set(), cidr=False):
             if test not in unavail:
                 ipv4 = test
         except:
-            raise Exception("No more ipv4 addresses available for network {}".format(net.name))
+            raise Exception(f"No more ipv4 addresses available for network {name}")
     curr.add(ipv4)
     if cidr:
         return f"{ipv4}/{ipnet.prefixlen}"
     else:
         return str(ipv4)
 
-def get_next_ipv6(net, curr=set(), cidr=False):
+
+def get_next_ipv6(net, curr, cidr=False, key=None, name=None):
     dbase = cfg.db
     nets = dbase.get_table('networks')
-    network = dbase.get(nets, key=net.key)
+    key = key or net.key
+    network = dbase.get(nets, key=key)
+    name = name or net.name
     if not network:
-        raise Exception(f"Network not found: {net.name}")
+        raise Exception(f"Network not found: {name}")
+
     # consider all similarly named networks using the same address space
-    named_nets = dbase.search(nets, name=net.name)
+    named_nets = dbase.search(nets, name=name)
     alloced = list()
     for n in named_nets:
         alloced.extend(n['allocated_v6'])
@@ -218,7 +243,7 @@ def get_next_ipv6(net, curr=set(), cidr=False):
             pass
 
     if net.ipv6 and not ipnet:
-        raise Exception(f"No IPv6 subnet found for network {net.name}")
+        raise Exception(f"No IPv6 subnet found for network {name}")
     # IPv6 is not configured
     if not net.ipv6 and not ipnet:
         return None
@@ -240,7 +265,7 @@ def get_next_ipv6(net, curr=set(), cidr=False):
             if test not in unavail:
                 ipv6 = test
         except:
-            raise Exception("No more ipv6 addresses available for network {}".format(net.name))
+            raise Exception(f"No more ipv6 addresses available for network {name}")
     curr.add(ipv6)
     if cidr:
         return f"{ipv6}/{ipnet.prefixlen}"

@@ -46,49 +46,34 @@ class SessionManager(QueryUser):
     def __init__(self):
         pass
 
-    def update_networks(self, node):
-        data_nets = list()
-        profs = cfg.pm.get_profiles(Constants.HOST)
-        dbase = cfg.db
-
-        for p in profs:
-            for net in [Network(p.settings.mgmt_net), Network(p.settings.data_net)]:
-                if net.name not in data_nets:
-                    data_nets.append(net.name)
-
-        # simple IPAM for data networks
-        net_table = dbase.get_table('networks')
-        node_table = dbase.get_table('nodes')
+    def update_network(self, node, pnet, net_name):
         k = node.get('name')
+        n = net_name
+        w = node['networks'][net_name]
+        key = f"{k}-{n}"
+        pnet = cfg.pm.get_profile(Constants.NET, pnet.name)
+        subnet = w.get('subnet', [])
 
-        res = dbase.get(node_table, name=k)
-        nets = res.get('networks', dict())
+        # try to get subnet information from profile if not tracked in endpoint
+        if not subnet:
+            subnet = pnet.settings.ipam.get('config') if pnet else []
 
-        for n, w in nets.items():
-            subnet = w.get('subnet', [])
-            # try to get subnet information from profile if not tracked in endpoint
-            if not subnet:
-                pnet = cfg.pm.get_profile(Constants.NET, n)
+        subnet = [keys_lower(x) for x in subnet]
+        dbase = cfg.db
+        net_table = dbase.get_table('networks')
+        curr = dbase.get(net_table, key=key)
 
-                # noinspection PyBroadException
-                try:
-                    subnet = pnet.settings.ipam.get('config') if pnet else []
-                except Exception:
-                    subnet = []
+        if not curr:
+            net = {'name': n,
+                   'key': key,
+                   'subnet': list(subnet),
+                   'allocated_v4': [],
+                   'allocated_v6': []}
+        else:
+            net = curr
+            net['subnet'] = list(subnet)
 
-            subnet = [keys_lower(x) for x in subnet]
-            key = f"{k}-{n}"
-            curr = dbase.get(net_table, key=key)
-            if not curr:
-                net = {'name': n,
-                       'key': key,
-                       'subnet': list(subnet),
-                       'allocated_v4': [],
-                       'allocated_v6': []}
-            else:
-                net = curr
-                net['subnet'] = list(subnet)
-            dbase.upsert(net_table, net, 'key', key)
+        dbase.upsert(net_table, net, 'key', key)
 
     def validate_request(self, req: List[Dict]):
         for r in req:
@@ -155,19 +140,37 @@ class SessionManager(QueryUser):
 
         return session_requests
 
-    def create_networks(self, session_requests: List[SessionRequest]):
+    def create_networks(self, session_requests: List[SessionRequest], options=None):
         dbase = cfg.db
         ntable = dbase.get_table('nodes')
+        net_names = dict()
 
-        for sesssion_request in session_requests:
-            node = sesssion_request.node
+        for idx, sesssion_request in enumerate(session_requests):
             prof = sesssion_request.profile
-            node = dbase.get(ntable, name=node['name'])
-            cfg.sm.get_handler(sesssion_request.node).resolve_networks(node, prof)
-            dbase.upsert(ntable, node, 'name', node['name'])
-            self.update_networks(node)
+            sesssion_request.node = dbase.get(ntable, name=sesssion_request.node['name'])
 
-    def create_session(self, user, group, session_requests: List[SessionRequest], req, current_user, users=None):
+            if options:
+                cfg.sm.get_handler(sesssion_request.node).resolve_networks(sesssion_request.node, prof, options[idx])
+            else:
+                cfg.sm.get_handler(sesssion_request.node).resolve_networks(sesssion_request.node, prof)
+
+            dbase.upsert(ntable, sesssion_request.node, 'name', sesssion_request.node['name'])
+
+            for net in [Network(prof.settings.mgmt_net), Network(prof.settings.data_net)]:
+                if not net.name or net.name in [Constants.NET_NONE, Constants.NET_HOST, Constants.NET_BRIDGE]:
+                    continue
+
+                net_name = options[idx]['name'] if options else net.name
+                self.update_network(sesssion_request.node, net, net_name)
+                net_names[f"{net_name}@{sesssion_request.node['name']}"] = dict(
+                    network=net_name,
+                    cluster=sesssion_request.node['name']
+                )
+
+        return net_names
+
+    def create_session(self, user, group, session_requests: List[SessionRequest], req, current_user, users=None,
+                       options=None):
         users = users or list()
         db_id = precommit_db()
         svcs = dict()  # get an ID from the DB
@@ -187,9 +190,14 @@ class SessionManager(QueryUser):
                 else:
                     sname = cname_from_id(db_id, i + 1, 'janus' + '-' + s.profile.name)
 
-                rec = cfg.sm.get_handler(s.node).create_service_record(
-                    sname, s, addrs_v4, addrs_v6, cports, sports
-                )
+                if options:
+                    rec = cfg.sm.get_handler(s.node).create_service_record(
+                        sname, s, addrs_v4, addrs_v6, cports, sports, options[i]
+                    )
+                else:
+                    rec = cfg.sm.get_handler(s.node).create_service_record(
+                        sname, s, addrs_v4, addrs_v6, cports, sports
+                    )
 
                 assert rec is not None
                 svcs[nname].append(rec)
@@ -360,19 +368,16 @@ class SessionManager(QueryUser):
         svc['state'] = State.MIXED.name if error else State.STOPPED.name
         svc = commit_db(svc, session_id, delete=True, realized=True)
 
-        if error:
+        if error:  # TODO AES Stopping session failed:FATAL:<class 'KeyError'>:'errors'
             raise SessionManagerException(str(svc['errors']))
 
-        if svc.get('peer'):
-            peer = svc.get('peer')
-
-            if isinstance(svc.get('peer'), list):
-                peer = peer[0]
-
-            try:
-                self.stop_session(peer['id'])
-            except Exception as e:
-                log.error(f"Could not stop peer session using {peer['id']}: {e}")
+        if peers := svc.get('peer'):
+            assert isinstance(peers, list)
+            for peer in peers:
+                try:
+                    self.stop_session(peer['id'])
+                except Exception as e:
+                    log.error(f"Could not stop peer session using {peer['id']}: {e}")
 
         return svc
 

@@ -239,7 +239,7 @@ class DBHandler(object):
 
             users = users or list()
             groups = groups or list()
-            network_profile = dict(name=name + '-' + str(vlan),
+            network_profile = dict(name=name,  # AES TODO + '-' + str(vlan),
                                    settings=network_profile_settings, users=users, groups=groups)
             log.debug(f'network_profile: {json.dumps(network_profile)}')
 
@@ -262,7 +262,7 @@ class DBHandler(object):
             host_profile = self._update_users(host_profiles[0], users, self.save_host_profile)
             return host_profile
 
-        host_profile_settings = dict(cpu=1,
+        host_profile_settings = dict(cpu=0.2,
                                      memory=1073741824,
                                      mgmt_net=None,
                                      ctrl_port_range=None,
@@ -311,6 +311,7 @@ class DBHandler(object):
         name = sense_session['name'].lower()
         users = sense_session['users']
         targets = sorted(sum(task_info.values(), []), key=lambda t: t['name'])
+        targets = [targets[0]]  # TODO AES
         subnets = ['192.168.1.0/24']
 
         nprofs = self.get_or_create_network_profile(name=name + '-net', targets=targets,

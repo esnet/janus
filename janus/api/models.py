@@ -47,7 +47,7 @@ class ContainerProfileSettings(BaseModel):
     privileged: bool = False
     systemd: bool = False
     pull_image: bool = False
-    cpu: int = 0
+    cpu: float = 0
     memory: int = 0
     affinity: str = "network"
     cpu_set: Optional[str] = None
