@@ -127,9 +127,7 @@ class Network(object):
         return f"{self.node}-{self.name}" if self.node else self.name
 
     def is_host(self):
-        if self.name and self.name == "host":
-            return True
-        return False
+        return self.name and 'host' in self.name
 
 
 class ServiceRecord(object):
@@ -156,6 +154,7 @@ class SessionRequest(BaseModel):
     arguments: Optional[str]
     remove_container: Optional[bool]
     kwargs: Optional[dict]
+    overrides: Optional[dict]
 
 class AddEndpointRequest(BaseModel):
     type: int

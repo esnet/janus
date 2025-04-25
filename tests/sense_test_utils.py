@@ -1,6 +1,7 @@
 import json
-import logging
+import shutil
 from configparser import ConfigParser
+
 
 from janus.api.db import DBLayer
 from janus.api.kubernetes import KubernetesApi
@@ -11,30 +12,88 @@ from janus.lib.sense_api_handler import SENSEApiHandler
 from janus.lib.sense_utils import SenseUtils
 from janus.settings import cfg, SUPPORTED_IMAGES
 
-log = logging.getLogger(__name__)
+ENDPOINTS_FILTER = ['k8s-gen5-01.sdsc.optiputer.net',
+                    'k8s-gen5-02.sdsc.optiputer.net',
+                    'losa4-nrp-01.cenic.net',
+                    'k8s-3090-01.clemson.edu',
+                    'node-2-8.sdsc.optiputer.net']
+DB_FILE_NAME = 'db-test-sense.json'
+JANUS_CONF_TEST_FILE = 'janus-sense-test.conf'
+JANUS_LOGGING_CONF_TEST_FILE = 'janus-sense-logging-test.conf'
+_LOGGER = None
+
+
+def _init_logger():
+    import logging.config
+    import os
+
+    # logging_conf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), '../janus/config/logging.conf'))
+    logging_conf_path = os.path.normpath(os.path.join(os.getcwd(), JANUS_LOGGING_CONF_TEST_FILE))
+
+    if not os.path.exists(logging_conf_path):
+        logging_conf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), JANUS_LOGGING_CONF_TEST_FILE))
+
+    logging.config.fileConfig(logging_conf_path)
+    return logging.getLogger('logger_janus')
+
+
+def get_logger():
+    global _LOGGER
+
+    if not _LOGGER:
+        _LOGGER = _init_logger()
+
+    return _LOGGER
+
+
+log = get_logger()
+
+
+def get_db_file_path():
+    import os
+
+    db_path = os.path.normpath(os.path.join(os.getcwd(), DB_FILE_NAME))
+
+    if not os.path.exists(db_path):
+        special_db_path = os.path.normpath(os.path.join(os.path.dirname(__file__), DB_FILE_NAME + ".special"))
+
+        shutil.copyfile(special_db_path, db_path, follow_symlinks=False)
+
+    if not os.path.exists(db_path):
+        raise Exception(f"db file not found ....{DB_FILE_NAME}")
+
+    return db_path
+
+
+def get_janus_conf_file_path():
+    import os
+
+    conf_path = os.path.normpath(os.path.join(os.getcwd(), JANUS_CONF_TEST_FILE))
+
+    if not os.path.exists(conf_path):
+        conf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), JANUS_CONF_TEST_FILE))
+
+    if not os.path.exists(conf_path):
+        raise Exception("db file not found ....")
+
+    return conf_path
 
 
 class GeneratorDone(Exception):
     pass
 
 
-class BaseScript:
-    def __init__(self):
-        self.context = {"alias": "fake", "uuid": "base"}
+class SimpleScript:
+    def __init__(self, prefix):
+        self.prefix = prefix
+        self.context = {"alias": f"fake-alias-{self.prefix}", "uuid": f"fake-uuid-{self.prefix}"}
         self.principals = ["aessiari@lbl.gov"]
-
         self.nodes = ['k8s-gen5-01.sdsc.optiputer.net', 'k8s-gen5-02.sdsc.optiputer.net']
-        # self.nodes = ['sandie-3.ultralight.org', 'sandie-5.ultralight.org']
         self.ips = ['10.251.88.241/28', '10.251.88.242/28']
 
     def script(self):
         tasks = list()
-        tasks.append(self.atask1(3910))   # target1
-        tasks.append(self.atask2(3910))   # target2 with same vlan
-        tasks.append(self.empty_task())
-        tasks.append(self.atask3(3910))   # target3 and target2 with same vlan
-        tasks.append(self.atask4(3910))   # change the order
-        tasks.append(self.empty_task())
+        tasks.append(self.stask(3910))   # target1
         tasks.append(self.terminate_task())
         return tasks
 
@@ -61,15 +120,49 @@ class BaseScript:
 
         return template
 
+    def empty_task(self):
+        task = self._create_template(f"{self.prefix}-empty", "handle-sense-instance")
+        task['config']['targets'] = []
+        return [task]
+
+    def terminate_task(self):
+        task = self._create_template(f"{self.prefix}-terminate", "instance-termination-notice")
+        return [task]
+
+    def stask(self, vlan):
+        task = self._create_template(self.prefix, "handle-sense-instance")
+        task['config']['targets'] = [
+            self._create_target(self.nodes[0], vlan, None, ['admin']),
+            self._create_target(self.nodes[1], vlan, None, self.principals)
+        ]
+
+        return [task]
+
+
+class BaseScript(SimpleScript):
+    def __init__(self, prefix):
+        super().__init__(prefix)
+
+    def script(self):
+        tasks = list()
+        tasks.append(self.atask1(3910))   # target1
+        tasks.append(self.atask2(3910))   # target2 with same vlan
+        tasks.append(self.empty_task())
+        tasks.append(self.atask3(3910))   # target3 and target2 with same vlan
+        tasks.append(self.atask4(3910))   # change the order
+        tasks.append(self.empty_task())
+        tasks.append(self.terminate_task())
+        return tasks
+
     def atask1(self, vlan) -> list:
-        task = self._create_template("atask1", "handle-sense-instance")
+        task = self._create_template(self.prefix, "handle-sense-instance")
         task['config']['targets'] = [
             self._create_target(self.nodes[0], vlan, self.ips[0], ['admin'])
         ]
         return [task]
 
     def atask2(self, vlan):
-        task = self._create_template("atask2", "handle-sense-instance")
+        task = self._create_template(self.prefix, "handle-sense-instance")
         task['config']['targets'] = [
             self._create_target(self.nodes[1], vlan, None, self.principals)
         ]
@@ -77,7 +170,7 @@ class BaseScript:
         return [task]
 
     def atask3(self, vlan):
-        task = self._create_template("atask3", "handle-sense-instance")
+        task = self._create_template(self.prefix, "handle-sense-instance")
         task['config']['targets'] = [
             self._create_target(self.nodes[0], vlan, self.ips[0], ['admin']),
             self._create_target(self.nodes[1], vlan, None, self.principals)
@@ -86,7 +179,7 @@ class BaseScript:
         return [task]
 
     def atask4(self, vlan):
-        task = self._create_template("atask4", "handle-sense-instance")
+        task = self._create_template(self.prefix, "handle-sense-instance")
         task['config']['targets'] = [
             self._create_target(self.nodes[1], vlan, None, self.principals),
             self._create_target(self.nodes[0], vlan, self.ips[0], ['admin']),
@@ -94,20 +187,10 @@ class BaseScript:
 
         return [task]
 
-    def empty_task(self):
-        task = self._create_template("atask5", "handle-sense-instance")
-        task['config']['targets'] = []
-        return [task]
 
-    def terminate_task(self):
-        task = self._create_template("atask_terminate", "instance-termination-notice")
-        return [task]
-
-
-class ComplexScript(BaseScript):
-    def __init__(self):
-        super().__init__()
-        self.context = {"alias": "fake", "uuid": "cplex"}
+class ComplexScript(SimpleScript):
+    def __init__(self, prefix):
+        super().__init__(prefix)
 
     def script(self):
         tasks = list()
@@ -130,14 +213,14 @@ class ComplexScript(BaseScript):
         return tasks
 
     def ptask1(self, vlan) -> list:
-        task = self._create_template("ptask1", "handle-sense-instance")
+        task = self._create_template(self.prefix, "handle-sense-instance")
         task['config']['targets'] = [
             self._create_target(self.nodes[0], vlan, self.ips[0], ['admin'])
         ]
         return [task]
 
     def ptask2(self, vlan):
-        task = self._create_template("ptask2", "handle-sense-instance")
+        task = self._create_template(self.prefix, "handle-sense-instance")
         task['config']['targets'] = [
             self._create_target(self.nodes[1], vlan, None, self.principals)
         ]
@@ -145,7 +228,7 @@ class ComplexScript(BaseScript):
         return [task]
 
     def ptask3(self, vlan1, vlan2):
-        task = self._create_template("ptask3", "handle-sense-instance")
+        task = self._create_template(self.prefix, "handle-sense-instance")
         task['config']['targets'] = [
             self._create_target(self.nodes[0], vlan1, self.ips[0], self.principals),
             self._create_target(self.nodes[1], vlan2, self.ips[1], ['extra_user1'])
@@ -154,7 +237,7 @@ class ComplexScript(BaseScript):
         return [task]
 
     def ptask4(self, vlan1, vlan2):
-        task = self._create_template("ptask4", "handle-sense-instance")
+        task = self._create_template(self.prefix, "handle-sense-instance")
         task['config']['targets'] = [
             self._create_target(self.nodes[0], vlan1, None, []),
             self._create_target(self.nodes[1], vlan2, None, ['extra_user2'])
@@ -162,14 +245,9 @@ class ComplexScript(BaseScript):
 
         return [task]
 
-    def terminate_task(self):
-        task = self._create_template("ptask_terminate", "instance-termination-notice")
-        return [task]
-
 
 class TaskGenerator:
-    def __init__(self, script=None):
-        script = script or BaseScript()
+    def __init__(self, script):
         self.tasks = script.script()
 
     def generate(self):
@@ -190,14 +268,17 @@ class NoopSENSEApiHandler(SENSEApiHandler):
         return False
 
 
-class FakeSENSEApiHandler(SENSEApiHandler):
+# noinspection PyUnusedLocal
+class FakeSENSEApiHandler:
     def __init__(self, gen):
-        super().__init__('fake_url')
+        self.url = 'fake_url'
         self.gen = gen.generate()
         self.last_task = []
         self.task_state_map = dict()
         self.counter = 0
+        self.stop_processing = False
 
+    # noinspection PyMethodMayBeStatic
     def post_metadata(self, metadata, domain, name):
         return True
 
@@ -207,9 +288,9 @@ class FakeSENSEApiHandler(SENSEApiHandler):
                 self.last_task = task
                 task[0]['uuid'] = str(self.counter) + '-' + task[0]['uuid']
                 self.counter += 1
-                return task
+                return task if not self.stop_processing else list()
         except GeneratorDone as e:
-            assert len(self.task_state_map) == self.counter
+            # assert len(self.task_state_map) == self.counter
             raise e
 
     def _update_task(self, data, **kwargs):
@@ -226,8 +307,31 @@ class FakeSENSEApiHandler(SENSEApiHandler):
 
         import json
 
-        log.debug(f'faking updating task attempts:{json.dumps(data, indent=2)}:{kwargs}')
+        if kwargs['state'] in ['REJECTED', 'WAITING']:
+            log.warning(f'faking updating task attempts:{json.dumps(data, indent=2)}:{kwargs}')
+            self.stop_processing = True
+
         return True
+
+    def accept_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets,  message=message)
+        return self._update_task(data, uuid=uuid, state='ACCEPTED')
+
+    def reject_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets, message=message)
+        return self._update_task(data, uuid=uuid, state='REJECTED')
+
+    def fail_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets, message=message)
+        return self._update_task(data, uuid=uuid, state='FAILED')
+
+    def wait_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets, message=message)
+        return self._update_task(data, uuid=uuid, state='WAITING')
+
+    def finish_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets, message=message)
+        return self._update_task(data, uuid=uuid, state='FINISHED')
 
 
 def create_sense_meta_manager(database, config_file, sense_api_handler=None):

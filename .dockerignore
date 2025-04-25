@@ -1,0 +1,16 @@
+build
+ALL
+venv
+.github
+examples
+perf
+config
+docs
+
+*.log
+__pycache__
+.eggs
+*.egg-info
+.egg-info
+venv
+*.md
