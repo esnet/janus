@@ -55,7 +55,7 @@ def get_db_file_path():
     db_path = os.path.normpath(os.path.join(os.getcwd(), DB_FILE_NAME))
 
     if not os.path.exists(db_path):
-        special_db_path = os.path.normpath(os.path.join(os.path.dirname(__file__), DB_FILE_NAME + ".special"))
+        special_db_path = os.path.normpath(os.path.join(os.path.dirname(__file__), 'db-test-sense-special.json'))
 
         shutil.copyfile(special_db_path, db_path, follow_symlinks=False)
 

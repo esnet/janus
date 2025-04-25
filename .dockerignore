@@ -13,4 +13,3 @@ __pycache__
 *.egg-info
 .egg-info
 venv
-*.md
