@@ -190,14 +190,16 @@ class NoopSENSEApiHandler(SENSEApiHandler):
         return False
 
 
-class FakeSENSEApiHandler(SENSEApiHandler):
+# noinspection PyUnusedLocal
+class FakeSENSEApiHandler:
     def __init__(self, gen):
-        super().__init__('fake_url')
+        self.url = 'fake_url'
         self.gen = gen.generate()
         self.last_task = []
         self.task_state_map = dict()
         self.counter = 0
 
+    # noinspection PyMethodMayBeStatic
     def post_metadata(self, metadata, domain, name):
         return True
 
@@ -228,6 +230,26 @@ class FakeSENSEApiHandler(SENSEApiHandler):
 
         log.debug(f'faking updating task attempts:{json.dumps(data, indent=2)}:{kwargs}')
         return True
+
+    def accept_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets,  message=message)
+        return self._update_task(data, uuid=uuid, state='ACCEPTED')
+
+    def reject_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets, message=message)
+        return self._update_task(data, uuid=uuid, state='REJECTED')
+
+    def fail_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets, message=message)
+        return self._update_task(data, uuid=uuid, state='FAILED')
+
+    def wait_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets, message=message)
+        return self._update_task(data, uuid=uuid, state='WAITING')
+
+    def finish_task(self, uuid, targets, message):
+        data = dict(url=self.url, targets=targets, message=message)
+        return self._update_task(data, uuid=uuid, state='FINISHED')
 
 
 def create_sense_meta_manager(database, config_file, sense_api_handler=None):
