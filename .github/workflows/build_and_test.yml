@@ -1,10 +1,11 @@
-name: Build And Test 
+name: BuildDockerImageAndTest 
 
 on:
   workflow_dispatch:
 
 env:
   janus_image: janus:cicd
+  KUBE_TOKEN: ${{ secrets.KUBE_TOKEN }}
 
 jobs:
   DockerBuildAndTest:
@@ -30,9 +31,16 @@ jobs:
           tags: ${{ env.janus_image }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new
-      - name: Run Tests
+
+      - name: Save Kube Token 
         run: |
-          docker run --rm -v ${{ github.workspace }}/tests:/tests -t ${{ env.janus_image }} ls 
+          mkdir -p ${{ github.workspace }}/.kube
+          echo ${{ env.KUBE_TOKEN }} | base64 --decode > ${{ github.workspace }}/.kube/config
+          ls -l ${{ github.workspace }}/.kube/config
+
+      - name: Run Sense Kubernetes Tests
+        run: |
+          docker run --rm -v ${{ github.workspace }}/tests:/tests -v ${{ github.workspace }}/.kube:/root/.kube -w /tests -t ${{ env.janus_image }} ./run_sense_test.sh 
 
       - name: Move cache
         run: |
