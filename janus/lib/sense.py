@@ -477,7 +477,7 @@ class SENSEMetaManager(DBHandler):
             existing_sessions = self.db.all(self.sense_session_table)
             existing_sessions = [
                 dict(name=s['name'],
-                     status=s['status'],
+                     status=s.get('status'),
                      state=s.get('state'),
                      errors=s.get('errors'),
                      number_janus_sessions=len(self.find_janus_session(host_profile_names=s['host_profile'])),
