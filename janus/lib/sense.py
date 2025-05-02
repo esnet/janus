@@ -26,6 +26,9 @@ class SENSEMetaManager(DBHandler):
         self.session_manager = SessionManager()
         self.retries = SenseConstants.SENSE_PLUGIN_RETRIES
         self.counter = 0
+        janus_session_creation = properties[SenseConstants.SENSE_JANUS_SESSION_CREATION].lower()
+        self.create_janus_sessions = SenseConstants.SENSE_JANUS_SESSION_CREATE in janus_session_creation
+        self.start_janus_sessions = SenseConstants.SENSE_JANUS_SESSION_START in janus_session_creation
         log.info(f"Initialized {__name__}:properties={json.dumps(properties, indent=2)}")
 
     def update_metadata(self, agents):
@@ -72,27 +75,34 @@ class SENSEMetaManager(DBHandler):
 
         return instances
 
-    def create_janus_session(self, sense_session):
+    def create_janus_session(self, sense_session, host_networking=False):
         session_manager = SessionManager()
         targets = sum(sense_session['task_info'].values(), [])
         targets = sorted(targets, key=lambda t: t['name'])
         host_profiles = sense_session['host_profile']
         network_profiles = sense_session['network_profile']
-        owner = sense_session["users"][0] if sense_session['users'] else 'admin'
-        options = list()
+        owner = sense_session['users'][0] if sense_session['users'] else 'admin'
+        overrides = list()
         requests = list()
 
         assert len(host_profiles) == 1
 
         for target in targets:
-            vlan = target['vlan']
-            option = dict(name=f"{network_profiles[0]}-{vlan}",
-                          vlan=str(vlan),
-                          parent=f"vlan.{vlan}",
-                          mtu=1500)
-            options.append(option)
+            option = dict(endpoint=target['name'])
 
-        for instance in self._instances(targets):
+            if not host_networking:
+                vlan = target['vlan']
+                option.update(dict(name=f"{network_profiles[0]}-{vlan}",
+                              vlan=str(vlan),
+                              parent=f"vlan.{vlan}",
+                              mtu=1500))
+            elif host_networking and target.get('ip'):
+                addr = target['ip']
+                option.update(dict(ip_addr=addr[:addr.index('/')] if '/' in addr else addr))
+
+            overrides.append(option)
+
+        for idx, instance in enumerate(self._instances(targets)):
             request = dict(
                 instances=[instance],
                 profile=host_profiles[0],
@@ -100,7 +110,8 @@ class SENSEMetaManager(DBHandler):
                 image='dtnaas/tools:latest',
                 arguments=str(),
                 kwargs=dict(USER_NAME=str(), PUBLIC_KEY=str()),
-                remove_container=False
+                remove_container=False,
+                overrides=[overrides[idx]]
             )
             requests.append(request)
 
@@ -108,10 +119,10 @@ class SENSEMetaManager(DBHandler):
         session_manager.validate_request(requests)
         session_requests = session_manager.parse_requests(None, None, requests)
         # SenseUtils.dump_sessions_requests(session_requests)
-        net_names = session_manager.create_networks(session_requests, options)
+        net_names = session_manager.create_networks(session_requests)
         sense_session['networks'] = net_names
         janus_session_id = session_manager.create_session(
-            None, None, session_requests, requests, owner, users=sense_session["users"], options=options
+            None, None, session_requests, requests, owner, users=sense_session["users"]
         )
 
         return [janus_session_id]
@@ -330,8 +341,13 @@ class SENSEMetaManager(DBHandler):
                 try:
                     if sum(sense_session['task_info'].values(), []):
                         self.create_profiles(sense_session=sense_session)
-                        janus_session_ids = self.create_janus_session(sense_session=sense_session)
-                        sense_session['janus_session_id'] = janus_session_ids
+
+                        if self.create_janus_sessions:
+                            janus_session_ids = self.create_janus_session(sense_session=sense_session)
+                            sense_session['janus_session_id'] = janus_session_ids
+
+                            if self.start_janus_sessions:
+                                self.session_manager.start_session(session_id=janus_session_ids[0])
                     else:
                         sense_session['users'] = list()
                         sense_session['clusters'] = list()
@@ -341,9 +357,9 @@ class SENSEMetaManager(DBHandler):
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
-                    log.warning(f'error creating janus session: {e}')
+                    log.warning(f'error creating profiles or janus session: {e}')
                     sense_session['errors'] += 1
-                    sense_session['error_message'] = f'error creating janus session: {e}'
+                    sense_session['error_message'] = f'error creating profiles or janus session: {e}'
 
         if 0 < sense_session['errors'] < self.retries:
             targets = SenseUtils.to_targets(sense_session)

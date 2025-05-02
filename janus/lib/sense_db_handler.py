@@ -73,11 +73,6 @@ class DBHandler(object):
 
         assert len(queries) >= 1
         sense_sessions = self.db.search(self.sense_session_table, query=reduce(lambda a, b: a & b, queries))
-        # TODO Do we want to be backward compatible? If so it needs to be tested ...
-        # for sense_session in sense_sessions:
-        #     for k in ['network_profile', 'host_profile', 'janus_session_id']:
-        #         if isinstance(sense_session.get(k), str):
-        #             sense_session[k] = [sense_session[k]]
         return sense_sessions
 
     def check_modified(self, new_sense_session):
@@ -126,15 +121,6 @@ class DBHandler(object):
     def find_images(self, *, name):
         images = self.db.search(self.image_table, query=(Query().name == name))
         return images
-
-    #
-    # def find_cluster(self, *, cluster_id=None, name=None):
-    #     if id:
-    #         clusters = self.db.search(self.nodes_table, query=(Query().id == cluster_id))
-    #     else:
-    #         clusters = self.db.search(self.nodes_table, query=(Query().name == name))
-    #
-    #     return clusters
 
     def find_cluster(self, name):
         return self.db.search(self.nodes_table, query=(Query().name == name))
@@ -196,21 +182,24 @@ class DBHandler(object):
 
         return resource
 
-    def get_or_create_network_profile(self, name, targets, users, subnets, groups=None):
+    def get_or_create_network_profile(self, name, target, users, subnet, groups=None, host_networking=False):
         network_profiles = list()
-        vlans = list([t['vlan'] for t in targets])
 
-        if len(set(vlans)) == 1:
-            vlans = list(set(vlans))
+        if host_networking:
+            network_profile_settings = {
+                "driver": "host",
+                "mode": None,
+                "enable_ipv6": False,
+                "ipam": None,
+                "options": None
+            }
 
-        # subnets = ['192.168.1.0/24', '192.168.2.0/24']
-
-        for tindex, vlan in enumerate(vlans):
-            target = targets[tindex]
+            network_profile = dict(name=name + '-host',
+                                   settings=network_profile_settings, users=users, groups=groups)
+        else:
+            vlan = target['vlan']
             parent = target.get('portName')
             parent = parent if parent and '?' not in parent else f'vlan.{vlan}'
-            # TODO subnet = target.get('ip') or '192.168.1.0/24'
-            subnet = subnets[tindex] if tindex < len(subnets) else subnets[0]
             bw = target.get('bw')
             config = list()
 
@@ -241,32 +230,32 @@ class DBHandler(object):
             groups = groups or list()
             network_profile = dict(name=name,  # AES TODO + '-' + str(vlan),
                                    settings=network_profile_settings, users=users, groups=groups)
-            log.debug(f'network_profile: {json.dumps(network_profile)}')
 
-            try:
-                NetworkProfileSettings(**network_profile['settings'])
-                NetworkProfile(**network_profile)
-            except ValidationError as e:
-                raise e
+        log.debug(f'network_profile: {json.dumps(network_profile)}')
 
-            self.save_network_profile(network_profile=network_profile)
-            network_profiles.append(network_profile)
+        try:
+            NetworkProfileSettings(**network_profile['settings'])
+            NetworkProfile(**network_profile)
+        except ValidationError as e:
+            raise e
 
+        self.save_network_profile(network_profile=network_profile)
+        network_profiles.append(network_profile)
         return network_profiles
 
-    def get_or_create_host_profile(self, name, network_profile, addr, users, groups=None):
-        host_profiles = self.find_host_profiles(name=name, net_name=network_profile['name'])
-
-        if host_profiles:
-            assert len(host_profiles) == 1
-            host_profile = self._update_users(host_profiles[0], users, self.save_host_profile)
-            return host_profile
-
-        host_profile_settings = dict(cpu=0.2,
-                                     memory=1073741824,
-                                     mgmt_net=None,
-                                     ctrl_port_range=None,
-                                     data_net=dict(name=network_profile['name'], ipv4_addr=addr, ipv6_addr=None))
+    def get_or_create_host_profile(self, name, network_profile, addr, users, groups=None, host_networking=False):
+        if host_networking:
+            host_profile_settings = dict(cpu=0.2,
+                                         memory=1073741824,
+                                         mgmt_net=dict(name=network_profile['name'], ipv4_addr=addr, ipv6_addr=None),
+                                         ctrl_port_range=None,
+                                         data_net=None)
+        else:
+            host_profile_settings = dict(cpu=0.2,
+                                         memory=1073741824,
+                                         mgmt_net=None,
+                                         ctrl_port_range=None,
+                                         data_net=dict(name=network_profile['name'], ipv4_addr=addr, ipv6_addr=None))
 
         # noinspection PyProtectedMember
         default_settings = self.cfg._base_profile.copy()
@@ -306,43 +295,20 @@ class DBHandler(object):
 
         return agents
 
-    def create_profiles(self, sense_session):
+    def create_profiles(self, sense_session, host_networking=False):
         task_info = sense_session['task_info']
         name = sense_session['name'].lower()
         users = sense_session['users']
         targets = sorted(sum(task_info.values(), []), key=lambda t: t['name'])
-        targets = [targets[0]]  # TODO AES
         subnets = ['192.168.1.0/24']
-
-        nprofs = self.get_or_create_network_profile(name=name + '-net', targets=targets,
-                                                    subnets=subnets, users=users)
-        # addrs = [t['ip'] for t in targets if t.get('ip')]
-        # addrs = [addr[:addr.index('/')] for addr in addrs]
+        nprofs = self.get_or_create_network_profile(name=name + '-net', target=targets[0],
+                                                    subnet=subnets[0], users=users, host_networking=host_networking)
         hprofs = list()
-
-        # assert len(addrs) == len(targets) or len(addrs) == 0, '# of addrs is not equal to # targets'
-        assert len(nprofs) == len(targets) or len(nprofs) == 1
-
-        if len(nprofs) == 1:
-            hprof = self.get_or_create_host_profile(name=name, network_profile=nprofs[0], addr=None,
-                                                    users=users)
-            hprofs.append(hprof)
-        # elif addrs:
-        #     for idx, nprof in enumerate(nprofs):
-        #         hprof = self.get_or_create_host_profile(name=name + f'-{idx}', network_profile=nprof,
-        #                                                 addr=addrs[idx], users=users)
-        #         hprofs.append(hprof)
-        else:
-            from ipaddress import IPv4Network
-
-            ipv4_net = IPv4Network(subnets[0], strict=False)
-            hosts = [str(h) for h in ipv4_net.hosts()]
-
-            for idx, nprof in enumerate(nprofs):
-                hprof = self.get_or_create_host_profile(name=name + f'-{idx}', network_profile=nprof,
-                                                        addr=hosts[idx + 1], users=users)
-                hprofs.append(hprof)
-
+        assert len(nprofs) == 1
+        addr = None
+        hprof = self.get_or_create_host_profile(name=name, network_profile=nprofs[0], addr=addr,
+                                                users=users, host_networking=host_networking)
+        hprofs.append(hprof)
         sense_session['network_profile'] = [nprof['name'] for nprof in nprofs]
         sense_session['host_profile'] = [hprof['name'] for hprof in hprofs]
 

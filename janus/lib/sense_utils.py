@@ -10,6 +10,10 @@ class SenseConstants:
     SENSE_DOMAIN_INFO = 'sense-metadata-domain-info'
     SENSE_PLUGIN_VERSION = '0.2'
     SENSE_PLUGIN_RETRIES = 3
+    SENSE_JANUS_SESSION_CREATION = 'sense-janus-session-creation'
+    SENSE_JANUS_SESSION_CREATE = 'create'
+    SENSE_JANUS_SESSION_START = 'start'
+    SENSE_JANUS_SESSION_CREATION_DEFAULTS = f'{SENSE_JANUS_SESSION_CREATE},{SENSE_JANUS_SESSION_START}'
 
 
 class SenseUtils:
@@ -22,15 +26,22 @@ class SenseUtils:
 
                     if sense_meta_plugin:
                         sense_properties = dict()
-                        cfg.sense_metadata = parser.getboolean(sense_meta_plugin, 'sense-metadata-enabled', fallback=False)
-                        sense_metadata_url = parser.get(sense_meta_plugin, SenseConstants.SENSE_METADATA_URL, fallback=None)
+                        cfg.sense_metadata = parser.getboolean(sense_meta_plugin, 'sense-metadata-enabled',
+                                                               fallback=False)
+                        sense_metadata_url = parser.get(sense_meta_plugin, SenseConstants.SENSE_METADATA_URL,
+                                                        fallback=None)
                         sense_metadata_assigned = parser.get(sense_meta_plugin, SenseConstants.SENSE_METADATA_ASSIGNED,
                                                              fallback=SenseConstants.JANUS_DEVICE_MANAGER)
                         sense_metadata_domain_info = parser.get(sense_meta_plugin, SenseConstants.SENSE_DOMAIN_INFO,
                                                                 fallback='JANUS/AES_TESTING')
+
                         sense_properties[SenseConstants.SENSE_METADATA_URL] = sense_metadata_url
                         sense_properties[SenseConstants.SENSE_DOMAIN_INFO] = sense_metadata_domain_info
                         sense_properties[SenseConstants.SENSE_METADATA_ASSIGNED] = sense_metadata_assigned
+                        sense_janus_creation = parser.get(sense_meta_plugin,
+                                                          SenseConstants.SENSE_JANUS_SESSION_CREATION,
+                                                          fallback=SenseConstants.SENSE_JANUS_SESSION_CREATION_DEFAULTS)
+                        sense_properties[SenseConstants.SENSE_JANUS_SESSION_CREATION] = sense_janus_creation
                         return sense_properties
 
         return None
@@ -91,6 +102,7 @@ class SenseUtils:
                      data_ipv4=service['data_ipv4'],
                      data_ipv6=service['data_ipv6'],
                      data_net_name=service['data_net_name'],
+                     ctrl_host=service['ctrl_host'],
                      profile=service['profile']
                      ) for service in services
             ])

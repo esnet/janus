@@ -84,6 +84,15 @@ class SessionManager(QueryUser):
             if not instances or not profile or not image:
                 raise InvalidSessionRequestException("Missing fields in POST data")
 
+            overrides = r.get("overrides", list())
+
+            if overrides and len(overrides) != len(instances):
+                raise InvalidSessionRequestException("Number of overrides must match the number of instances")
+
+            for override in overrides:
+                if 'endpoint' not in override:
+                    raise InvalidSessionRequestException("Override must have endpoint attribute")
+
             for ep in instances:
                 ename = None
 
@@ -113,8 +122,10 @@ class SessionManager(QueryUser):
             if not dbase.get(itable, query=query):
                 raise ResourceNotFoundException(f"Image {r['image']} not found")
 
+            overrides = r.get("overrides", list())
+
             # Endpoints and Networks
-            for ep in instances:
+            for idx, ep in enumerate(instances):
                 c = dict()
                 ename = None
                 if isinstance(ep, dict):
@@ -130,37 +141,43 @@ class SessionManager(QueryUser):
                 if not node:
                     raise ResourceNotFoundException(f"Ednpoint {ename} not found")
 
-                session_requests.append(SessionRequest(node=node,
-                                                       profile=prof,
-                                                       image=r['image'],
-                                                       arguments=r.get("arguments", None),
-                                                       remove_container=r.get("remove_container", None),
-                                                       constraints=c,
-                                                       kwargs=r.get("kwargs", dict())))
+                session_requests.append(
+                    SessionRequest(node=node,
+                                   profile=prof,
+                                   image=r['image'],
+                                   arguments=r.get("arguments", None),
+                                   remove_container=r.get("remove_container", None),
+                                   constraints=c,
+                                   kwargs=r.get("kwargs", dict()),
+                                   overrides=overrides[idx] if overrides else dict()
+                                   )
+                )
 
         return session_requests
 
-    def create_networks(self, session_requests: List[SessionRequest], options=None):
+    def create_networks(self, session_requests: List[SessionRequest]):
         dbase = cfg.db
         ntable = dbase.get_table('nodes')
         net_names = dict()
 
-        for idx, sesssion_request in enumerate(session_requests):
+        for sesssion_request in session_requests:
             prof = sesssion_request.profile
             sesssion_request.node = dbase.get(ntable, name=sesssion_request.node['name'])
+            overrides = sesssion_request.overrides
 
-            if options:
-                cfg.sm.get_handler(sesssion_request.node).resolve_networks(sesssion_request.node, prof, options[idx])
+            if overrides:
+                cfg.sm.get_handler(sesssion_request.node).resolve_networks(sesssion_request.node, prof, **overrides)
             else:
                 cfg.sm.get_handler(sesssion_request.node).resolve_networks(sesssion_request.node, prof)
 
             dbase.upsert(ntable, sesssion_request.node, 'name', sesssion_request.node['name'])
 
             for net in [Network(prof.settings.mgmt_net), Network(prof.settings.data_net)]:
-                if not net.name or net.name in [Constants.NET_NONE, Constants.NET_HOST, Constants.NET_BRIDGE]:
+                if not net.name or net.name in [Constants.NET_NONE, Constants.NET_HOST, Constants.NET_BRIDGE]\
+                        or net.is_host():
                     continue
 
-                net_name = options[idx]['name'] if options else net.name
+                net_name = overrides['name'] if overrides else net.name
                 self.update_network(sesssion_request.node, net, net_name)
                 net_names[f"{net_name}@{sesssion_request.node['name']}"] = dict(
                     network=net_name,
@@ -169,8 +186,7 @@ class SessionManager(QueryUser):
 
         return net_names
 
-    def create_session(self, user, group, session_requests: List[SessionRequest], req, current_user, users=None,
-                       options=None):
+    def create_session(self, user, group, session_requests: List[SessionRequest], req, current_user, users=None):
         users = users or list()
         db_id = precommit_db()
         svcs = dict()  # get an ID from the DB
@@ -178,6 +194,7 @@ class SessionManager(QueryUser):
         addrs_v6 = set()
         cports = set()
         sports = set()
+        all_overrides = dict()
 
         try:
             for i, s in enumerate(session_requests):
@@ -190,9 +207,12 @@ class SessionManager(QueryUser):
                 else:
                     sname = cname_from_id(db_id, i + 1, 'janus' + '-' + s.profile.name)
 
-                if options:
+                overrides = s.overrides
+
+                if overrides:
+                    all_overrides[overrides['endpoint']] = overrides
                     rec = cfg.sm.get_handler(s.node).create_service_record(
-                        sname, s, addrs_v4, addrs_v6, cports, sports, options[i]
+                        sname, s, addrs_v4, addrs_v6, cports, sports, **overrides
                     )
                 else:
                     rec = cfg.sm.get_handler(s.node).create_service_record(
@@ -224,6 +244,7 @@ class SessionManager(QueryUser):
         record['request'] = req
         record['users'] = user.split(",") if user else users
         record['groups'] = group.split(",") if group else []
+        record['overrides'] = all_overrides
         commit_db(record, db_id)
         return db_id
 
@@ -368,7 +389,7 @@ class SessionManager(QueryUser):
         svc['state'] = State.MIXED.name if error else State.STOPPED.name
         svc = commit_db(svc, session_id, delete=True, realized=True)
 
-        if error:  # TODO AES Stopping session failed:FATAL:<class 'KeyError'>:'errors'
+        if error:
             raise SessionManagerException(str(svc['errors']))
 
         if peers := svc.get('peer'):
@@ -448,3 +469,51 @@ class SessionManager(QueryUser):
         # delete always removes realized state info
         commit_db(doc, aid, delete=True, realized=True)
         commit_db(doc, aid, delete=True)
+
+    def exec(self, req):
+        """
+        Handle the execution of a container command inside Service
+        """
+        start = False
+        attach = True
+        tty = False
+        if type(req) is not dict or "Cmd" not in req:
+            return {"error": "invalid request format"}, 400
+        if "node" not in req:
+            return {"error": "node not specified"}, 400
+        if "container" not in req:
+            return {"error": "container not specified"}, 400
+        if type(req["Cmd"]) is not list:
+            return {"error": "Cmd is not a list"}, 400
+        log.debug(req)
+
+        nname = req["node"]
+        if "start" in req:
+            start = req["start"]
+        if "attach" in req:
+            attach = req["attach"]
+        if "tty" in req:
+            tty = req["tty"]
+
+        dbase = cfg.db
+        table = dbase.get_table('nodes')
+        node = dbase.get(table, name=nname)
+        if not node:
+            return {"error": f"Node not found: {nname}"}
+
+        container = req["container"]
+        cmd = req["Cmd"]
+
+        kwargs = {'AttachStdin': False,
+                  'AttachStdout': attach,
+                  'AttachStderr': attach,
+                  'Tty': tty,
+                  'Cmd': cmd
+                  }
+
+        handler = cfg.sm.get_handler(node)
+        ret = handler.exec_create(Node(**node), container, **kwargs)
+        if start:
+            handler.exec_start(Node(**node), ret)
+
+        return ret

@@ -390,17 +390,10 @@ class KubernetesApi(Service):
         )
         log.info(f"Removed network {network} on {node.name}")
 
-    def resolve_networks(self, node: dict, prof, net_options=None):
-        def _build_net(p, opt=None):
-            # addrs = list()
-            # if p.settings.ipam:
-            #     for s in p.settings.ipam.get('config', []):
-            #         addrs.append({'address': s['subnet'],
-            #                       'gateway': s['gateway']
-            #                       })
-
-            if opt:
-                p.settings.options = opt
+    def resolve_networks(self, node: dict, prof, **kwargs):
+        def _build_net(p, data_net_overrides):
+            data_net_overrides = data_net_overrides or dict()
+            p.settings.options.update(data_net_overrides)
 
             net_cfg = {
                 "cniVersion": self.CNI_VERSION,
@@ -411,8 +404,7 @@ class KubernetesApi(Service):
                         "master": p.settings.options.get('parent'),
                         "mtu": int(p.settings.options.get('mtu')) if p.settings.options.get('mtu') else 1500,
                         "ipam": {
-                            "type": "static",
-                            # "addresses": addrs
+                            "type": "static"
                         }
                     }
                 ]
@@ -433,7 +425,8 @@ class KubernetesApi(Service):
         created = False
 
         for net in [Network(prof.settings.mgmt_net), Network(prof.settings.data_net)]:
-            if not net.name or net.name in [Constants.NET_NONE, Constants.NET_HOST, Constants.NET_BRIDGE]:
+            if not net.name or net.name in [Constants.NET_NONE, Constants.NET_HOST, Constants.NET_BRIDGE]\
+                    or net.is_host():
                 continue
 
             nname = node.get('name')
@@ -442,14 +435,14 @@ class KubernetesApi(Service):
             if not nprof:
                 raise Exception(f"Network profile {net.name} not found")
 
-            kwargs = _build_net(nprof, net_options)
-            net_name = net_options['name'] if net_options else net.name
+            net_attach_def = _build_net(nprof, kwargs)
+            net_name = kwargs.get('name', net.name)
             ninfo = None
 
             try:
                 ninfo = self.get_network(Node(**node), net_name)
 
-                if is_subset(kwargs, ninfo.get('_data')):
+                if is_subset(net_attach_def, ninfo.get('_data')):
                     log.info(f"Found matching network {net_name} found on {nname}")
                     node['networks'][net_name] = ninfo
                     continue
@@ -465,15 +458,15 @@ class KubernetesApi(Service):
                     del node['networks'][net_name]
 
             log.info(f"Creating: No matching network {net_name} found on {nname}")
-            ninfo = self.create_network(Node(**node), net_name, **kwargs)
+            ninfo = self.create_network(Node(**node), net_name, **net_attach_def)
             node['networks'][net_name] = ninfo
             created = True
 
         return created
 
     # noinspection PyTypeChecker
-    def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports, options=None):
-        options = options or dict()
+    def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports, **kwargs):
+        data_net_overrides = kwargs
         srec = dict()
         node = sreq.node
         prof = sreq.profile
@@ -482,15 +475,6 @@ class KubernetesApi(Service):
         cname = sname
         dnet = Network(prof.settings.data_net, nname)
         mnet = Network(prof.settings.mgmt_net, nname)
-
-        # TODO arguments are not used ....
-        # import shlex
-        # args_override = sreq.arguments
-        # cmd = None
-        # if args_override:
-        #     cmd = shlex.split(args_override)
-        # elif prof.settings.arguments:
-        #     cmd = shlex.split(prof.settings.arguments)
 
         mgmt_ipv4 = None
         mgmt_ipv6 = None
@@ -531,15 +515,14 @@ class KubernetesApi(Service):
         if mnet.is_host():
             kwargs['spec'].update({"hostNetwork": True})
 
-        # AES
         srec['data_net'] = None
         srec['data_net_name'] = None
 
         if dnet.name:
             ips = []
 
-            if options:
-                dnet_name = options['name']
+            if data_net_overrides:
+                dnet_name = data_net_overrides['name']
                 key = f"{nname}-{dnet_name}"
                 data_ipv4 = get_next_ipv4(dnet, addrs_v4, cidr=True, key=key, name=dnet_name)
                 data_ipv6 = get_next_ipv6(dnet, addrs_v6, cidr=True, key=key, name=dnet_name)
@@ -554,7 +537,7 @@ class KubernetesApi(Service):
 
             dnet_conf = [
                 {
-                    "name": options.get('name', dnet.name),
+                    "name": data_net_overrides.get('name', dnet.name),
                     "ips": ips
                 }
             ]
@@ -565,8 +548,8 @@ class KubernetesApi(Service):
             }
             kwargs['metadata'].update(anno)
 
-            srec['data_net'] = node['networks'][options.get('name', dnet.name)]
-            srec['data_net_name'] = options.get('name', dnet.name)
+            srec['data_net'] = node['networks'][data_net_overrides.get('name', dnet.name)]
+            srec['data_net_name'] = data_net_overrides.get('name', dnet.name)
 
         srec['mgmt_net'] = node['networks'].get(mnet.name, None)
         srec['mgmt_ipv4'] = mgmt_ipv4

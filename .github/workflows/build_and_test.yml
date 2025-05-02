@@ -6,6 +6,7 @@ on:
 env:
   janus_image: janus:cicd
   KUBE_TOKEN: ${{ secrets.KUBE_TOKEN }}
+  RUN_TEST_SENSE: ${{ vars.RUN_TEST_SENSE }}
 
 jobs:
   DockerBuildAndTest:
@@ -33,12 +34,19 @@ jobs:
           cache-to: type=local,dest=/tmp/.buildx-cache-new
 
       - name: Save Kube Token 
+        if: false
         run: |
           mkdir -p ${{ github.workspace }}/.kube
           echo ${{ env.KUBE_TOKEN }} | base64 --decode > ${{ github.workspace }}/.kube/config
           ls -l ${{ github.workspace }}/.kube/config
 
+      - name: Validate KubeToken 
+        if: false
+        run: |
+          docker run --rm -v ${{ github.workspace }}/.kube:/root/.kube -t ${{ env.janus_image }} kubectl get net-attach-def
+
       - name: Run Sense Kubernetes Tests
+        if: ${{ env.RUN_TEST_SENSE == 'true' }}
         run: |
           docker run --rm -v ${{ github.workspace }}/tests:/tests -v ${{ github.workspace }}/.kube:/root/.kube -w /tests -t ${{ env.janus_image }} ./run_sense_test.sh 
 
