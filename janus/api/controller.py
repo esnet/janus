@@ -1,7 +1,9 @@
 import logging
+import json
 from functools import reduce
 from operator import eq
 from urllib.parse import urlsplit
+from threading import Thread
 
 from flask import request, jsonify
 from flask_httpauth import HTTPBasicAuth
@@ -23,6 +25,7 @@ from janus.api.utils import (
     Constants
 )
 from janus.settings import cfg
+from janus.api.constants import WSType
 
 # Basic auth
 httpauth = HTTPBasicAuth()
@@ -336,12 +339,12 @@ class Exec(Resource):
         log.debug(req)
 
         nname = req["node"]
-        if "start" in req:
-            start = req["start"]
-        if "attach" in req:
-            attach = req["attach"]
-        if "tty" in req:
-            tty = req["tty"]
+        if str(req.get("start", "")).lower() == "true":
+            start = True
+        if str(req.get("attach", "")).lower() == "false":
+            attach = False
+        if str(req.get("tty", "")).lower() == "true":
+            tty = True
 
         dbase = cfg.db
         table = dbase.get_table('nodes')
@@ -352,7 +355,7 @@ class Exec(Resource):
         container = req["container"]
         cmd = req["Cmd"]
 
-        kwargs = {'AttachStdin': False,
+        kwargs = {'AttachStdin': attach,
                   'AttachStdout': attach,
                   'AttachStderr': attach,
                   'Tty': tty,
