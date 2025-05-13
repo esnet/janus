@@ -257,6 +257,7 @@ class SENSEMetaManager(DBHandler):
                 targets = config['targets']
                 command = config['command']
                 task_id = task['uuid']
+                log.debug(f'RETRIEVED_TASK:command={command}:task_id={task_id}:targets={targets}')
 
                 if command not in ['handle-sense-instance', 'instance-termination-notice']:
                     self.sense_api_handler.reject_task(task_id, targets, f"unknown command:{command}")
@@ -268,10 +269,18 @@ class SENSEMetaManager(DBHandler):
                 assert len(sense_sessions) <= 1
                 sense_session = sense_sessions[0] if sense_sessions else dict()
 
-                if sense_session and sense_session['status'] == 'PENDING':
+                if sense_session and 'status' in sense_session and sense_session['status'] == 'PENDING':
+                    log.debug(f'DELAYING_HANDLING_RETRIEVED_TASK:command={command}:task_id={task_id}:targets={targets}')
                     continue
 
-                if command == 'instance-termination-notice':
+                log.debug(f'HANDLING_RETRIEVED_TASK:command={command}:task_id={task_id}:targets={targets}')
+                users = list()
+
+                for target in targets:
+                    users.extend(target['principals'])
+
+                if not targets or not users or command == 'instance-termination-notice':
+                    config['command'] = 'instance-termination-notice'
                     ret = self._retrieve_instance_termination_notice_command(task)
                 else:
                     ret = self._retrieve_handle_sense_instance_command(task, agents, node_names)
@@ -281,8 +290,12 @@ class SENSEMetaManager(DBHandler):
                 else:
                     rejected_tasks.append(task)
             except Exception as e:
+                import traceback
+                traceback.print_exc()
+
+                log.error(f'Error in RetrieveTask: {e}')
                 if task_id:
-                    self.sense_api_handler.fail_task(task_id, targets, f'{type(e)}:{e}')
+                    self.sense_api_handler.fail_task(task_id, targets, f'retrieve_task:{type(e)}:{e}')
 
                 failed_tasks.append(task)
 
@@ -431,8 +444,11 @@ class SENSEMetaManager(DBHandler):
                     task_id = uuids[0]
                     self._finish_handle_sense_instance_command(task_id, sense_session)
             except Exception as e:
+                import traceback
+                traceback.print_exc()
+                log.error(f'Error in FinishTask : {e}')
                 targets = SenseUtils.to_targets(sense_session)
-                self.sense_api_handler.fail_task(task_id, targets, f'{type(e)}:{e}')
+                self.sense_api_handler.fail_task(task_id, targets, f'finish_task:{type(e)}:{e}')
                 sense_session['status'] = 'FAILED'
                 self.db.remove(self.sense_session_table, name=sense_session['name'])
 

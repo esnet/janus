@@ -34,6 +34,7 @@ jobs:
           cache-to: type=local,dest=/tmp/.buildx-cache-new
 
       - name: Save Kube Token 
+        if: false
         run: |
           mkdir -p ${{ github.workspace }}/.kube
           echo ${{ env.KUBE_TOKEN }} | base64 --decode > ${{ github.workspace }}/.kube/config
