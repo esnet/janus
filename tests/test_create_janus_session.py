@@ -8,33 +8,6 @@ from tests.sense_test_utils import NoopSENSEApiHandler, create_sense_meta_manage
 log = get_logger()
 
 
-def get_caltech_session():
-    return {
-        "name": "aes-pycharm-caltest-nrp",
-        "task_info": {
-            "0-ptask1": [
-                {
-                    "name": "k8s-gen4-02.sdsc.optiputer.net",
-                    "vlan": 3910,
-                    "ip": None,
-                    "cluster_info": {
-                        "cluster_name": "nautilus"
-                    }
-                },
-                {
-                    "name": "sdn-dtn-1-7.ultralight.org",
-                    "vlan": 3911,
-                    "ip": None,
-                    "cluster_info": {
-                        "cluster_name": "kubernetes-admin@kubernetes"
-                    }
-                }
-            ]
-        },
-        "users": [],
-    }
-
-
 def get_nrp_single_vlan():
     alias = 'sunami-multipoint-4'
     instance_id = 'a59e040c-ddce-4e30-87c6-755279ca6f02'
