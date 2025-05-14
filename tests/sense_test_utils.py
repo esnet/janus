@@ -342,19 +342,20 @@ def create_sense_meta_manager(database, config_file, sense_api_handler=None):
     parser = ConfigParser(allow_no_value=True)
     parser.read(config_file)
 
-    config = parser['JANUS']
-    cfg.PORTAINER_URI = str(config.get('PORTAINER_URI', None))
-    cfg.PORTAINER_WS = str(config.get('PORTAINER_WS', None))
-    cfg.PORTAINER_USER = str(config.get('PORTAINER_USER', None))
-    cfg.PORTAINER_PASSWORD = str(config.get('PORTAINER_PASSWORD', None))
-    vssl = str(config.get('PORTAINER_VERIFY_SSL', 'True'))
+    if 'JANUS' in parser:
+        config = parser['JANUS']
+        cfg.PORTAINER_URI = str(config.get('PORTAINER_URI', None))
+        cfg.PORTAINER_WS = str(config.get('PORTAINER_WS', None))
+        cfg.PORTAINER_USER = str(config.get('PORTAINER_USER', None))
+        cfg.PORTAINER_PASSWORD = str(config.get('PORTAINER_PASSWORD', None))
+        vssl = str(config.get('PORTAINER_VERIFY_SSL', 'True'))
 
-    if vssl == 'False':
-        cfg.PORTAINER_VERIFY_SSL = False
-        import urllib3
-        urllib3.disable_warnings()
-    else:
-        cfg.PORTAINER_VERIFY_SSL = True
+        if vssl == 'False':
+            cfg.PORTAINER_VERIFY_SSL = False
+            import urllib3
+            urllib3.disable_warnings()
+        else:
+            cfg.PORTAINER_VERIFY_SSL = True
 
     sense_properties = SenseUtils.parse_from_config(cfg=cfg, parser=parser)
     return SENSEMetaManager(cfg, sense_properties, sense_api_handler=sense_api_handler)

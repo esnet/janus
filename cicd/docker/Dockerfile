@@ -10,7 +10,8 @@ RUN apt-get update && apt-get -u -y install lsb-release python3 binutils python3
     && chmod +x kubectl && mv kubectl /usr/local/bin/
 
 COPY /cicd/docker/requirements.txt /
-RUN pip install --no-cache-dir --break-system-packages --ignore-requires-python --use-pep517 -r /requirements.txt
+RUN pip install --no-cache-dir --break-system-packages --ignore-requires-python --use-pep517 -r /requirements.txt \
+   && pip install --no-cache-dir --break-system-packages --ignore-requires-python --use-pep517 coverage
 
 COPY ./setup.py ./README.md ./MANIFEST.in /
 COPY ./janus /janus
