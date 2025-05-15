@@ -316,6 +316,11 @@ class SessionManager(QueryUser):
 
                     try:
                         handler.start_container(Node(**node), cid, s)  # TODO Handle qos
+                    except PortainerApiException as e:
+                        log.error(f"Portainer error for {k}: {e.body}")
+                        error_svc(s, e.body)
+                        error = True
+                        continue
                     except Exception as e:
                         import traceback
                         traceback.print_exc()
@@ -388,9 +393,6 @@ class SessionManager(QueryUser):
 
         svc['state'] = State.MIXED.name if error else State.STOPPED.name
         svc = commit_db(svc, session_id, delete=True, realized=True)
-
-        if error:
-            raise SessionManagerException(str(svc['errors']))
 
         if peers := svc.get('peer'):
             assert isinstance(peers, list)

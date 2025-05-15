@@ -72,14 +72,13 @@ def auth(func):
                     log.warning(f"Authentication attempt {attempt + 1} failed: {e}")
                     if attempt == retry_limit - 1:
                         log.error("Reached maximum retry limit for authentication")
-                        raise e
+                        raise
             return False
 
         if not self.client or not self.auth_expire or time.time() >= self.auth_expire:
             try_authenticate_with_limit()
 
         try:
-            try_authenticate_with_limit()
             return func(self, *args, **kwargs)
         except ApiException as e:
             if e.status == 401:
@@ -87,9 +86,9 @@ def auth(func):
                 if try_authenticate_with_limit():
                     return func(self, *args, **kwargs)
                 else:
-                    raise Exception("Authentication failed after maximum retry attempts")
+                    raise
             else:
-                raise e
+                raise
     return wrapper
 
 
