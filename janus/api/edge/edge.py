@@ -1,63 +1,44 @@
-import os
-import time
-import functools
 import json
 import logging
-import queue
-import requests
-from copy import copy, deepcopy
-from threading import Thread
 
-from janus.api.service import Service
-from janus.api.constants import EPType, WSEPType
-from janus.api.constants import Constants
-from janus.settings import cfg
-from janus.api.pubsub import TOPIC
+from janus.api.constants import EPType
 from janus.api.models import (
     Node,
-    Network,
-    ContainerProfile,
     SessionRequest,
     AddEndpointRequest
 )
-from janus.api.utils import (
-    get_next_cport,
-    get_next_sport,
-    get_next_vf,
-    get_next_ipv4,
-    get_next_ipv6,
-    get_numa,
-    get_cpu,
-    get_cpuset,
-    get_mem,
-    is_subset
-)
 
+from janus.api.service import Service
+from janus.settings import cfg
 
 log = logging.getLogger(__name__)
 
-def send_event(func):
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        ret = func(*args, **kwargs)
-        cfg.sm.pubsub.publish({"msg": {"handler": EPType.SLURM.name,
-                                       "event": func.__name__,
-                                       "value": ret}},
-                              TOPIC.event_stream)
-        return ret
-    return wrapper
 
 class JanusEdgeApi(Service):
     def __init__(self):
-        pass
+        super().__init__()
+        self._exec_map = dict()
+        self.cfg = cfg
 
     @property
     def type(self):
         return EPType.EDGE
 
+    def _do_get_nodes(self, event, refresh=False):
+        value = dict(args=[refresh], kwargs=dict())
+        edge = self.cfg.sm.get_edge()
+
+        message = {"msg": {"handler": EPType.EDGE.name,
+                 "event": event,
+                 "value": value}}
+
+        edge.send(json.dumps(message))
+        data = edge.receive()
+        reply = json.loads(data)
+        return reply['value']
+
     def get_nodes(self, nname=None, cb=None, refresh=False):
-        ret = list()
-        return ret
+        return self._do_get_nodes('get_nodes', refresh=refresh)
 
     def get_images(self, node: Node):
         pass
@@ -78,17 +59,45 @@ class JanusEdgeApi(Service):
         log.info(ep)
         pass
 
-    @send_event
     def create_container(self, node: Node, image: str, cname: str = None, **kwargs):
-        return {"Id": cname}
+        # node = json.loads(node.model_dump_json())
+        # value = dict(args=[node, image, cname], kwargs=kwargs)
+        # edge = self.cfg.sm.get_edge()
+        # message = {"msg": {"handler": EPType.EDGE.name,
+        #                    "event": 'create_container',
+        #                    "value": value}}
+        #
+        # edge.send(json.dumps(message))
+        # data = edge.receive()
+        # reply = json.loads(data)
+        # return reply['value']
+        return {"Id": cname}  # TODO
 
-    @send_event
     def start_container(self, node: Node, container: str, service=None, **kwargs):
-        return {"Id": container}
+        node = json.loads(node.model_dump_json())
+        value = dict(args=[node, container, service], kwargs=kwargs)
+        edge = self.cfg.sm.get_edge()
+        message = {"msg": {"handler": EPType.EDGE.name,
+                           "event": 'start_container',
+                           "value": value}}
 
-    @send_event
+        edge.send(json.dumps(message))
+        data = edge.receive()
+        reply = json.loads(data)
+        return reply['value']
+
     def stop_container(self, node: Node, container, **kwargs):
-        return {"Id": container}
+        node = json.loads(node.model_dump_json())
+        value = dict(args=[node, container], kwargs=kwargs)
+        edge = self.cfg.sm.get_edge()
+        message = {"msg": {"handler": EPType.EDGE.name,
+                           "event": 'stop_container',
+                           "value": value}}
+
+        edge.send(json.dumps(message))
+        data = edge.receive()
+        reply = json.loads(data)
+        return reply['value']
 
     def create_network(self, node: Node, net_name, **kwargs):
         pass
@@ -103,13 +112,74 @@ class JanusEdgeApi(Service):
         pass
 
     def exec_create(self, node: Node, container, **kwargs):
-        pass
+        node_name = node.name
+        node = json.loads(node.model_dump_json())
+        value = dict(args=[node, container], kwargs=kwargs)
+        edge = self.cfg.sm.get_edge()
+        message = {"msg": {"handler": EPType.EDGE.name,
+                           "event": 'exec_create',
+                           "value": value}}
+
+        edge.send(json.dumps(message))
+        data = edge.receive()
+        reply = json.loads(data)
+
+        import queue
+
+        q = queue.Queue()
+
+        if not self._exec_map.get(node_name):
+            self._exec_map[node_name] = dict()
+            self._exec_map[node_name][container] = q
+        else:
+            self._exec_map[node_name][container] = q
+
+        return reply['value']
 
     def exec_start(self, node: Node, ectx, **kwargs):
-        pass
+        node = json.loads(node.model_dump_json())
+        value = dict(args=[node, ectx], kwargs=kwargs)
+        edge = self.cfg.sm.get_edge()
+        message = {"msg": {"handler": EPType.EDGE.name,
+                           "event": 'exec_start',
+                           "value": value}}
+        edge.send(json.dumps(message))
+        data = edge.receive()
+        reply = json.loads(data)
+        return reply['value']
 
     def exec_stream(self, node: Node, container, eid, **kwargs):
-        pass
+        node_name = node.name
+        node = json.loads(node.model_dump_json())
+        value = dict(args=[node, container, eid], kwargs=kwargs)
+        message = {"msg": {"handler": EPType.EDGE.name,
+                           "event": 'exec_stream',
+                           "value": value}}
+
+        edge = self.cfg.sm.get_edge()
+        edge.send(json.dumps(message))
+
+        def _get_stream(aqueue, aedge):
+            while True:
+                try:
+                    r = aedge.receive()
+                    r = json.loads(r)
+                    ret = r['value']
+                    aqueue.put(ret)
+
+                    if ret.get("eof"):
+                        break
+                except Exception as e:
+                    import traceback
+
+                    traceback.print_exc()
+
+        from threading import Thread
+
+        q = self._exec_map.get(node_name).get(container)
+        t = Thread(target=_get_stream, args=(q, edge, ))
+        t.start()
+        return q
 
     def remove_network(self, node: Node, network, **kwargs):
         pass
@@ -117,44 +187,15 @@ class JanusEdgeApi(Service):
     def resolve_networks(self, node: dict, prof):
         pass
 
-    @send_event
     def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
-        srec = dict()
-        srec = dict()
-        node = sreq.node
-        prof = sreq.profile
-        constraints = sreq.constraints
-        nname = node.get('name')
-        cname = sname
-        dnet = Network(prof.settings.data_net, nname)
-        mnet = Network(prof.settings.mgmt_net, nname)
-        args_override = sreq.arguments
-        cmd = None
-        if args_override:
-            cmd = shlex.split(args_override)
-        elif prof.settings.arguments:
-            cmd = shlex.split(prof.settings.arguments)
+        sreq = json.loads(sreq.model_dump_json())
+        value = dict(args=[sname, sreq], kwargs=dict())
+        edge = self.cfg.sm.get_edge()
+        message = {"msg": {"handler": EPType.EDGE.name,
+                           "event": 'create_service_record',
+                           "value": value}}
 
-        kwargs = {}
-
-        srec['mgmt_net'] = node['networks'].get(mnet.name, None)
-        #srec['mgmt_ipv4'] = mgmt_ipv4
-        #srec['mgmt_ipv6'] = mgmt_ipv6
-        srec['data_net'] = node['networks'].get(dnet.name, None)
-        srec['data_net_name'] = dnet.name
-        #srec['data_ipv4'] = data_ipv4.split("/")[0] if data_ipv4 else None
-        #srec['data_ipv6'] = data_ipv6.split("/")[0] if data_ipv6 else None
-        srec['container_user'] = kwargs.get("USER_NAME", None)
-
-        srec['kwargs'] = kwargs
-        srec['sname'] = sname
-        srec['node'] = node
-        srec['node_id'] = node['id']
-        #srec['serv_port'] = sport
-        #srec['ctrl_port'] = cport
-        srec['ctrl_host'] = constraints.nodeName if constraints.nodeName else node['public_url']
-        srec['image'] = sreq.image
-        srec['profile'] = prof.name
-        srec['pull_image'] = prof.settings.pull_image
-        srec['errors'] = list()
-        return srec
+        edge.send(json.dumps(message))
+        data = edge.receive()
+        reply = json.loads(data)
+        return reply['value']
