@@ -35,14 +35,28 @@ def handle_websocket(sock):
             sock.send(msg)
 
     if typ == WSType.AGENT_REGISTER:
+        import time
+
         peer = sock.sock.getpeername()
         try:
             req = EdgeAgentRegister(**js)
-            cfg.sm.add_node(req)
         except Exception as e:
-            log.error(f"Invalid request: {e}")
+            log.error(f"Invalid request from {peer}: {e}: {js}")
             sock.send(json.dumps({"error": f"Invalid request: {e}"}))
             return
+        try:
+            cfg.sm.add_node(req)  # TODO AES add_node takes AddEndpointRequest
+            cfg.sm.add_edge(req.name, sock)
+            log.info(f"Added edge {peer}: {req}")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            log.error(f"Severe error add edge from {peer}: {e}")
+            sock.send(json.dumps({"error": f"Controller in trouble: {e}"}))
+            return
+
+        while True:
+            time.sleep(10)
 
     if typ == WSType.EVENTS:
         peer = sock.sock.getpeername()

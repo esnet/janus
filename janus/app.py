@@ -13,7 +13,6 @@ from flask_sock import Sock
 from janus.api.controller import ns as controller_ns
 from janus.api.agent import ns as agent_ns
 from janus import settings
-from janus.lib.sense_utils import SenseUtils
 from janus.settings import cfg
 from janus.api.db import DBLayer
 from janus.api.profile import ProfileManager
@@ -106,6 +105,10 @@ def main():
                         help='Run as Controller')
     parser.add_argument('-A', '--agent', action='store_true', default=False,
                         help='Run as Tuning Agent')
+
+    parser.add_argument('-E', '--edge', type=int, default=2,
+                        help='Start Edge backend')
+
     parser.add_argument('--dryrun', action='store_true', default=False,
                         help='Perform config provisioning but do not create containers')
     parser.add_argument('-f', '--config', type=str, default=settings.DEFAULT_CFG_PATH,
@@ -140,8 +143,16 @@ def main():
             for plugin in cfg.plugins:
                 plugin.start()
 
+    runner = None
     if args.agent:
         cfg._agent = True
+
+        if args.edge:
+            from janus.remoting.ws_backend import WebsocketBackendRunner
+
+            runner = WebsocketBackendRunner(args.config, args.edge, args.database)
+            runner.start()
+
     if args.dryrun:
         cfg._dry_run = True
 
@@ -167,6 +178,10 @@ def main():
     finally:
         for p in cfg.plugins:
             p.stop()
+
+        if runner:
+            runner.stop()
+
 
 if __name__ == '__main__':
     main()

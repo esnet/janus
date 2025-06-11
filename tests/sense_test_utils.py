@@ -49,10 +49,11 @@ def get_logger():
 log = get_logger()
 
 
-def get_db_file_path():
+def get_db_file_path(db_file_name=None):
     import os
 
-    db_path = os.path.normpath(os.path.join(os.getcwd(), DB_FILE_NAME))
+    db_file_name = db_file_name or DB_FILE_NAME
+    db_path = os.path.normpath(os.path.join(os.getcwd(), db_file_name))
 
     if not os.path.exists(db_path):
         special_db_path = os.path.normpath(os.path.join(os.path.dirname(__file__), 'db-test-sense-special.json'))
@@ -60,7 +61,7 @@ def get_db_file_path():
         shutil.copyfile(special_db_path, db_path, follow_symlinks=False)
 
     if not os.path.exists(db_path):
-        raise Exception(f"db file not found ....{DB_FILE_NAME}")
+        raise Exception(f"db file not found ....{db_file_name}")
 
     return db_path
 

@@ -13,3 +13,9 @@ sense-metadata-enabled: True
 sense-metadata-url: https://janus.esnet.app/authentication/session
 sense-metadata-domain-info: JANUS/AES_TESTING
 sense-metadata-assigned: janus.device.manager
+
+
+[AGENT_REGISTRATION]
+AGENT_NAME: some-edge
+JWT:
+PUBLIC_URL:

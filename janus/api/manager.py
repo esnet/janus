@@ -16,7 +16,7 @@ from janus.settings import cfg, AGENT_AUTO_TUNE
 log = logging.getLogger(__name__)
 
 
-class ServiceManager():
+class ServiceManager:
     def __init__(self, db):
         self._db = db
         self._am = AgentMonitor()
@@ -27,9 +27,10 @@ class ServiceManager():
             EPType.EDGE: JanusEdgeApi()
         }
         self._pubsub = Publisher()
+        self.edges = dict()
 
     @property
-    def pubsub(self):
+    def pubsub(self) -> Publisher:
         return self._pubsub
 
     def _add_node_cb(self, node: dict, name, url):
@@ -60,6 +61,12 @@ class ServiceManager():
                 traceback.print_exc()
                 log.error(f"Error retrieving nodes from {k}: {e}")
         return nodes
+
+    def add_edge(self, name, sock, **kwargs):
+        self.edges[name] = sock
+
+    def get_edge(self, name):
+        return self.edges[name]
 
     def add_node(self, ep: AddEndpointRequest, **kwargs):
         eptype = ep.type

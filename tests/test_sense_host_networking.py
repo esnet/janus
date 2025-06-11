@@ -63,7 +63,8 @@ def get_nrp_multiple_vlan():
                     }
                 }
             ]
-        }
+        },
+        "users": []
     }
 
 ########
@@ -153,4 +154,4 @@ def test_caltech_host_networking():
 
 
 if __name__ == '__main__':
-    run_host_networking_task_workflow(get_caltech_session())
+    run_host_networking_task_workflow(get_nrp_multiple_vlan())

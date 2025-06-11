@@ -26,19 +26,27 @@ class JanusEdgeApi(Service):
 
     def _do_get_nodes(self, event, refresh=False):
         value = dict(args=[refresh], kwargs=dict())
-        edge = self.cfg.sm.get_edge()
+        nodes = list()
 
-        message = {"msg": {"handler": EPType.EDGE.name,
-                 "event": event,
-                 "value": value}}
+        for node_name, edge in self.cfg.sm.edges.items():
+            message = {"msg": {"handler": EPType.EDGE.name,
+                     "event": event,
+                     "value": value}}
+            try:
+                edge.send(json.dumps(message))
+                data = edge.receive()
+                reply = json.loads(data)
+                nodes.extend(reply['value'])
+            except Exception as e:
+                log.error(f"__do_get_nodes from {node_name}:got {e}")
 
-        edge.send(json.dumps(message))
-        data = edge.receive()
-        reply = json.loads(data)
-        return reply['value']
+        return nodes
 
     def get_nodes(self, nname=None, cb=None, refresh=False):
         return self._do_get_nodes('get_nodes', refresh=refresh)
+
+    def remove_node(self, nid):
+        pass
 
     def get_images(self, node: Node):
         pass
@@ -74,9 +82,9 @@ class JanusEdgeApi(Service):
         return {"Id": cname}  # TODO
 
     def start_container(self, node: Node, container: str, service=None, **kwargs):
+        edge = self.cfg.sm.get_edge(node.name)
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, container, service], kwargs=kwargs)
-        edge = self.cfg.sm.get_edge()
         message = {"msg": {"handler": EPType.EDGE.name,
                            "event": 'start_container',
                            "value": value}}
@@ -87,9 +95,9 @@ class JanusEdgeApi(Service):
         return reply['value']
 
     def stop_container(self, node: Node, container, **kwargs):
+        edge = self.cfg.sm.get_edge(node.name)
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, container], kwargs=kwargs)
-        edge = self.cfg.sm.get_edge()
         message = {"msg": {"handler": EPType.EDGE.name,
                            "event": 'stop_container',
                            "value": value}}
@@ -113,9 +121,9 @@ class JanusEdgeApi(Service):
 
     def exec_create(self, node: Node, container, **kwargs):
         node_name = node.name
+        edge = self.cfg.sm.get_edge(node_name)
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, container], kwargs=kwargs)
-        edge = self.cfg.sm.get_edge()
         message = {"msg": {"handler": EPType.EDGE.name,
                            "event": 'exec_create',
                            "value": value}}
@@ -137,9 +145,9 @@ class JanusEdgeApi(Service):
         return reply['value']
 
     def exec_start(self, node: Node, ectx, **kwargs):
+        edge = self.cfg.sm.get_edge(node.name)
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, ectx], kwargs=kwargs)
-        edge = self.cfg.sm.get_edge()
         message = {"msg": {"handler": EPType.EDGE.name,
                            "event": 'exec_start',
                            "value": value}}
@@ -150,17 +158,18 @@ class JanusEdgeApi(Service):
 
     def exec_stream(self, node: Node, container, eid, **kwargs):
         node_name = node.name
+        edge = self.cfg.sm.get_edge(node_name)
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, container, eid], kwargs=kwargs)
         message = {"msg": {"handler": EPType.EDGE.name,
                            "event": 'exec_stream',
                            "value": value}}
 
-        edge = self.cfg.sm.get_edge()
         edge.send(json.dumps(message))
 
         def _get_stream(aqueue, aedge):
             while True:
+                # noinspection PyBroadException
                 try:
                     r = aedge.receive()
                     r = json.loads(r)
@@ -170,8 +179,8 @@ class JanusEdgeApi(Service):
                     if ret.get("eof"):
                         break
                 except Exception as e:
+                    log.error(f"_get_stream got  {e}")
                     import traceback
-
                     traceback.print_exc()
 
         from threading import Thread
@@ -188,9 +197,9 @@ class JanusEdgeApi(Service):
         pass
 
     def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
+        edge = self.cfg.sm.get_edge(sreq.node['name'])
         sreq = json.loads(sreq.model_dump_json())
         value = dict(args=[sname, sreq], kwargs=dict())
-        edge = self.cfg.sm.get_edge()
         message = {"msg": {"handler": EPType.EDGE.name,
                            "event": 'create_service_record',
                            "value": value}}
