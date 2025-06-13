@@ -61,15 +61,30 @@ def handle_websocket(sock):
         handler = cfg.sm.get_handler(nname=req.node)
 
         try:
-            receive_queue, send_queue, ws, sender_thread, receiver_thread = handler.exec_stream(
-                Node(id=req.node_id, name=req.node),
-                req.container,
-                req.exec_id
-            )
+            res = handler.exec_stream(Node(id=req.node_id, name=req.node), req.container, req.exec_id)
         except Exception as e:
-            log.error(f"Exec stream setup failed: {e}")
-            sock.send(json.dumps({"error": "Exec stream initialization failed"}))
+            error = f"Exec stream failed for node {req.node} and container {req.container}: {e}"
+            log.error(error)
+            sock.send(json.dumps({"error": error}))
             return
+
+        if not res:
+            error = f"No Exec stream found for node {req.node} and container {req.container}"
+            log.error(error)
+            sock.send(json.dumps({"error": error}))
+            return
+
+        if not isinstance(res, tuple):
+            while True:
+                r = res.get()
+
+                if r.get("eof"):
+                    break
+                sock.send(r.get("msg"))
+
+            return
+
+        receive_queue, send_queue, ws, sender_thread, receiver_thread = res
 
         def forward_output():
             try:

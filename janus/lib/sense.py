@@ -42,10 +42,13 @@ class SENSEMetaManager(DBHandler):
         if ret:
             utc_iso_str = datetime.strftime(datetime.now(timezone.utc), "%Y-%m-%dT%H:%M:%S.%f")[:-3]
             name += '_SERVER_INFO'
+            images = self.db.all(self.image_table)
+            images = [image['name'] for image in images]
             metadata = dict(agents=dict(),
                             timestamp=utc_iso_str,
                             sense_plugin_version=SenseConstants.SENSE_PLUGIN_VERSION,
-                            counter=self.counter)
+                            counter=self.counter,
+                            options=dict(network=['macvlan', 'host'], images=images))
 
             ret = self.sense_api_handler.post_metadata(metadata=metadata, domain=domain_info[0], name=name)
 

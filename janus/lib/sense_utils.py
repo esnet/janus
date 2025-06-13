@@ -8,7 +8,7 @@ class SenseConstants:
     SENSE_METADATA_ASSIGNED = 'sense-metadata-assigned'
     JANUS_DEVICE_MANAGER = 'janus.device.manager'
     SENSE_DOMAIN_INFO = 'sense-metadata-domain-info'
-    SENSE_PLUGIN_VERSION = '0.2'
+    SENSE_PLUGIN_VERSION = '0.3'
     SENSE_PLUGIN_RETRIES = 3
     SENSE_JANUS_SESSION_CREATION = 'sense-janus-session-creation'
     SENSE_JANUS_SESSION_CREATE = 'create'
