@@ -289,7 +289,7 @@ class PortainerDockerApi(Service):
     def create_container(self, node: Node, image, name=None, **kwargs):
         body = {'Image': image}
         params = ['HostName', 'HostConfig', 'NetworkingConfig', 'ExposedPorts',
-                  'Env', 'Tty', "MacAddress", 'StopSignal', 'Cmd']
+                  'Env', 'Tty', "MacAddress", 'StopSignal', 'Cmd', 'Entrypoint']
         for k, v in six.iteritems(kwargs):
             if k in params:
                 body[k] = v
@@ -634,6 +634,8 @@ class PortainerDockerApi(Service):
         args = prof.settings.arguments
         args_override = sreq.arguments
         cmd = None
+        entrypoint = sreq.entrypoint
+        dns = sreq.dns
         if args_override:
             cmd = shlex.split(args_override)
         elif args:
@@ -664,7 +666,8 @@ class PortainerDockerApi(Service):
                 "Devices": list(),
                 "CapAdd": list(),
                 "Ulimits": list(),
-                "Privileged": priv
+                "Privileged": priv,
+                "Dns": dns
             },
             "ExposedPorts": dict(),
             "Env": [
@@ -673,11 +676,13 @@ class PortainerDockerApi(Service):
                 "SERV_PORT={}".format(sport),
                 "DATA_PORTS={}".format(dports),
                 "USER_NAME={}".format(kwargs.get("USER_NAME", "")),
-                "PUBLIC_KEY={}".format(kwargs.get("PUBLIC_KEY", ""))
+                "PUBLIC_KEY={}".format(kwargs.get("PUBLIC_KEY", "")),
+                "DEPLOYMENT_KEY={}".format(kwargs.get("DEPLOYMENT_KEY", ""))
             ],
             "Tty": True,
             "StopSignal": "SIGRTMIN+3" if sysd else "SIGTERM",
-            "Cmd": cmd
+            "Cmd": cmd,
+            "Entrypoint": entrypoint
         }
 
         if sreq.remove_container:

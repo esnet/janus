@@ -113,6 +113,8 @@ class SessionManager(QueryUser):
         for r in requests:
             instances = r["instances"]
             prof = cfg.pm.get_profile(Constants.HOST, r["profile"], user, group)
+            entrypoint = r.get("entrypoint", None)
+            dns = r.get("dns", list())
 
             if not prof:
                 raise ResourceNotFoundException(f"Profile {r['profile']} not found")
@@ -146,6 +148,8 @@ class SessionManager(QueryUser):
                                    profile=prof,
                                    image=r['image'],
                                    arguments=r.get("arguments", None),
+                                   entrypoint=entrypoint,
+                                   dns=dns,
                                    remove_container=r.get("remove_container", None),
                                    constraints=c,
                                    kwargs=r.get("kwargs", dict()),
