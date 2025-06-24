@@ -1,14 +1,13 @@
 import logging
 from configparser import ConfigParser
 
-from janus.api.constants import EPType
 from janus.settings import cfg
 
 log = logging.getLogger(__name__)
 
 
 class WebsocketBackend:
-    def __init__(self, properties, eptype, database):
+    def __init__(self, properties, database):
         super().__init__()
         self.cfg = cfg
         self.ws = None
@@ -19,10 +18,10 @@ class WebsocketBackend:
         from janus.api.manager import ServiceManager
         from janus.api.profile import ProfileManager
 
-        if eptype not in [EPType.KUBERNETES, EPType.PORTAINER, EPType.SLURM]:
-            raise Exception()
+        self.eptype = EPType(self.properties['eptype'])
 
-        self.eptype = eptype or EPType.KUBERNETES
+        if self.eptype not in [EPType.KUBERNETES, EPType.PORTAINER, EPType.SLURM]:
+            raise Exception(f"Invalid endpoint type {self.eptype}")
 
         db = DBLayer(path=database)
         pm = ProfileManager(db, None)
@@ -92,8 +91,22 @@ class WebsocketBackend:
         addrs_v6 = set()
         cports = set()
         sports = set()
-        ret = self.handler.create_service_record(sname, sreq, addrs_v4, addrs_v6, cports, sports)
+        service = self.handler.create_service_record(sname, sreq, addrs_v4, addrs_v6, cports, sports)
+        service['node']['name'] = self.properties['name']
         log.info(f"{__name__}:exec create service record OK:{node['name']}:{sname}")
+        return service
+
+    def create_container(self, value: dict):
+        from janus.api.models import Node
+
+        args = value['args']
+        node = Node(**args[0])
+        node.name = self.node_name
+        image = args[1]
+        cname = args[2]
+        kwargs = value['kwargs']
+        ret = self.handler.create_container(node, image, cname, **kwargs)
+        log.info(f"{__name__}:create container OK:{node.name}:{cname}:{image}:{ret}")
         return ret
 
     def start_container(self, value: dict):
@@ -106,7 +119,7 @@ class WebsocketBackend:
         service = args[2]
         kwargs = value['kwargs']
         ret = self.handler.start_container(node, container, service, **kwargs)
-        log.info(f"{__name__}:exec start container OK:{node.name}:{container}:{ret}")
+        log.info(f"{__name__}:start container OK:{node.name}:{container}:{ret}")
         return ret
 
     def stop_container(self, value: dict):
@@ -128,7 +141,7 @@ class WebsocketBackend:
             if str(ae.status) != "404":
                 import traceback
                 traceback.print_exc()
-                log.error(f"{__name__}:exec error stopping container:{node.name}:{container}:{ae}")
+                log.error(f"{__name__}:error stopping container:{node.name}:{container}:{ae}")
         except Exception as e:
             log.error(f"{__name__}:exec error stopping container:{node.name}:{container}:{e}")
 
@@ -175,29 +188,108 @@ class WebsocketBackend:
         log.info(f"{__name__}:exec stream OK:{node.name}:{container}:{eid}:{ret}")
         return ret
 
+    def create_network(self, value: dict):
+        from janus.api.models import Node
+
+        args = value['args']
+        node = Node(**args[0])
+        node.name = self.node_name
+        net_name = args[1]
+        kwargs = value['kwargs']
+        ret = self.handler.create_network(node, net_name, **kwargs)
+        log.info(f"{__name__}:create network OK:{node.name}:{net_name}:{ret}")
+        return ret
+
+    def connect_network(self, value: dict):
+        from janus.api.models import Node
+
+        args = value['args']
+        node = Node(**args[0])
+        node.name = self.node_name
+        nid = args[1]
+        cid = args[2]
+        kwargs = value['kwargs']
+        ret = self.handler.connect_network(node, nid, cid, **kwargs)
+        log.info(f"{__name__}:connect network OK:{node.name}:{nid}:{cid}:{ret}")
+        return ret
+
+    def remove_network(self,  value: dict):
+        from janus.api.models import Node
+
+        args = value['args']
+        node = Node(**args[0])
+        node.name = self.node_name
+        nid = args[1]
+        kwargs = value['kwargs']
+        ret = self.handler.remove_network(node, nid, **kwargs)
+        log.info(f"{__name__}:remove network OK:{node.name}:{nid}:{ret}")
+        return ret
+
+    def resolve_networks(self, value: dict):
+        print("HHHHHHHELLLO AES")
+        from janus.api.models import Node
+        from janus.api.models import ContainerProfile
+
+        import json
+
+        args = value['args']
+        node = Node(**args[0])
+        node.name = self.node_name
+        prof = args[1]
+        kwargs = value['kwargs']
+        # resolve_networks expects the node as a dict.
+        ret = self.handler.resolve_networks(json.loads(node.model_dump_json()),
+                                            ContainerProfile(**prof),
+                                            **kwargs)
+        log.info(f"{__name__}:resolve network OK:{node.name}:{prof}:{ret}")
+        return ret
+
+    def inspect_container(self, value: dict):
+        from janus.api.models import Node
+
+        args = value['args']
+        node = Node(**args[0])
+        node.name = self.node_name
+        cid = args[1]
+        kwargs = value['kwargs']
+        ret = self.handler.inspect_container(node, cid, **kwargs)
+        log.info(f"{__name__}:inspect container OK:{node.name}:{cid}:{ret}")
+        return ret
+
+    def remove_container(self, value: dict):
+        from janus.api.models import Node
+
+        args = value['args']
+        node = Node(**args[0])
+        node.name = self.node_name
+        cid = args[1]
+        kwargs = value['kwargs']
+        ret = self.handler.remove_container(node, cid, **kwargs)
+        log.info(f"{__name__}:remove container OK:{node.name}:{cid}:{ret}")
+        return ret
+
     def run(self, runner):
         from janus.api.models_ws import EdgeAgentRegister
         from janus.api.constants import WSType, WSEPType
         import json
         import websocket
         import ssl
-        import os
 
         msg = {"type": WSType.AGENT_REGISTER,
                "jwt": self.properties.get('jwt'),
                "name": self.properties.get('name'),
-               "edge_type": WSEPType.KUBERNETES,
+               "edge_type": WSEPType(1000 + self.eptype),
                "public_url": self.properties.get('public_url')}
 
         EdgeAgentRegister(**msg)
 
         log.info(f"{__name__}:registration={msg}")
-        CTRL_HOST = os.getenv("JANUS_WEB_CTRL_HOST", "localhost")
-        CTRL_PORT = os.getenv("JANUS_WEB_CTRL_PORT", "5000")
-        CTRL_WS_PROTOCOL = os.getenv("CTRL_WS_PROTOCOL", "wss")
-        JANUS_CONTROLLER_WS_URL = "{}://{}:{}".format(CTRL_WS_PROTOCOL, CTRL_HOST, CTRL_PORT)
+        # CTRL_HOST = os.getenv("JANUS_WEB_CTRL_HOST", "localhost")
+        # CTRL_PORT = os.getenv("JANUS_WEB_CTRL_PORT", "5000")
+        # CTRL_WS_PROTOCOL = os.getenv("CTRL_WS_PROTOCOL", "wss")
+        # JANUS_CONTROLLER_WS_URL = "{}://{}:{}".format(CTRL_WS_PROTOCOL, CTRL_HOST, CTRL_PORT)
 
-        ws_url = f"{JANUS_CONTROLLER_WS_URL}/ws"
+        ws_url = self.properties.get('ws_url')  # f"{JANUS_CONTROLLER_WS_URL}/ws"
         log.info(f"{__name__}:controller is at ={ws_url}")
 
         ws = self.ws = websocket.create_connection(ws_url, sslopt={"cert_reqs": ssl.CERT_NONE})
@@ -224,11 +316,32 @@ class WebsocketBackend:
                 elif js['event'] == 'create_service_record':
                     js['value'] = self.create_service(js['value'])
                     ws.send(json.dumps(js))
+                elif js['event'] == 'create_container':
+                    js['value'] = self.create_container(js['value'])
+                    ws.send(json.dumps(js))
                 elif js['event'] == 'start_container':
                     js['value'] = self.start_container(js['value'])
                     ws.send(json.dumps(js))
                 elif js['event'] == 'stop_container':
                     js['value'] = self.stop_container(js['value'])
+                    ws.send(json.dumps(js))
+                elif js['event'] == 'create_network':
+                    js['value'] = self.create_network(js['value'])
+                    ws.send(json.dumps(js))
+                elif js['event'] == 'connect_network':
+                    js['value'] = self.connect_network(js['value'])
+                    ws.send(json.dumps(js))
+                elif js['event'] == 'remove_network':
+                    js['value'] = self.remove_network(js['value'])
+                    ws.send(json.dumps(js))
+                elif js['event'] == 'resolve_networks':
+                    js['value'] = self.resolve_networks(js['value'])
+                    ws.send(json.dumps(js))
+                elif js['event'] == 'inspect_container':
+                    js['value'] = self.inspect_container(js['value'])
+                    ws.send(json.dumps(js))
+                elif js['event'] == 'remove_container':
+                    js['value'] = self.remove_container(js['value'])
                     ws.send(json.dumps(js))
                 elif js['event'] == 'exec_create':
                     js['value'] = self.exec_create(js['value'])
@@ -258,33 +371,29 @@ class WebsocketBackend:
 
 
 class WebsocketBackendRunner:
-    def __init__(self, janus_config_path, etype, database):
+    def __init__(self, janus_config_path, database):
         self._stop = False
         self._interval = 10
         self._th = None
-
-        eptype = EPType(etype)
-
-        if eptype not in [EPType.KUBERNETES, EPType.PORTAINER, EPType.SLURM]:
-            raise Exception()
-
         parser = ConfigParser(allow_no_value=True)
-
         parser.read(janus_config_path)
         properties = WebsocketBackendRunner._parse_from_config(parser)
-        self.ws_backend = WebsocketBackend(properties, eptype, database)
+        self.ws_backend = WebsocketBackend(properties, database)
         log.info(f"Initialized {__name__}:{ properties}")
 
     @staticmethod
     def _parse_from_config(parser: ConfigParser, agent_registration='AGENT_REGISTRATION'):
-        if agent_registration in parser:
-            name = parser.get(agent_registration, 'AGENT_NAME', fallback=None)
-            public_url = parser.get(agent_registration, 'JWT', fallback=None)
-            jwt = parser.get(agent_registration, 'PUBLIC_URL', fallback=None)
+        if agent_registration not in parser:
+            raise Exception("Missing agent registration configuration")
 
-            return dict(name=name, public_url=public_url, jwt=jwt)
+        name = parser.get(agent_registration, 'AGENT_NAME', fallback=None)
+        public_url = parser.get(agent_registration, 'JWT', fallback=None)
+        jwt = parser.get(agent_registration, 'PUBLIC_URL', fallback=None)
+        eptype = parser.get(agent_registration, 'ENDPOINT_TYPE', fallback=2)
+        ws_url = parser.get(agent_registration, 'CONTROLLER_WS_URL',
+                            fallback='wss://localhost:5000/ws')
 
-        return None
+        return dict(name=name, public_url=public_url, jwt=jwt, eptype=int(eptype), ws_url=ws_url)
 
     def start(self):
         from threading import Thread

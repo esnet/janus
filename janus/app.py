@@ -106,7 +106,7 @@ def main():
     parser.add_argument('-A', '--agent', action='store_true', default=False,
                         help='Run as Tuning Agent')
 
-    parser.add_argument('-E', '--edge', type=int, default=2,
+    parser.add_argument('-E', '--edge',  action='store_true', default=False,
                         help='Start Edge backend')
 
     parser.add_argument('--dryrun', action='store_true', default=False,
@@ -150,7 +150,7 @@ def main():
         if args.edge:
             from janus.remoting.ws_backend import WebsocketBackendRunner
 
-            runner = WebsocketBackendRunner(args.config, args.edge, args.database)
+            runner = WebsocketBackendRunner(args.config, args.database)
             runner.start()
 
     if args.dryrun:

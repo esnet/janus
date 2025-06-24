@@ -19,3 +19,5 @@ sense-metadata-assigned: janus.device.manager
 AGENT_NAME: some-edge
 JWT:
 PUBLIC_URL:
+ENDPOINT_TYPE: 2
+CONTROLLER_WS_URL: wss://localhost:5000/ws

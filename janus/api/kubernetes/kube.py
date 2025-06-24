@@ -275,10 +275,10 @@ class KubernetesApi(Service):
         log.info(f"Pod has been deleted: {cpod}")
         return cpod
 
-    def inspect_container(self, node: Node, container):
+    def inspect_container(self, node: Node, container, **kwargs):
         pass
 
-    def remove_container(self, node: Node, container):
+    def remove_container(self, node: Node, container, **kwargs):
         pass
 
     def connect_network(self, node: Node, network, container, **kwargs):
