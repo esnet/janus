@@ -64,6 +64,8 @@ class ContainerProfileSettings(BaseModel):
     tools: Optional[dict] = dict()
     arguments: Optional[str] = None
     post_starts: Optional[List[str]] = None
+    entrypoint: Optional[str] = None
+    dns: Optional[List[str]] = None
 
 
 class ContainerProfile(BaseModel):
@@ -155,6 +157,8 @@ class SessionRequest(BaseModel):
     remove_container: Optional[bool]
     kwargs: Optional[dict]
     overrides: Optional[dict]
+    entrypoint: Optional[str] = None
+    dns: Optional[List[str]]
 
 class AddEndpointRequest(BaseModel):
     type: int
