@@ -7,7 +7,7 @@ from threading import Thread
 
 from flask import request, jsonify
 from flask_httpauth import HTTPBasicAuth
-from flask_restx import Namespace, Resource
+from flask_restx import Namespace, Resource, fields
 from pydantic import ValidationError
 from tinydb import where
 from werkzeug.exceptions import BadRequest, NotFound, InternalServerError
@@ -18,8 +18,13 @@ from janus.api.models import (
     Node,
     ContainerProfile,
     NetworkProfile,
-    VolumeProfile,
-    AddEndpointRequest
+    VolumeProfile
+)
+from janus.api.models_api import (
+    AddEndpointRequest,
+    SessionRequest,
+    ProfileRequest,
+    ExecRequest
 )
 from janus.api.utils import (
     Constants
@@ -31,6 +36,11 @@ from janus.api.constants import WSType
 httpauth = HTTPBasicAuth()
 log = logging.getLogger(__name__)
 ns = Namespace('janus/controller', description='Operations for Janus on-demand container provisioning')
+
+addEndpointRequestModel = ns.schema_model('AddEndpointModel', AddEndpointRequest.model_json_schema())
+sessionRequestModel = ns.schema_model('SessionRequestModel', SessionRequest.model_json_schema())
+profileRequestModel = ns.schema_model('ProfileRequestModel', ProfileRequest.model_json_schema())
+execRequestModel = ns.schema_model('ExecRequestModel', ExecRequest.model_json_schema())
 
 
 @httpauth.error_handler
@@ -58,19 +68,21 @@ def get_authinfo(request):
     return (user, group)
 
 
-@ns.route('/active')
-@ns.route('/active/<int:aid>')
-@ns.route('/active/<int:aid>/logs/<path:nname>')
-class ActiveCollection(Resource, QueryUser):
+@ns.route('/active/<int:aid>/logs/<path:nname>', methods=['GET'])
+class LogCollection(Resource, QueryUser):
 
     @httpauth.login_required
+    @ns.doc(params={"timestamps": {"description": "Include timestamps in logs", "type": "integer"},
+                    "stderr": {"description": "Include stderr in logs", "type": "integer"},
+                    "stdout": {"description": "Include stdout in logs", "type": "integer"},
+                    "since": {"description": "Return logs since this timestamp", "type": "integer"},
+                    "tail": {"description": "Number of lines to return from the end of the log", "type": "integer"}})
     def get(self, aid=None, nname=None):
         """
-        Returns active sessions
+        Display logs for a specific active session and node.
         """
         (user, group) = get_authinfo(request)
         query = self.query_builder(user, group, {"id": aid})
-        fields = request.args.get('fields')
         dbase = cfg.db
         table = dbase.get_table('active')
         if query and aid:
@@ -93,11 +105,31 @@ class ActiveCollection(Resource, QueryUser):
                     import traceback
                     traceback.print_exc()
                     return {"error": f"Could not retrieve container logs: {e}"}, 500
+
+
+@ns.route('/active', methods=['GET'])
+@ns.route('/active/<int:aid>')
+class ActiveCollection(Resource, QueryUser):
+
+    @httpauth.login_required
+    @ns.doc(params={"fields": "Comma separated list of fields to return"})
+    def get(self, aid=None, nname=None):
+        """
+        Get active sessions
+        """
+        (user, group) = get_authinfo(request)
+        query = self.query_builder(user, group, {"id": aid})
+        fields = request.args.get('fields')
+        dbase = cfg.db
+        table = dbase.get_table('active')
+        if query and aid:
+            res = dbase.get(table, query=query)
+            if not res:
+                return {"error": "Not found"}, 404
+            if (fields):
+                return {k: v for k, v in res.items() if k in fields.split(',')}
             else:
-                if (fields):
-                    return {k: v for k,v in res.items() if k in fields.split(',')}
-                else:
-                    return res
+                return res
         elif query:
             return dbase.search(table, query=query)
         else:
@@ -107,7 +139,7 @@ class ActiveCollection(Resource, QueryUser):
                 for r in res:
                     if not r:
                         continue
-                    ret.append({k: v for k,v in r.items() if k in fields.split(',')})
+                    ret.append({k: v for k, v in r.items() if k in fields.split(',')})
                 return ret
             else:
                 return res
@@ -118,7 +150,7 @@ class ActiveCollection(Resource, QueryUser):
     @httpauth.login_required
     def delete(self, aid):
         """
-        Deletes an active allocation (e.g. stops containers)
+        Delete a session by id.
         """
         (user, group) = get_authinfo(request)
 
@@ -138,17 +170,18 @@ class ActiveCollection(Resource, QueryUser):
 
 
 @ns.response(400, 'Bad Request')
-@ns.route('/nodes')
-@ns.route('/nodes/<node>')
-@ns.route('/nodes/<int:id>')
+@ns.route('/nodes', methods=['GET', 'POST'])
+@ns.route('/nodes/<node>', methods=['GET', 'DELETE'])
+@ns.route('/nodes/<int:id>', methods=['GET', 'DELETE'])
 class NodeCollection(Resource, QueryUser):
 
     @httpauth.login_required
+    @ns.doc(params={"refresh": "Set to 'true' to refresh the endpoint DB"})
     def get(self, node: str = None, id: int = None):
         """
-        Returns list of existing nodes
+        Get a list of existing nodes (endpoints).
         """
-        (user,group) = get_authinfo(request)
+        (user, group) = get_authinfo(request)
         refresh = request.args.get('refresh', None)
         if refresh and refresh.lower() == 'true':
             log.info("Refreshing endpoint DB...")
@@ -173,11 +206,11 @@ class NodeCollection(Resource, QueryUser):
     @httpauth.login_required
     def delete(self, node: str = None, id: int = None):
         """
-        Deletes a node (endpoint)
+        Deletes a node (endpoint).
         """
         if not node and not id:
             return {"error": "Must specify node name or id"}, 400
-        (user,group) = get_authinfo(request)
+        (user, group) = get_authinfo(request)
         query = self.query_builder(user, group, {"id": id, "name": node})
         dbase = cfg.db
         nodes = dbase.get_table('nodes')
@@ -192,13 +225,12 @@ class NodeCollection(Resource, QueryUser):
         return None, 204
 
     @httpauth.login_required
+    @ns.expect([addEndpointRequestModel], validate=True)
     def post(self):
         """
-        Handle the creation of a new endpoint (Node)
+        Add a new node (endpoint).
         """
-        req = request.get_json()
-        if not req:
-            raise BadRequest("Body is empty")
+        req = ns.payload
         if type(req) is dict:
             req = [req]
         log.debug(req)
@@ -214,7 +246,6 @@ class NodeCollection(Resource, QueryUser):
             br = BadRequest()
             br.data = f"error decoding request: {e}"
             raise br
-
         try:
             for ep in eps:
                 ret = cfg.sm.add_node(ep)
@@ -228,6 +259,7 @@ class NodeCollection(Resource, QueryUser):
             return {"error": "Refresh DB failed"}, 500
         return None, 204
 
+
 @ns.response(200, 'OK')
 @ns.response(400, 'Bad Request')
 @ns.response(503, 'Service unavailable')
@@ -235,14 +267,16 @@ class NodeCollection(Resource, QueryUser):
 class Create(Resource, QueryUser):
 
     @httpauth.login_required
+    @ns.expect([sessionRequestModel], validate=True)
     def post(self):
+        """
+        Create one or more new sessions.
+        """
         (user, group) = get_authinfo(request)
-        req = request.get_json()
-        if not req:
-            raise BadRequest("Body is empty")
-        elif type(req) is dict:
+        req = ns.payload
+        if type(req) is dict:
             req = [req]
-
+        log.debug(req)
         from janus.api.session_manager import (SessionManager,
                                                InvalidSessionRequestException,
                                                ResourceNotFoundException,
@@ -258,13 +292,13 @@ class Create(Resource, QueryUser):
             janus_sessionid = session_manager.create_session(user, group, session_requests, req, current_user, users)
             return {janus_sessionid: dict(id=janus_sessionid)}
         except InvalidSessionRequestException as e:
-            raise BadRequest(f'Creating session failed:{e}')
+            raise BadRequest(f'Creating session failed: {e}')
         except ResourceNotFoundException as e:
-            raise NotFound(f'Creating session failed:{e}')
+            raise NotFound(f'Creating session failed: {e}')
         except SessionManagerException as e:
-            raise InternalServerError(f'Creating session failed:{e}')
+            raise InternalServerError(f'Creating session failed: {e}')
         except Exception as e:
-            raise InternalServerError(f'Creating session failed.Unexpected:{type(e)}:{e}')
+            raise InternalServerError(f'Creating session failed. Unexpected: {type(e)}:{e}')
 
 
 @ns.response(200, 'OK')
@@ -272,9 +306,11 @@ class Create(Resource, QueryUser):
 @ns.response(503, 'Service unavailable')
 @ns.route('/start/<int:id>')
 class Start(Resource, QueryUser):
-
     @httpauth.login_required
     def put(self, id):
+        """
+        Start a container service by id.
+        """
         from janus.api.session_manager import SessionManager, ResourceNotFoundException, SessionManagerException
 
         (user, group) = get_authinfo(request)
@@ -299,7 +335,7 @@ class Stop(Resource, QueryUser):
     @httpauth.login_required
     def put(self, id):
         """
-        Handle the stopping of container services
+        Stop a container service by id.
         """
         from janus.api.session_manager import SessionManager, ResourceNotFoundException, SessionManagerException
 
@@ -313,29 +349,23 @@ class Stop(Resource, QueryUser):
         except Exception as e:
             raise InternalServerError(f'Stopping session failed:FATAL:{type(e)}:{e}')
 
+
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
 @ns.route('/exec')
 class Exec(Resource):
 
     @httpauth.login_required
+    @ns.expect(execRequestModel, validate=True)
     def post(self):
         """
-        Handle the execution of a container command inside Service
+        Execute a container command inside an active session.
         """
         svcs = dict()
         start = False
         attach = True
         tty = False
-        req = request.get_json()
-        if type(req) is not dict or "Cmd" not in req:
-            return {"error": "invalid request format"}, 400
-        if "node" not in req:
-            return {"error": "node not specified"}, 400
-        if "container" not in req:
-            return {"error": "container not specified"}, 400
-        if type(req["Cmd"]) is not list:
-            return {"error": "Cmd is not a list"}, 400
+        req = ns.payload
         log.debug(req)
 
         nname = req["node"]
@@ -371,6 +401,7 @@ class Exec(Resource):
             return {"error": e.reason}, 503
         return ret
 
+
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
 @ns.route('/images')
@@ -379,7 +410,10 @@ class Images(Resource, QueryUser):
 
     @httpauth.login_required
     def get(self, name=None):
-        (user,group) = get_authinfo(request)
+        """
+        Get a list of images or a specific image by name.
+        """
+        (user, group) = get_authinfo(request)
         query = self.query_builder(user, group, {"name": name})
         dbase = cfg.db
         table = dbase.get_table('images')
@@ -393,10 +427,11 @@ class Images(Resource, QueryUser):
         else:
             return dbase.all(table)
 
+
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
-@ns.route('/profiles')
-@ns.route('/profiles/<path:resource>')
+@ns.route('/profiles', methods=['GET'], defaults={"resource": "host"})
+@ns.route('/profiles/<path:resource>', methods=['GET'])
 @ns.route('/profiles/<path:resource>/<path:rname>')
 class Profile(Resource):
     resources = [
@@ -407,12 +442,19 @@ class Profile(Resource):
     ]
 
     @httpauth.login_required
-    def get(self, resource="host", rname=None):
+    @ns.doc(params={"resource": {"example": "|".join(Constants.PROFILE_RESOURCES),
+                                 "description": "Resource type of the profile to get (defaults to host)"},
+                    "refresh": {"description": "Set to 'true' to refresh the profile DB from disk"},
+                    "reset": {"description": "Set to 'true' to reset the profile DB and read from disk"}})
+    def get(self, resource, rname=None):
+        """
+        Get a list of profiles.
+        """
         if resource and resource not in self.resources:
             return {"error": f"Invalid resource path: {resource}"}, 404
         refresh = request.args.get('refresh', None)
         reset = request.args.get('reset', None)
-        (user,group) = get_authinfo(request)
+        (user, group) = get_authinfo(request)
         if refresh and refresh.lower() == 'true':
             try:
                 cfg.pm.read_profiles(refresh=True)
@@ -428,34 +470,30 @@ class Profile(Resource):
         if rname:
             res = cfg.pm.get_profile(resource, rname, user, group, inline=True)
             if not res:
-                return {f"error": "Profile not found: {rname}"}, 404
+                return {"error": f"Profile not found: {rname}"}, 404
             return res.dict()
         else:
             log.debug("Returning all profiles")
-            ret = [ p.dict() for p in cfg.pm.get_profiles(resource, user, group, inline=True) ]
+            ret = [p.dict() for p in cfg.pm.get_profiles(resource, user, group, inline=True)]
             return ret if ret else list()
 
     @httpauth.login_required
+    @ns.expect(profileRequestModel, validate=True)
+    @ns.doc(params={"resource": {"example": "|".join(Constants.PROFILE_RESOURCES),
+                                 "description": "Resource type to create the profile for"}})
     def post(self, resource=None, rname=None):
+        """
+        Create a new profile.
+        """
         try:
             if not resource or resource not in self.resources:
                 return {"error": f"Invalid resource path: {resource}"}, 404
 
-            req = request.get_json()
-            if (req is None) or (req and type(req) is not dict):
-                res = jsonify(error="Body is not json dictionary")
-                res.status_code = 400
-                return res
-
-            if "settings" not in req:
-                res = jsonify(error="please follow this format: {\"settings\": {\"key\": \"value\"}}")
-                res.status_code = 400
-                return res
-
+            req = ns.payload
             configs = req["settings"]
             res = cfg.pm.get_profile(resource, rname, inline=True)
             if res:
-                return {"error": "'{rname}' already exists!"}, 400
+                return {"error": f"Profile {rname} already exists!"}, 400
 
             if resource == Constants.HOST:
                 default = cfg._base_profile.copy()
@@ -483,7 +521,6 @@ class Profile(Resource):
 
         try:
             tbl = cfg.db.get_table(resource)
-            # default = req["settings"]
             record = {'name': rname, "settings": default}
             res = cfg.db.insert(tbl, record)
             log.info(f"Created {res}")
@@ -493,28 +530,27 @@ class Profile(Resource):
         return cfg.pm.get_profile(resource, rname).dict(), 200
 
     @httpauth.login_required
+    @ns.expect(profileRequestModel, validate=True)
+    @ns.doc(params={"resource": {"example": "|".join(Constants.PROFILE_RESOURCES),
+                                 "description": "Resource type to update the profile for"}})
     def put(self, resource=None, rname=None):
+        """
+        Update an existing profile.
+        """
         if not resource or resource not in self.resources:
             return {"error": f"Invalid resource path: {resource}"}, 404
         try:
-            (user,group) = get_authinfo(request)
-            req = request.get_json()
-            if (req is None) or (req and type(req) is not dict):
-                res = jsonify(error="Body is not json dictionary")
-                raise BadRequest(res)
-
-            if "settings" not in req:
-                res = jsonify(error="please follow this format: {\"settings\": {\"key\": \"value\"}}")
-                raise BadRequest(res)
-
+            (user, group) = get_authinfo(request)
+            req = ns.payload
             configs = req["settings"]
             if rname == "default":
                 return {"error": "Cannot update default profile!"}, 400
 
-            res = cfg.pm.get_profile(resource, rname, user, group, inline=True).dict()
+            res = cfg.pm.get_profile(resource, rname, user, group, inline=True)
             if not res:
                 return {"error": f"Profile not found: {rname}"}, 404
 
+            res = res.dict()
             default = res.copy()
             default['settings'].update(configs)
 
@@ -526,10 +562,10 @@ class Profile(Resource):
                 VolumeProfile(**default)
 
         except ValidationError as e:
-            return {"error" : str(e)}, 400
+            return {"error": str(e)}, 400
 
         except Exception as e:
-            return {"error" : str(e)}, 500
+            return {"error": str(e)}, 500
 
         try:
             profile_tbl = cfg.db.get_table(resource)
@@ -541,10 +577,13 @@ class Profile(Resource):
 
     @httpauth.login_required
     def delete(self, resource=None, rname=None):
+        """
+        Remove a profile.
+        """
         if not resource or resource not in self.resources:
             return {"error": f"Invalid resource path: {resource}"}, 404
         try:
-            (user,group) = get_authinfo(request)
+            (user, group) = get_authinfo(request)
 
             if not rname:
                 raise BadRequest("Must specify profile name")
@@ -567,18 +606,15 @@ class Profile(Resource):
 
         return {}, 204
 
+
 @ns.response(200, 'OK')
 @ns.response(204, 'Not modified')
 @ns.response(404, 'Not found')
 @ns.response(503, 'Service unavailable')
-@ns.route('/auth/<path:resource>')
 @ns.route('/auth/<path:resource>/<int:rid>')
 @ns.route('/auth/<path:resource>/<path:rname>')
 class JanusAuth(Resource):
-    resources = ["nodes",
-                 "images",
-                 "profiles",
-                 "active"]
+    resources = Constants.AUTH_RESOURCES
     get_resources = ["jwt"]
     resource_db_map = {
         "nodes": "nodes",
@@ -586,7 +622,7 @@ class JanusAuth(Resource):
         "profiles": "host",
         "active": "active"
     }
-    
+
     def _marshall_req(self):
         req = request.get_json()
         if not req:
@@ -611,7 +647,12 @@ class JanusAuth(Resource):
         return None
 
     @httpauth.login_required
+    @ns.doc(params={"resource": {"example": "|".join(Constants.AUTH_RESOURCES),
+                                 "description": "Resource type to get auth for"}})
     def get(self, resource, rid=None, rname=None):
+        """
+        Get user and group attributes for a named resource.
+        """
         if resource not in self.resources and resource not in self.get_resources:
             return {"error": f"Invalid resource path: {resource}"}, 404
         # Returns active token for backend client (e.g. Portainer)
@@ -629,7 +670,12 @@ class JanusAuth(Resource):
         return {"users": users, "groups": groups}, 200
 
     @httpauth.login_required
+    @ns.doc(params={"resource": {"example": "|".join(Constants.AUTH_RESOURCES),
+                                 "description": "Resource type to update auth for"}})
     def post(self, resource, rid=None, rname=None):
+        """
+        Set user and group attributes for a named resource.
+        """
         if resource not in self.resources:
             return {"error": f"Invalid resource path: {resource}"}, 404
         (users, groups) = self._marshall_req()
@@ -647,7 +693,12 @@ class JanusAuth(Resource):
         return res, 200
 
     @httpauth.login_required
+    @ns.doc(params={"resource": {"example": "|".join(Constants.AUTH_RESOURCES),
+                                 "description": "Resource type to delete auth for"}})
     def delete(self, resource, rid=None, rname=None):
+        """
+        Remove user and group attributes for a named resource.
+        """
         (users, groups) = self._marshall_req()
         query = self.query_builder(rid, rname)
         dbase = cfg.db
