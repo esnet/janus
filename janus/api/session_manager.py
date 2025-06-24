@@ -113,6 +113,8 @@ class SessionManager(QueryUser):
         for r in requests:
             instances = r["instances"]
             prof = cfg.pm.get_profile(Constants.HOST, r["profile"], user, group)
+            entrypoint = r.get("entrypoint", None)
+            dns = r.get("dns", list())
 
             if not prof:
                 raise ResourceNotFoundException(f"Profile {r['profile']} not found")
@@ -146,6 +148,8 @@ class SessionManager(QueryUser):
                                    profile=prof,
                                    image=r['image'],
                                    arguments=r.get("arguments", None),
+                                   entrypoint=entrypoint,
+                                   dns=dns,
                                    remove_container=r.get("remove_container", None),
                                    constraints=c,
                                    kwargs=r.get("kwargs", dict()),
@@ -316,6 +320,11 @@ class SessionManager(QueryUser):
 
                     try:
                         handler.start_container(Node(**node), cid, s)  # TODO Handle qos
+                    except PortainerApiException as e:
+                        log.error(f"Portainer error for {k}: {e.body}")
+                        error_svc(s, e.body)
+                        error = True
+                        continue
                     except Exception as e:
                         import traceback
                         traceback.print_exc()
@@ -388,9 +397,6 @@ class SessionManager(QueryUser):
 
         svc['state'] = State.MIXED.name if error else State.STOPPED.name
         svc = commit_db(svc, session_id, delete=True, realized=True)
-
-        if error:
-            raise SessionManagerException(str(svc['errors']))
 
         if peers := svc.get('peer'):
             assert isinstance(peers, list)
