@@ -1,15 +1,11 @@
 import logging
-import json
-from functools import reduce
-from operator import eq
+from functools import wraps
 from urllib.parse import urlsplit
-from threading import Thread
 
-from flask import request, jsonify
+from flask import request, jsonify, abort
 from flask_httpauth import HTTPBasicAuth
-from flask_restx import Namespace, Resource, fields
+from flask_restx import Namespace, Resource
 from pydantic import ValidationError
-from tinydb import where
 from werkzeug.exceptions import BadRequest, NotFound, InternalServerError
 from werkzeug.security import check_password_hash
 
@@ -24,7 +20,8 @@ from janus.api.models_api import (
     AddEndpointRequest,
     SessionRequest,
     ProfileRequest,
-    ExecRequest
+    ExecRequest,
+    AuthRequest
 )
 from janus.api.utils import (
     Constants
@@ -41,6 +38,7 @@ addEndpointRequestModel = ns.schema_model('AddEndpointModel', AddEndpointRequest
 sessionRequestModel = ns.schema_model('SessionRequestModel', SessionRequest.model_json_schema())
 profileRequestModel = ns.schema_model('ProfileRequestModel', ProfileRequest.model_json_schema())
 execRequestModel = ns.schema_model('ExecRequestModel', ExecRequest.model_json_schema())
+authRequestModel = ns.schema_model('AuthRequestModel', AuthRequest.model_json_schema())
 
 
 @httpauth.error_handler
@@ -54,6 +52,15 @@ def verify_password(username, password):
     if username in users and \
        check_password_hash(users.get(username), password):
         return username
+
+
+def admin_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not httpauth.current_user() == 'admin':
+            abort(403)
+        return f(*args, **kwargs)
+    return wrapper
 
 
 def get_authinfo(request):
@@ -611,9 +618,10 @@ class Profile(Resource):
 @ns.response(204, 'Not modified')
 @ns.response(404, 'Not found')
 @ns.response(503, 'Service unavailable')
+@ns.route('/auth/<path:resource>', methods=['GET'])
 @ns.route('/auth/<path:resource>/<int:rid>')
 @ns.route('/auth/<path:resource>/<path:rname>')
-class JanusAuth(Resource):
+class JanusAuth(Resource, QueryUser):
     resources = Constants.AUTH_RESOURCES
     get_resources = ["jwt"]
     resource_db_map = {
@@ -636,18 +644,18 @@ class JanusAuth(Resource):
         log.debug(req)
         return (users, groups)
 
-    def query_builder(self, id=None, name=None):
-        qs = list()
-        if id:
-            qs.append(eq(where('id'), id))
-        elif name:
-            qs.append(eq(where('name'), name))
-        if len(qs):
-            return reduce(lambda a, b: a & b, qs)
-        return None
+    # def query_builder(self, id=None, name=None):
+    #     qs = list()
+    #     if id:
+    #         qs.append(eq(where('id'), id))
+    #     elif name:
+    #         qs.append(eq(where('name'), name))
+    #     if len(qs):
+    #         return reduce(lambda a, b: a & b, qs)
+    #     return None
 
     @httpauth.login_required
-    @ns.doc(params={"resource": {"example": "|".join(Constants.AUTH_RESOURCES),
+    @ns.doc(params={"resource": {"example": "|".join(Constants.AUTH_RESOURCES+["jwt"]),
                                  "description": "Resource type to get auth for"}})
     def get(self, resource, rid=None, rname=None):
         """
@@ -658,7 +666,8 @@ class JanusAuth(Resource):
         # Returns active token for backend client (e.g. Portainer)
         if resource in self.get_resources:
             return {"jwt": cfg.sm.get_auth_token()}, 200
-        query = self.query_builder(rid, rname)
+        (user, group) = get_authinfo(request)
+        query = self.query_builder(user, group, qargs={"id": rid, "name": rname})
         if not query:
             return {"error": "Must specify resource id or name"}
         table = cfg.db.get_table(self.resource_db_map.get(resource))
@@ -672,6 +681,7 @@ class JanusAuth(Resource):
     @httpauth.login_required
     @ns.doc(params={"resource": {"example": "|".join(Constants.AUTH_RESOURCES),
                                  "description": "Resource type to update auth for"}})
+    @ns.expect(authRequestModel, validate=True)
     def post(self, resource, rid=None, rname=None):
         """
         Set user and group attributes for a named resource.
@@ -679,7 +689,8 @@ class JanusAuth(Resource):
         if resource not in self.resources:
             return {"error": f"Invalid resource path: {resource}"}, 404
         (users, groups) = self._marshall_req()
-        query = self.query_builder(rid, rname)
+        (user, group) = get_authinfo(request)
+        query = self.query_builder(user, group, qargs={"id": rid, "name": rname})
         dbase = cfg.db
         table = cfg.db.get_table(self.resource_db_map.get(resource))
         res = dbase.get(table, query=query)
@@ -700,7 +711,8 @@ class JanusAuth(Resource):
         Remove user and group attributes for a named resource.
         """
         (users, groups) = self._marshall_req()
-        query = self.query_builder(rid, rname)
+        (user, group) = get_authinfo(request)
+        query = self.query_builder(user, group, qargs={"id": rid, "name": rname})
         dbase = cfg.db
         table = cfg.db.get_table(self.resource_db_map.get(resource))
         res = dbase.get(table, query=query)

@@ -33,3 +33,8 @@ class ExecRequest(BaseModel):
     start: Optional[bool] = False
     attach: Optional[bool] = True
     tty: Optional[bool] = False
+
+
+class AuthRequest(BaseModel):
+    users: List[str]
+    groups: List[str]
