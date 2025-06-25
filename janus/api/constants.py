@@ -9,6 +9,10 @@ class Constants:
     NET_BRIDGE = "bridge"
     NET_NONE = "none"
     NET_HOST = "host"
+    PROFILE_RESOURCES = [NET, HOST, QOS, VOL]
+    NET_RESOURCES = [NET, NET_BRIDGE, NET_NONE, NET_HOST]
+    AUTH_RESOURCES = ["nodes", "images", "profiles", "active"]
+
 
 class State(IntEnum):
     UNKNOWN = 0
@@ -18,6 +22,7 @@ class State(IntEnum):
     MIXED = 4
     STALE = 5
 
+
 class EPType(IntEnum):
     UNKNOWN = 0
     PORTAINER = 1
@@ -26,11 +31,13 @@ class EPType(IntEnum):
     SLURM = 4
     EDGE = 100
 
+
 class WSEPType(IntEnum):
     PORTAINER = 1001
     KUBERNETES = 1002
     DOCKER = 1003
     SLURM = 1004
+
 
 class WSType(IntEnum):
     EXEC_STREAM = 0
@@ -39,6 +46,7 @@ class WSType(IntEnum):
     EVENTS = 3
     AGENT_COMM = 4
     AGENT_REGISTER = EPType.EDGE
+
 
 WS_MIN = WSEPType.PORTAINER
 WS_MAX = WSEPType.SLURM
