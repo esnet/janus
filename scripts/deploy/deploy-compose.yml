@@ -66,11 +66,8 @@ services:
       - PYTHONUNBUFFERED=1
       - JANUS_WEB_CTRL_HOST=controller
       - CSRF_TRUSTED_ORIGIN=https://janus.esnet.app
-      - USERNAME=admin
-      - PASSWORD=admin
-      - STATIC_ROOT=/var/www/static
-    volumes:
-      - ./janus-web/static:/var/www/static
+      - JANUS_USERNAME=admin
+      - JANUS_PASSWORD=admin
     expose:
       - 8000
     ports:
