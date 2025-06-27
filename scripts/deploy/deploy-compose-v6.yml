@@ -67,7 +67,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - JANUS_WEB_CTRL_HOST=controller
-      - CSRF_TRUSTED_ORIGIN=https://janus-sense.es.net
+      - CSRF_TRUSTED_ORIGINS=https://janus-sense.es.net
       - JANUS_USERNAME=admin
       - JANUS_PASSWORD=admin
       - ADMIN_ENABLED=false
