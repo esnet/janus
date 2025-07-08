@@ -289,7 +289,7 @@ class JanusEdgeApi(Service):
         t.start()
         return q
 
-    def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
+    def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports, **kwargs):
         from janus.api.models import Network
         from janus.api.utils import (
             get_next_ipv4,
@@ -301,11 +301,19 @@ class JanusEdgeApi(Service):
         node = sreq.node
         nname = node.get('name')
         dnet = Network(prof.settings.data_net, nname)
-        kwargs = dict()
 
         if dnet.name:
-            data_ipv4 = get_next_ipv4(dnet, addrs_v4, cidr=True)
-            data_ipv6 = get_next_ipv6(dnet, addrs_v6, cidr=True)
+            data_net_overrides = kwargs
+
+            if data_net_overrides and data_net_overrides.get('name'):
+                dnet_name = data_net_overrides['name']
+                key = f"{nname}-{dnet_name}"
+                data_ipv4 = get_next_ipv4(dnet, addrs_v4, cidr=True, key=key, name=dnet_name)
+                data_ipv6 = get_next_ipv6(dnet, addrs_v6, cidr=True, key=key, name=dnet_name)
+            else:
+                data_ipv4 = get_next_ipv4(dnet, addrs_v4, cidr=True)
+                data_ipv6 = get_next_ipv6(dnet, addrs_v6, cidr=True)
+
             kwargs['data_ipv4'] = data_ipv4
             kwargs['data_ipv6'] = data_ipv6
 

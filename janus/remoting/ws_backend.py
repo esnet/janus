@@ -33,7 +33,28 @@ class WebsocketBackend:
 
         self.cfg.setdb(db, pm, sm)
         self.handler = sm.service_map[self.eptype]
-        self.node_name = None  # TODO AES Should we load the nodes and make usre this is set.
+        self._node_name = None
+
+    @property
+    def node_name(self):
+        if self._node_name is not None:
+            return self._node_name
+
+        dbase = self.cfg.db
+        table = dbase.get_table('nodes')
+        nodes = dbase.all(table)
+
+        if not nodes:
+            from janus.api.db import init_db
+
+            init_db(refresh=True)
+            nodes = dbase.all(table)
+
+            if not nodes:
+                raise Exception("Not able to get a node_name (no nodes)")
+
+        self._node_name = nodes[0]['name']
+        return self._node_name
 
     # noinspection PyUnusedLocal
     def get_nodes(self,  value: dict):
@@ -54,7 +75,7 @@ class WebsocketBackend:
 
         if nodes:
             node = nodes[0]
-            self.node_name = node['name']
+            self._node_name = node['name']
             node['endpoint_type'] = EPType.EDGE
             node['name'] = self.properties['name']
             nodes = [node]
@@ -227,7 +248,7 @@ class WebsocketBackend:
         return ret
 
     def resolve_networks(self, value: dict):
-        from janus.api.models import ContainerProfile, NetworkProfile
+        from janus.api.models import ContainerProfile
 
         args = value['args']
         node_as_dict = args[0]
@@ -237,6 +258,7 @@ class WebsocketBackend:
         prof = ContainerProfile(**prof)
         kwargs = value['kwargs']
         node_as_dict['networks'] = dict()
+        log.info(f"{__name__}:resolving network OK:{edge_name} AKA {node_as_dict['name']}:{prof}")
         ret = self.handler.resolve_networks(node_as_dict, prof, **kwargs)
         log.info(f"{__name__}:resolve network OK:{edge_name} AKA {node_as_dict['name']}:{prof}:{ret}")
         return ret, node_as_dict['networks']
