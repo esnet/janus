@@ -204,8 +204,9 @@ class JanusEdgeApi(Service):
 
         if nprof is not None:
             nprof = json.loads(nprof.model_dump_json())
+            kwargs['nprof'] = nprof
 
-        value = dict(args=[node, prof, nprof], kwargs=kwargs)
+        value = dict(args=[node, prof], kwargs=kwargs)
         message = {"msg": {"handler": EPType.EDGE.name,
                            "event": 'resolve_networks',
                            "value": value}}

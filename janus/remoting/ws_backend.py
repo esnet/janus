@@ -234,12 +234,10 @@ class WebsocketBackend:
         edge_name = node_as_dict['name']
         node_as_dict['name'] = self.node_name
         prof = args[1]
-        nprof = args[2]
         prof = ContainerProfile(**prof)
-        nprof = None if nprof is None else NetworkProfile(**nprof)
         kwargs = value['kwargs']
         node_as_dict['networks'] = dict()
-        ret = self.handler.resolve_networks(node_as_dict, prof, nprof, **kwargs)
+        ret = self.handler.resolve_networks(node_as_dict, prof, **kwargs)
         log.info(f"{__name__}:resolve network OK:{edge_name} AKA {node_as_dict['name']}:{prof}:{ret}")
         return ret, node_as_dict['networks']
 

@@ -398,7 +398,9 @@ class KubernetesApi(Service):
 
     # AES TODO
     # noinspection PyMethodOverriding
-    def resolve_networks(self, node: dict, prof, nprof, **kwargs):
+    def resolve_networks(self, node: dict, prof, **kwargs):
+        from janus.api.models import NetworkProfile
+
         def _build_net(p, data_net_overrides):
             data_net_overrides = data_net_overrides or dict()
             p.settings.options.update(data_net_overrides)
@@ -438,7 +440,11 @@ class KubernetesApi(Service):
                 continue
 
             nname = node.get('name')
-            nprof = nprof or cfg.pm.get_profile(Constants.NET, net.name)
+
+            if kwargs.get('nprof'):
+                nprof = NetworkProfile(**kwargs['nprof'])
+            else:
+                nprof = cfg.pm.get_profile(Constants.NET, net.name)
 
             if not nprof:
                 raise Exception(f"Network profile {net.name} not found")
