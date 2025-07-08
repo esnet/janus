@@ -57,7 +57,8 @@ class KubernetesApi(Service):
             return ctx.get('context').get('namespace', self.NS)
         except Exception as e:
             log.error(f"Could not get namespace for ctx={ctx_name}: {e}")
-            return self.NS
+            # return self.NS  AES RETURNING THE DEFAULT MASKS THE ERROR
+            raise e
 
     def _get_client(self, ctx_name):
         try:
@@ -300,9 +301,14 @@ class KubernetesApi(Service):
                      )
 
         def _get_stream(astream, aqueue):
-            while astream.is_open():
-                astream.update(1)
-                aqueue.put({"msg": astream.read_all(), "eof": False})
+            try:
+                while astream.is_open():
+                    astream.update(1)
+                    aqueue.put({"msg": astream.read_all(), "eof": False})
+            except Exception as e:
+                print("AES:KUBE:EXEC_CREATE: _get_stream", e)
+                log.error(f"exec_create:_get_stream:exception={e}")
+
             aqueue.put({"msg": None, "eof": True})
 
         q = queue.Queue()
@@ -390,7 +396,9 @@ class KubernetesApi(Service):
         )
         log.info(f"Removed network {network} on {node.name}")
 
-    def resolve_networks(self, node: dict, prof, **kwargs):
+    # AES TODO
+    # noinspection PyMethodOverriding
+    def resolve_networks(self, node: dict, prof, nprof, **kwargs):
         def _build_net(p, data_net_overrides):
             data_net_overrides = data_net_overrides or dict()
             p.settings.options.update(data_net_overrides)
@@ -430,7 +438,7 @@ class KubernetesApi(Service):
                 continue
 
             nname = node.get('name')
-            nprof = cfg.pm.get_profile(Constants.NET, net.name)
+            nprof = nprof or cfg.pm.get_profile(Constants.NET, net.name)
 
             if not nprof:
                 raise Exception(f"Network profile {net.name} not found")
@@ -522,10 +530,19 @@ class KubernetesApi(Service):
             ips = []
 
             if data_net_overrides:
-                dnet_name = data_net_overrides['name']
-                key = f"{nname}-{dnet_name}"
-                data_ipv4 = get_next_ipv4(dnet, addrs_v4, cidr=True, key=key, name=dnet_name)
-                data_ipv6 = get_next_ipv6(dnet, addrs_v6, cidr=True, key=key, name=dnet_name)
+                if 'data_ipv4' in data_net_overrides:  # Used by edge
+                    data_ipv4 = data_net_overrides['data_ipv4']
+                else:
+                    dnet_name = data_net_overrides['name']
+                    key = f"{nname}-{dnet_name}"
+                    data_ipv4 = get_next_ipv4(dnet, addrs_v4, cidr=True, key=key, name=dnet_name)
+
+                if 'data_ipv6' in data_net_overrides:
+                    data_ipv6 = data_net_overrides['data_ipv6']
+                else:
+                    dnet_name = data_net_overrides['name']
+                    key = f"{nname}-{dnet_name}"
+                    data_ipv6 = get_next_ipv6(dnet, addrs_v6, cidr=True, key=key, name=dnet_name)
             else:
                 data_ipv4 = get_next_ipv4(dnet, addrs_v4, cidr=True)
                 data_ipv6 = get_next_ipv6(dnet, addrs_v6, cidr=True)

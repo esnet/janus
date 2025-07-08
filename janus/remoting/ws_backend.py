@@ -33,7 +33,7 @@ class WebsocketBackend:
 
         self.cfg.setdb(db, pm, sm)
         self.handler = sm.service_map[self.eptype]
-        self.node_name = None
+        self.node_name = None  # TODO AES Should we load the nodes and make usre this is set.
 
     # noinspection PyUnusedLocal
     def get_nodes(self,  value: dict):
@@ -91,7 +91,8 @@ class WebsocketBackend:
         addrs_v6 = set()
         cports = set()
         sports = set()
-        service = self.handler.create_service_record(sname, sreq, addrs_v4, addrs_v6, cports, sports)
+        kwargs = value['kwargs']
+        service = self.handler.create_service_record(sname, sreq, addrs_v4, addrs_v6, cports, sports, **kwargs)
         service['node']['name'] = self.properties['name']
         log.info(f"{__name__}:exec create service record OK:{node['name']}:{sname}")
         return service
@@ -226,23 +227,21 @@ class WebsocketBackend:
         return ret
 
     def resolve_networks(self, value: dict):
-        print("HHHHHHHELLLO AES")
-        from janus.api.models import Node
-        from janus.api.models import ContainerProfile
-
-        import json
+        from janus.api.models import ContainerProfile, NetworkProfile
 
         args = value['args']
-        node = Node(**args[0])
-        node.name = self.node_name
+        node_as_dict = args[0]
+        edge_name = node_as_dict['name']
+        node_as_dict['name'] = self.node_name
         prof = args[1]
+        nprof = args[2]
+        prof = ContainerProfile(**prof)
+        nprof = None if nprof is None else NetworkProfile(**nprof)
         kwargs = value['kwargs']
-        # resolve_networks expects the node as a dict.
-        ret = self.handler.resolve_networks(json.loads(node.model_dump_json()),
-                                            ContainerProfile(**prof),
-                                            **kwargs)
-        log.info(f"{__name__}:resolve network OK:{node.name}:{prof}:{ret}")
-        return ret
+        node_as_dict['networks'] = dict()
+        ret = self.handler.resolve_networks(node_as_dict, prof, nprof, **kwargs)
+        log.info(f"{__name__}:resolve network OK:{edge_name} AKA {node_as_dict['name']}:{prof}:{ret}")
+        return ret, node_as_dict['networks']
 
     def inspect_container(self, value: dict):
         from janus.api.models import Node

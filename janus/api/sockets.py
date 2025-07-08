@@ -5,7 +5,7 @@ import websocket
 from threading import Thread
 
 from janus.settings import cfg
-from janus.api.constants import WSType
+from janus.api.constants import WSType, EPType
 from janus.api.models_ws import WSExecStream, EdgeAgentRegister
 from janus.api.models import Node
 from janus.api.pubsub import Subscriber, TOPIC
@@ -37,6 +37,7 @@ def handle_websocket(sock):
     if typ == WSType.AGENT_REGISTER:
         import time
 
+        # sock is of type simple_websocket.ws.Server
         peer = sock.sock.getpeername()
         try:
             req = EdgeAgentRegister(**js)
@@ -45,8 +46,8 @@ def handle_websocket(sock):
             sock.send(json.dumps({"error": f"Invalid request: {e}"}))
             return
         try:
-            cfg.sm.add_node(req)  # TODO AES add_node takes AddEndpointRequest
-            cfg.sm.add_edge(req.name, sock)
+            cfg.sm.add_node(req)  # TODO AES add_node takes AddEndpointRequest and do we need to call add_node?
+            cfg.sm.service_map[EPType.EDGE].add_edge(req.name, sock)
             log.info(f"Added edge {peer}: {req}")
         except Exception as e:
             import traceback

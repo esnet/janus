@@ -27,7 +27,6 @@ class ServiceManager:
             EPType.EDGE: JanusEdgeApi()
         }
         self._pubsub = Publisher()
-        self.edges = dict()
 
     @property
     def pubsub(self) -> Publisher:
@@ -61,12 +60,6 @@ class ServiceManager:
                 traceback.print_exc()
                 log.error(f"Error retrieving nodes from {k}: {e}")
         return nodes
-
-    def add_edge(self, name, sock, **kwargs):
-        self.edges[name] = sock
-
-    def get_edge(self, name):
-        return self.edges[name]
 
     def add_node(self, ep: AddEndpointRequest, **kwargs):
         eptype = ep.type
