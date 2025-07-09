@@ -287,10 +287,31 @@ class WebsocketBackend:
         log.info(f"{__name__}:remove container OK:{node.name}:{cid}:{ret}")
         return ret
 
+    def _close(self, quiet):
+        try:
+            self.ws.close()
+            log.info(f"{__name__}:closed socket :{self.ws}: quiet=true")
+        except Exception as e:
+            log.warning(f"{__name__}:Error closing socket :{self.ws}: quiet=true")
+            if not quiet:
+                raise e
+
+    def _send_message(self, js):
+        import json
+
+        try:
+            event = js['event']
+            temp_js = json.dumps(js)
+            self.ws.send(temp_js)
+            log.info(f"{__name__}:sent response to {event}...")
+        except Exception as e:
+            log.warning(f"{__name__}:error sending response to {js}...")
+            self._close(quiet=True)
+            raise e
+
     def run(self, runner):
         from janus.api.models_ws import EdgeAgentRegister
         from janus.api.constants import WSType, WSEPType
-        import json
         import websocket
         import ssl
 
@@ -311,82 +332,86 @@ class WebsocketBackend:
         ws_url = self.properties.get('ws_url')  # f"{JANUS_CONTROLLER_WS_URL}/ws"
         log.info(f"{__name__}:controller is at ={ws_url}")
 
-        ws = self.ws = websocket.create_connection(ws_url, sslopt={"cert_reqs": ssl.CERT_NONE})
-        ws.send(json.dumps(msg))
+        import json
+        self.ws = websocket.create_connection(ws_url, sslopt={"cert_reqs": ssl.CERT_NONE})
+        self.ws.send(json.dumps(msg))
         log.info(f"{__name__}:registered ok ....")
 
         while runner.keep_running():
             try:
-                log.debug(f"{__name__}:waiting on messages ...")
-                data = ws.recv()
+                log.debug(f"{__name__}:In while loop. Going to wait for messages ...")
+                data = self.ws.recv()
+            except Exception as e:
+                log.error(f'Error receiving in while loop {__name__} : {e}')
+                self._close(quiet=True)
+                raise e
+
+            try:
                 message = json.loads(data)
 
-                if not isinstance(message, dict) or message.get("error"):
-                    raise Exception(f"Got invalid or error message: {message}")
+                if not isinstance(message, dict) and not message.get("msg"):
+                    raise Exception(f"Got invalid {message}")
 
-                js = message.get('msg')
+                js = message['msg']
+                log.info(f"{__name__}:received {js['handler']}:{js['event']}...")
+            except Exception as e:
+                log.error(f'Error validating message in while loop {__name__} : {e}')
+                self._close(quiet=True)
+                raise e
 
-                if js['event'] != 'echo':
-                    log.info(f"{__name__}:received {js['handler']}:{js['event']}...")
-
-                if js['event'] == 'get_nodes':
-                    js['value'] = self.get_nodes(js['value'])
-                    ws.send(json.dumps(js))
-                elif js['event'] == 'create_service_record':
-                    js['value'] = self.create_service(js['value'])
-                    ws.send(json.dumps(js))
-                elif js['event'] == 'create_container':
-                    js['value'] = self.create_container(js['value'])
-                    ws.send(json.dumps(js))
-                elif js['event'] == 'start_container':
-                    js['value'] = self.start_container(js['value'])
-                    ws.send(json.dumps(js))
-                elif js['event'] == 'stop_container':
-                    js['value'] = self.stop_container(js['value'])
-                    ws.send(json.dumps(js))
-                elif js['event'] == 'create_network':
-                    js['value'] = self.create_network(js['value'])
-                    ws.send(json.dumps(js))
-                elif js['event'] == 'connect_network':
-                    js['value'] = self.connect_network(js['value'])
-                    ws.send(json.dumps(js))
-                elif js['event'] == 'remove_network':
-                    js['value'] = self.remove_network(js['value'])
-                    ws.send(json.dumps(js))
-                elif js['event'] == 'resolve_networks':
-                    js['value'] = self.resolve_networks(js['value'])
-                    ws.send(json.dumps(js))
-                elif js['event'] == 'inspect_container':
-                    js['value'] = self.inspect_container(js['value'])
-                    ws.send(json.dumps(js))
-                elif js['event'] == 'remove_container':
-                    js['value'] = self.remove_container(js['value'])
-                    ws.send(json.dumps(js))
-                elif js['event'] == 'exec_create':
-                    js['value'] = self.exec_create(js['value'])
-                    ws.send(json.dumps(js))
-                elif js['event'] == 'exec_start':
-                    js['value'] = self.exec_start(js['value'])
-                    ws.send(json.dumps(js))
-                elif js['event'] == 'exec_stream':
+            try:
+                if js['event'] == 'exec_stream':
                     q = self.exec_stream(js['value'])
 
                     while True:
                         r = q.get()
                         js['value'] = r
-                        ws.send(json.dumps(js))
+
+                        self._send_message(js)
 
                         if r.get("eof"):
                             break
-                elif js['event'] == 'echo':
-                    ws.send(json.dumps(js))
+
+                    continue
+
+                if js['event'] == 'get_nodes':
+                    js['value'] = self.get_nodes(js['value'])
+                elif js['event'] == 'create_service_record':
+                    js['value'] = self.create_service(js['value'])
+                elif js['event'] == 'create_container':
+                    js['value'] = self.create_container(js['value'])
+                elif js['event'] == 'start_container':
+                    js['value'] = self.start_container(js['value'])
+                elif js['event'] == 'stop_container':
+                    js['value'] = self.stop_container(js['value'])
+                elif js['event'] == 'create_network':
+                    js['value'] = self.create_network(js['value'])
+                elif js['event'] == 'connect_network':
+                    js['value'] = self.connect_network(js['value'])
+                elif js['event'] == 'remove_network':
+                    js['value'] = self.remove_network(js['value'])
+                elif js['event'] == 'resolve_networks':
+                    js['value'] = self.resolve_networks(js['value'])
+                elif js['event'] == 'inspect_container':
+                    js['value'] = self.inspect_container(js['value'])
+                elif js['event'] == 'remove_container':
+                    js['value'] = self.remove_container(js['value'])
+                elif js['event'] == 'exec_create':
+                    js['value'] = self.exec_create(js['value'])
+                elif js['event'] == 'exec_start':
+                    js['value'] = self.exec_start(js['value'])
                 else:
                     js['value'] = f"Event {js['event']} is not supported."
-                    ws.send(json.dumps(js))
+
+                print("HUMMMMMM ....")
             except Exception as e:
-                log.error(f'Error in receiving while loop {__name__} : {e}')
-                ws.close()
-                raise e
+                print("HUMMMMMM AHA....")
+                log.error(f"{__name__}: error handling {js['event']}: {e}")
+                js['value'] = f"Error handling {js['event']} : {e}"
+
+            print("GGGGGGGGGGGGG ....")
+            self._send_message(js)
+            print("GGGGGGGGGGGGG22222222 ....")
 
 
 class WebsocketBackendRunner:
@@ -442,9 +467,13 @@ class WebsocketBackendRunner:
             if cnt == self._interval:
                 try:
                     self.ws_backend.run(self)
+                except OSError as e:
+                    log.error(f'OS Error running {__name__} : {e}')
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
                     log.error(f'Error running {__name__} : {e}')
 
                 cnt = 0
+
+        log.info(f"Exiting {__name__}:stop={self._stop}")
