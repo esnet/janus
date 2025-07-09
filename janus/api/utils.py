@@ -10,6 +10,9 @@ from janus.api.models import Network,Node
 from janus.settings import cfg
 import requests
 import shlex
+import queue
+import websocket
+from threading import Thread
 
 log = logging.getLogger(__name__)
 
@@ -333,4 +336,54 @@ def set_qos(url, qos):
         except Exception as e:
             log.error(e)
             # return node, None
+
+
+class ExecSession:
+    def __init__(self, ws_url):
+        # self.client = client
+        # token = self.client.jwt
+        # ws_url = f"{cfg.PORTAINER_WS}/exec?token={token}&id={exec_id}&endpointId={node_id}"
+        self.ws = websocket.create_connection(ws_url)
+        self.send_queue = queue.Queue()
+        self.receive_queue = queue.Queue()
+
+        self._sender = Thread(target=self._send_loop, daemon=True) #marking them daemon so they don’t block process exit
+        self._receiver = Thread(target=self._recv_loop, daemon=True)
+        self._sender.start()
+        self._receiver.start()
+
+    def _send_loop(self):
+        try:
+            while True:
+                msg = self.send_queue.get()
+                if msg is None:
+                    break
+                self.ws.send(msg)
+                self.send_queue.task_done()
+        except Exception:
+            log.exception("Error in exec sender thread")
+        finally:
+            log.debug("Exec sender thread exiting")
+
+    def _recv_loop(self):
+        try:
+            while True:
+                data = self.ws.recv()
+                self.receive_queue.put(data)
+        except websocket.WebSocketConnectionClosedException as e:
+            log.debug(f"Exec WS closed: {e}")
+        except Exception:
+            log.exception("Error in exec receiver thread")
+        finally:
+            self.receive_queue.put(None)
+            log.debug("Exec receiver thread exiting")
+
+    def close(self, timeout: float = None):
+        self.send_queue.put(None)
+        self._sender.join(timeout)
+        try:
+            self.ws.close()
+        except:
+            pass
+        self._receiver.join(timeout)
 
