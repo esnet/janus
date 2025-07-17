@@ -1,8 +1,7 @@
 import json
 import logging
 import os
-import queue
-from threading import Thread
+
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
@@ -285,35 +284,28 @@ class KubernetesApi(Service):
         pass
 
     def exec_create(self, node: Node, container, **kwargs):
+        from kubernetes.stream.ws_client import WSClient
+        from janus.api.utils import ExecKubeSession
+
         api_client = self._get_client(node.name)
         api = client.CoreV1Api(api_client)
-        res = stream(api.connect_get_namespaced_pod_exec,
-                     name=container,
-                     namespace=self._get_namespace(node.name),
-                     command=kwargs.get("Cmd"),
-                     container=container,
-                     stderr=kwargs.get("AttachStderr"),
-                     stdin=kwargs.get("AttachStdin"),
-                     stdout=kwargs.get("AttachStdout"),
-                     tty=False,
-                     _preload_content=False
-                     )
-
-        def _get_stream(astream, aqueue):
-            while astream.is_open():
-                astream.update(1)
-                aqueue.put({"msg": astream.read_all(), "eof": False})
-            aqueue.put({"msg": None, "eof": True})
-
-        q = queue.Queue()
-        t = Thread(target=_get_stream, args=(res, q))
-        t.start()
+        ws_client: WSClient = stream(api.connect_get_namespaced_pod_exec,
+                                     name=container,
+                                     namespace=self._get_namespace(node.name),
+                                     command=kwargs.get("Cmd"),
+                                     container=container,
+                                     stderr=kwargs.get("AttachStderr", True),
+                                     stdin=kwargs.get("AttachStdin", True),
+                                     stdout=kwargs.get("AttachStdout", True),
+                                     tty=kwargs.get("Tty", False),
+                                     _preload_content=False
+                                     )
 
         if not self._exec_map.get(node.name):
             self._exec_map[node.name] = dict()
-            self._exec_map[node.name][container] = q
+            self._exec_map[node.name][container] = ExecKubeSession(ws_client)
         else:
-            self._exec_map[node.name][container] = q
+            self._exec_map[node.name][container] = ExecKubeSession(ws_client)
 
         return {"response": "websocket created"}
 
