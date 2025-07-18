@@ -59,73 +59,27 @@ def handle_websocket(sock):
         log.debug(f"Got exec stream request from {sock.sock.getpeername()}")
         req = WSExecStream(**js)
         handler = cfg.sm.get_handler(nname=req.node)
-
-        try:
-            res = handler.exec_stream(Node(id=req.node_id, name=req.node), req.container, req.exec_id)
-        except Exception as e:
-            error = f"Exec stream failed for node {req.node} and container {req.container}: {e}"
-            log.error(error)
-            sock.send(json.dumps({"error": error}))
-            return
-
-        if not res:
-            error = f"No Exec stream found for node {req.node} and container {req.container}"
-            log.error(error)
-            sock.send(json.dumps({"error": error}))
-            return
-
-        if not isinstance(res, tuple):
-            while True:
-                r = res.get()
-
-                if r.get("eof"):
-                    break
-                sock.send(r.get("msg"))
-
-            return
-
-        receive_queue, send_queue, ws, sender_thread, receiver_thread = res
+        session = handler.exec_stream(Node(id=req.node_id, name=req.node), req.container, req.exec_id)
+        receive_queue = session.receive_queue
+        send_queue = session.send_queue
 
         def forward_output():
             try:
-                while True:
-                    response = receive_queue.get()
-                    if response is None:
-                        log.debug("Output forwarding completed")
-                        break
-                    try:
-                        sock.send(response)
-                    except websocket.WebSocketConnectionClosedException:
-                        log.debug("Client disconnected during output")
-                        break
-            except Exception as e:
-                log.error(f"Output error: {str(e)}")
+                for chunk in iter(receive_queue.get, None):
+                    sock.send(chunk)
             finally:
                 receive_queue.task_done()
 
-        output_thread = Thread(target=forward_output)
+        output_thread = Thread(target=forward_output, daemon=True)
         output_thread.start()
 
         try:
             while True:
-                try:
-                    user_input = sock.receive()
-                    if user_input.strip().lower() in ["exit", "quit"]:
-                        break
-                    if user_input == '\x03':  # Ctrl+C
-                        log.debug("Received SIGINT, terminating session")
-                        break
-                    send_queue.put(user_input)
-                except websocket.WebSocketConnectionClosedException:
-                    log.debug("Client closed connection")
+                data = sock.receive()
+                if data in ("exit", "quit", "\x03"):
                     break
-        except Exception as e:
-            log.error(f"Input handling error: {e}")
+                send_queue.put(data)
         finally:
-            try:
-                sock.send(json.dumps({"status": "session_ended"}))
-            except:
-                pass
-            handler.close_stream(ws, send_queue, receive_queue, sender_thread, receiver_thread)
-            output_thread.join(timeout=2)
-            log.debug("Stream cleanup completed")
+            sock.send(json.dumps({"status": "session_ended"}))
+            session.close()
+            output_thread.join(2)

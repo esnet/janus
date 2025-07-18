@@ -35,7 +35,8 @@ from janus.api.utils import (
     get_numa,
     get_cpuset,
     get_mem,
-    is_subset
+    is_subset,
+    ExecSession
 )
 
 
@@ -435,54 +436,7 @@ class PortainerDockerApi(Service):
 
     def exec_stream(self, node, container, exec_id):
         ws_url = f"{cfg.PORTAINER_WS}/exec?token={self.client.jwt}&id={exec_id}&endpointId={node.id}"
-        ws = websocket.create_connection(ws_url)
-
-        send_queue = queue.Queue()
-        receive_queue = queue.Queue()
-
-        def send_messages(ws, send_queue):
-            try:
-                while True:
-                    message = send_queue.get()
-                    if message is None:
-                        break
-                    ws.send(message)
-                    send_queue.task_done()
-            except Exception as e:
-                log.error(f"Error in sender thread: {e}")
-
-        def receive_messages(ws, receive_queue):
-            try:
-                while True:
-                    try:
-                        response = ws.recv()
-                        receive_queue.put(response)
-                    except websocket.WebSocketConnectionClosedException as e:
-                        if e.args and e.args[0] == 1006:
-                            log.debug("Client disconnected abnormally (1006)")
-                        else:
-                            log.debug("WebSocket connection closed normally")
-                        break
-                    except Exception as e:
-                        log.error(f"Unexpected error in receiver: {str(e)}")
-                        break
-            finally:
-                receive_queue.put(None)
-
-        sender_thread = Thread(target=send_messages, args=(ws, send_queue))
-        receiver_thread = Thread(target=receive_messages, args=(ws, receive_queue))
-
-        sender_thread.start()
-        receiver_thread.start()
-
-        return receive_queue, send_queue, ws, sender_thread, receiver_thread
-
-    def close_stream(self, ws, send_queue, receive_queue, sender_thread, receiver_thread):
-        send_queue.put(None)  # Signal sender thread to exit
-        sender_thread.join()
-
-        receiver_thread.join()  # Wait for receiver to finish
-        ws.close()
+        return ExecSession(ws_url)
 
     @auth
     def _call(self, url, method, body, headers=[], **kwargs):
