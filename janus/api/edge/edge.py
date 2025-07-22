@@ -15,6 +15,21 @@ from simple_websocket.ws import Server
 log = logging.getLogger(__name__)
 
 
+class EdgeServerSocket:
+    def __init__(self, name, sock: Server):
+        self.name = name
+        self.sock: Server = sock
+
+    def send(self, json_text):
+        self.sock.send(json_text)
+
+    def receive(self):
+        return self.sock.receive()
+
+    def __str__(self):
+        return f'edge@{self.name}'
+
+
 class JanusEdgeApi(Service):
     def __init__(self):
         super().__init__()
@@ -27,7 +42,7 @@ class JanusEdgeApi(Service):
         return EPType.EDGE
 
     def add_edge(self, name, sock: Server):
-        self.edges[name] = sock
+        self.edges[name] = EdgeServerSocket(name, sock)
 
     def get_edge(self, name):
         if name not in self.edges:
@@ -36,7 +51,7 @@ class JanusEdgeApi(Service):
         return self.edges[name]
 
     def _send_message(self, edge, event, value):
-        log.info(f"sending message to {edge}:{type(edge)}:event={event}")
+        log.info(f"sending message to {edge}:event={event}")
         message = {"event": event, "value": value}
         edge.send(json.dumps({"event": event, "value": value}))
         data = edge.receive()
@@ -194,8 +209,9 @@ class JanusEdgeApi(Service):
         node_name = node.name
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, container, eid], kwargs=kwargs)
-        message = {"event": 'exec_stream', "value": value}
-        edge.send(json.dumps(message))
+        # message = {"event": 'exec_stream', "value": value}
+        # edge.send(json.dumps(message))
+        self._send_message(edge, 'exec_stream', value)
 
         def _get_stream(aqueue, aedge):
             while True:

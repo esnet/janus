@@ -1,86 +1,57 @@
 import logging
 from configparser import ConfigParser
 
-from janus.settings import cfg
-
 log = logging.getLogger(__name__)
 
 
 class WebsocketBackend:
-    def __init__(self, properties, database):
+    def __init__(self, properties):
         super().__init__()
-        self.cfg = cfg
         self.ws = None
         self.properties = properties
 
         from janus.api.constants import EPType
-        from janus.api.db import DBLayer
-        from janus.api.manager import ServiceManager
-        from janus.api.profile import ProfileManager
-
         self.eptype = EPType(self.properties['eptype'])
 
-        if self.eptype not in [EPType.KUBERNETES, EPType.PORTAINER, EPType.SLURM]:
-            raise Exception(f"Invalid endpoint type {self.eptype}")
+        if self.eptype not in [EPType.KUBERNETES]:
+            raise Exception(f"Invalid or unsupported endpoint type {self.eptype}")
 
-        db = DBLayer(path=database)
-        pm = ProfileManager(db, None)
-        sm = ServiceManager(db)
+        from janus.api.kubernetes import KubernetesApi
 
-        sm.service_map = {
-            self.eptype: sm.service_map[self.eptype]
-        }
-
-        self.cfg.setdb(db, pm, sm)
-        self.handler = sm.service_map[self.eptype]
+        self.handler = KubernetesApi()
         self._node_name = None
+        self.nodes = list()
 
     @property
     def node_name(self):
         if self._node_name is not None:
             return self._node_name
 
-        dbase = self.cfg.db
-        table = dbase.get_table('nodes')
-        nodes = dbase.all(table)
-
-        if not nodes:
-            from janus.api.db import init_db
-
-            init_db(refresh=True)
-            nodes = dbase.all(table)
-
-            if not nodes:
-                raise Exception("Not able to get a node_name (no nodes)")
-
-        self._node_name = nodes[0]['name']
+        self.get_nodes(dict())
         return self._node_name
 
     # noinspection PyUnusedLocal
     def get_nodes(self,  value: dict):
         from janus.api.constants import EPType
-        from janus.api.db import init_db
 
-        args = value['args']
-        refresh = args[0]
+        refresh = False
 
-        if refresh:
-            init_db(refresh=True)
-        else:
-            init_db(refresh=False)
+        if 'args' in value:
+            args = value['args']
+            refresh = args[0]
 
-        dbase = self.cfg.db
-        table = dbase.get_table('nodes')
-        nodes = dbase.all(table)
+        if not self.nodes or refresh:
+            self.nodes = self.handler.get_nodes(refresh=True)
 
-        if nodes:
-            node = nodes[0]
+            if not self.nodes:
+                raise Exception("Not able to get nodes")
+
+            node = self.nodes[0]
             self._node_name = node['name']
             node['endpoint_type'] = EPType.EDGE
             node['name'] = self.properties['name']
-            nodes = [node]
-
-        return nodes
+            self.nodes = [node]
+        return self.nodes
 
     def create_service(self, value: dict):
         from janus.api.models import SessionRequest
@@ -340,6 +311,7 @@ class WebsocketBackend:
             try:
                 log.debug(f"{__name__}:In while loop. Going to wait for messages ...")
                 data = self.ws.recv()
+                log.info(f"{__name__}:received data_length={len(data)}")
             except Exception as e:
                 log.error(f'Error receiving in while loop {__name__} : {e}')
                 self._close(quiet=True)
@@ -361,6 +333,7 @@ class WebsocketBackend:
                 # TODO What should we do about the exception here?
                 if js['event'] == 'exec_stream':
                     q = self.exec_stream(js['value'])
+                    self._send_message(js)
 
                     while True:
                         r = q.get()
@@ -409,14 +382,14 @@ class WebsocketBackend:
 
 
 class WebsocketBackendRunner:
-    def __init__(self, janus_config_path, database):
+    def __init__(self, janus_config_path):
         self._stop = False
         self._interval = 10
         self._th = None
         parser = ConfigParser(allow_no_value=True)
         parser.read(janus_config_path)
         properties = WebsocketBackendRunner._parse_from_config(parser)
-        self.ws_backend = WebsocketBackend(properties, database)
+        self.ws_backend = WebsocketBackend(properties)
         log.info(f"Initialized {__name__}:{ properties}")
 
     @staticmethod
