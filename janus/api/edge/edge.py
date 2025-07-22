@@ -11,6 +11,7 @@ from janus.api.models import (
 from janus.api.service import Service
 from janus.settings import cfg
 from simple_websocket.ws import Server
+from threading import Lock
 
 log = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ class EdgeServerSocket:
     def __init__(self, name, sock: Server):
         self.name = name
         self.sock: Server = sock
+        self.mutex = Lock()
 
     def send(self, json_text):
         self.sock.send(json_text)
@@ -44,17 +46,20 @@ class JanusEdgeApi(Service):
     def add_edge(self, name, sock: Server):
         self.edges[name] = EdgeServerSocket(name, sock)
 
-    def get_edge(self, name):
+    def get_edge(self, name) -> EdgeServerSocket:
         if name not in self.edges:
             raise Exception(f'edge {name} is not registered')
 
         return self.edges[name]
 
-    def _send_message(self, edge, event, value):
+    def _send_message(self, edge: EdgeServerSocket, event, value):
         log.info(f"sending message to {edge}:event={event}")
         message = {"event": event, "value": value}
-        edge.send(json.dumps({"event": event, "value": value}))
-        data = edge.receive()
+
+        with edge.mutex:
+            edge.send(json.dumps({"event": event, "value": value}))
+            data = edge.receive()
+
         reply = json.loads(data)
 
         if 'error' in reply:
@@ -213,21 +218,24 @@ class JanusEdgeApi(Service):
         # edge.send(json.dumps(message))
         self._send_message(edge, 'exec_stream', value)
 
-        def _get_stream(aqueue, aedge):
-            while True:
-                # noinspection PyBroadException
-                try:
-                    r = aedge.receive()
-                    r = json.loads(r)
-                    ret = r['value']
-                    aqueue.put(ret)
+        def _get_stream(aqueue, aedge: EdgeServerSocket):
+            with aedge.mutex:
+                while aedge.sock.connected:
+                    # noinspection PyBroadException
+                    try:
+                        r = aedge.receive()
+                        r = json.loads(r)
+                        ret = r['value']
+                        aqueue.put(ret)
 
-                    if ret.get("eof"):
-                        break
-                except Exception as e:
-                    log.error(f"_get_stream got  {e}")
-                    import traceback
-                    traceback.print_exc()
+                        if ret.get("eof"):
+                            break
+                    except Exception as e:
+                        log.error(f"_get_stream got  {e}")
+                        import traceback
+                        traceback.print_exc()
+
+
 
         from threading import Thread
 

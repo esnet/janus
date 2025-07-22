@@ -150,7 +150,7 @@ def main():
         if args.edge:
             from janus.remoting.ws_backend import WebsocketBackendRunner
 
-            runner = WebsocketBackendRunner(args.config, args.database)
+            runner = WebsocketBackendRunner(args.config)
             runner.start()
 
     if args.dryrun:
