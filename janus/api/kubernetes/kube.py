@@ -301,13 +301,19 @@ class KubernetesApi(Service):
                      )
 
         def _get_stream(astream, aqueue):
+            from websocket._exceptions import WebSocketConnectionClosedException
+
             try:
                 while astream.is_open():
                     astream.update(1)
-                    aqueue.put({"msg": astream.read_all(), "eof": False})
+                    ret = astream.read_all()
+                    aqueue.put({"msg": ret, "eof": False})
+            except WebSocketConnectionClosedException as e:
+                log.warning(f"exec_create:_get_stream:exception using pod stream:exception={e}")
             except Exception as e:
-                print("AES:KUBE:EXEC_CREATE: _get_stream", e)
-                log.error(f"exec_create:_get_stream:exception={e}")
+                log.error(f"exec_create:_get_stream:exception using pod stream:exception={e}:{type(e)}")
+                import traceback
+                traceback.print_exc()
 
             aqueue.put({"msg": None, "eof": True})
 
