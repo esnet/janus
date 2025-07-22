@@ -36,7 +36,7 @@ def test_get_profiles(Controller):
     assert res.status_code == 200
 
 def test_get_nodes(Controller):
-    res = requests.get('https://localhost:5000/api/janus/controller/nodes?refresh=true', auth=auth, verify=False)
+    res = requests.get('https://localhost:5000/api/janus/controller/nodes', auth=auth, verify=False)
     assert res.status_code == 200
 
 def test_get_sessions(Controller):

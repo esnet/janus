@@ -158,7 +158,7 @@ class SessionRequest(BaseModel):
     kwargs: Optional[dict]
     overrides: Optional[dict]
     entrypoint: Optional[str] = None
-    dns: Optional[List[str]]
+    dns: Optional[List[str]] = None
 
 class AddEndpointRequest(BaseModel):
     type: int

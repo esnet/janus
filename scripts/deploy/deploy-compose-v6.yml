@@ -1,6 +1,6 @@
 services:
   portainer-ce:
-    image: portainer/portainer-ce
+    image: wharf.es.net/dtnaas/portainer/portainer-ce
     container_name: portainer-ce
     restart: unless-stopped
     command: --admin-password $$2y$$05$$YPtwKQG4eZb/reXBR1P/we.I7AKfK2oJsL69CIbWyjvf8r9woedcS
@@ -14,7 +14,7 @@ services:
       - dtnaas
 
   portainer-agent:
-    image: portainer/agent
+    image: wharf.es.net/dtnaas/portainer/agent
     container_name: portainer-agent
     restart: unless-stopped
     volumes:
@@ -27,15 +27,17 @@ services:
     network_mode: bridge
 
   controller:
-    image: dtnaas/controller:0.3rc1
+    image: wharf.es.net/dtnaas/controller:0.3rc1
     container_name: janus-controller
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
       - PORT=5000
       - DEBUG=1
+      - 'BIND=::'
     volumes:
-      - ./config:/etc/janus
+      - /etc/janus:/etc/janus
+      - /opt/janus/controller/:/opt/janus
     expose:
       - 5000
     ports:
@@ -44,7 +46,7 @@ services:
       - dtnaas
 
   agent:
-    image: dtnaas/agent
+    image: wharf.es.net/dtnaas/agent
     container_name: janus-agent
     restart: unless-stopped
     environment:
@@ -59,19 +61,25 @@ services:
     network_mode: host
 
   janus-web:
-    image: dtnaas/janus-web:0.3rc1
+    image: wharf.es.net/dtnaas/janus-web:0.3rc1
     container_name: janus-web
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
       - JANUS_WEB_CTRL_HOST=controller
-      - CSRF_TRUSTED_ORIGINS=https://janus.esnet.app
+      - CSRF_TRUSTED_ORIGINS=https://janus-sense.es.net
       - JANUS_USERNAME=admin
       - JANUS_PASSWORD=admin
+      - ADMIN_ENABLED=false
+      - LOCAL_LOGIN_ENABLED=false
+      - OIDC_RP_CLIENT_ID=Janus-dev
+      - BIND=[::]
+    volumes:
+      - /opt/janus/janus-web:/opt/janus-web
     expose:
-      - 8000
+      - 8001
     ports:
-      - "[::1]:8000:8000"
+      - "[::1]:8001:8000"
     networks:
       - dtnaas
 
@@ -80,34 +88,15 @@ services:
     restart: unless-stopped
     image: nginx
     ports:
-      - 80:80
-      - 443:443
+      - "[::1]:8000:8000"
+      - "127.0.0.1:8000:8000"
+    expose:
+      - 8000
     volumes:
-      - ./nginx/nginx-prod.conf:/etc/nginx/nginx.conf
-      - ./certbot/conf:/etc/letsencrypt
-      - ./certbot/www:/var/www/certbot
-      - ./janus-web/static:/var/www/static
-    network_mode: host
-
-  nginx-init:
-    container_name: nginx-init
-    image: nginx
-    ports:
-      - 80:80
-    volumes:
-      - ./nginx/nginx-init.conf:/etc/nginx/nginx.conf
-      - ./certbot/conf:/etc/letsencrypt
-      - ./certbot/www:/var/www/certbot
-    profiles: [certbot]
-
-  certbot:
-    image: certbot/certbot
-    container_name: certbot
-    volumes: 
-      - ./certbot/conf:/etc/letsencrypt
-      - ./certbot/www:/var/www/certbot
-    command: certonly --webroot -w /var/www/certbot --force-renewal --email kissel@es.net -d janus.esnet.app --agree-tos
-    profiles: [certbot]
+      - ./nginx/nginx-plain.conf:/etc/nginx/nginx.conf
+      - /opt/janus/janus-web/webapp/static/static:/var/www/static
+    networks:
+      - dtnaas
 
 volumes:
   portainer_data:
@@ -116,7 +105,9 @@ volumes:
 
 networks:
   dtnaas:
+    enable_ipv6: true
     driver: bridge
     ipam:
       config:
         - subnet: fd00:dead:beef::/48
+

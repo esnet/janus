@@ -89,8 +89,11 @@ class ServiceManager:
         return self.service_map[eptype]
 
     def get_auth_token(self, node: dict = None, ntype=EPType.PORTAINER):
-        return self.service_map[ntype].auth_token
-
+        try:
+            return self.service_map[ntype].auth_token
+        except Exception as e:
+            log.error(f"Could not get token for ntype {ntype}: {e}")
+            return {"error": str(e)}
 
     def init_service(self, s, errs=False):
         n = s.get('node')
@@ -131,8 +134,8 @@ class ServiceManager:
             try:
                 # if specified, connect the management network to this created container
                 if s['mgmt_net']:
-                   net_kwargs = s['net_kwargs'] if 'net_kwargs' in s else dict()
-                   handler.connect_network(Node(**n), s['mgmt_net']['id'], ret['Id'], **net_kwargs)
+                    net_kwargs = s['net_kwargs'] if 'net_kwargs' in s else dict()
+                    handler.connect_network(Node(**n), s['mgmt_net']['id'], ret['Id'], **net_kwargs)
             except Exception as e:
                 log.error("Could not connect network on {nname}: {e}")
                 errs = error_svc(s, e)
