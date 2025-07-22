@@ -35,19 +35,28 @@ class JanusEdgeApi(Service):
 
         return self.edges[name]
 
+    def _send_message(self, edge, event, value):
+        log.info(f"sending message to {edge}:{type(edge)}:event={event}")
+        message = {"event": event, "value": value}
+        edge.send(json.dumps({"event": event, "value": value}))
+        data = edge.receive()
+        reply = json.loads(data)
+
+        if 'error' in reply:
+            log.error(f"received reply from {edge}:event={message['event']}:error={reply['error']}")
+            raise Exception(reply['error'])
+
+        log.info(f"received OK reply from {edge}:event={event}")
+        return reply['value']
+
     def _do_get_nodes(self, event, refresh=False):
         value = dict(args=[refresh], kwargs=dict())
         nodes = list()
 
         for node_name, edge in self.edges.items():
-            message = {"msg": {"handler": EPType.EDGE.name,
-                     "event": event,
-                     "value": value}}
             try:
-                edge.send(json.dumps(message))
-                data = edge.receive()
-                reply = json.loads(data)
-                nodes.extend(reply['value'])
+                ret = self._send_message(edge, event, value)
+                nodes.extend(ret)
             except Exception as e:
                 log.error(f"__do_get_nodes from {node_name}:got {e}")
 
@@ -82,105 +91,49 @@ class JanusEdgeApi(Service):
         edge = self.get_edge(node.name)
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, image, cname], kwargs=kwargs)
-        message = {"msg": {"handler": EPType.EDGE.name,
-                           "event": 'create_container',
-                           "value": value}}
-
-        edge.send(json.dumps(message))
-        data = edge.receive()
-        reply = json.loads(data)
-        return reply['value']
+        return self._send_message(edge, 'create_container', value)
 
     def start_container(self, node: Node, container: str, service=None, **kwargs):
         edge = self.get_edge(node.name)
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, container, service], kwargs=kwargs)
-        message = {"msg": {"handler": EPType.EDGE.name,
-                           "event": 'start_container',
-                           "value": value}}
-
-        edge.send(json.dumps(message))
-        data = edge.receive()
-        reply = json.loads(data)
-        return reply['value']
+        return self._send_message(edge, 'start_container', value)
 
     def stop_container(self, node: Node, container, **kwargs):
         edge = self.get_edge(node.name)
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, container], kwargs=kwargs)
-        message = {"msg": {"handler": EPType.EDGE.name,
-                           "event": 'stop_container',
-                           "value": value}}
-
-        edge.send(json.dumps(message))
-        data = edge.receive()
-        reply = json.loads(data)
-        return reply['value']
+        return self._send_message(edge, 'stop_container', value)
 
     def create_network(self, node: Node, net_name, **kwargs):
         edge = self.get_edge(node.name)
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, net_name], kwargs=kwargs)
-        message = {"msg": {"handler": EPType.EDGE.name,
-                           "event": 'create_network',
-                           "value": value}}
-
-        edge.send(json.dumps(message))
-        data = edge.receive()
-        reply = json.loads(data)
-        return reply['value']
+        return self._send_message(edge, 'create_network', value)
 
     def inspect_container(self, node: Node, container):
         edge = self.get_edge(node.name)
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, container], kwargs=dict())
-        message = {"msg": {"handler": EPType.EDGE.name,
-                           "event": 'inspect_container',
-                           "value": value}}
-
-        edge.send(json.dumps(message))
-        data = edge.receive()
-        reply = json.loads(data)
-        return reply['value']
+        return self._send_message(edge, 'inspect_container', value)
 
     def remove_container(self, node: Node, container):
         edge = self.get_edge(node.name)
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, container], kwargs=dict())
-        message = {"msg": {"handler": EPType.EDGE.name,
-                           "event": 'remove_container',
-                           "value": value}}
-
-        edge.send(json.dumps(message))
-        data = edge.receive()
-        reply = json.loads(data)
-        return reply['value']
+        return self._send_message(edge, 'remove_container', value)
 
     def connect_network(self, node: Node, network, container, **kwargs):
         edge = self.get_edge(node.name)
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, network, container], kwargs=kwargs)
-        message = {"msg": {"handler": EPType.EDGE.name,
-                           "event": 'connect_network',
-                           "value": value}}
-
-        edge.send(json.dumps(message))
-        data = edge.receive()
-        reply = json.loads(data)
-        return reply['value']
+        return self._send_message(edge, 'connect_network', value)
 
     def remove_network(self, node: Node, network, **kwargs):
         edge = self.get_edge(node.name)
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, network], kwargs=kwargs)
-        message = {"msg": {"handler": EPType.EDGE.name,
-                           "event": 'remove_network',
-                           "value": value}}
-
-        edge.send(json.dumps(message))
-        data = edge.receive()
-        reply = json.loads(data)
-        return reply['value']
+        return self._send_message(edge, 'remove_network', value)
 
     # prof is of type ContainerProfile
     def resolve_networks(self, node: dict, prof, **kwargs):
@@ -207,14 +160,7 @@ class JanusEdgeApi(Service):
             kwargs['nprof'] = nprof
 
         value = dict(args=[node, prof], kwargs=kwargs)
-        message = {"msg": {"handler": EPType.EDGE.name,
-                           "event": 'resolve_networks',
-                           "value": value}}
-
-        edge.send(json.dumps(message))
-        data = edge.receive()
-        reply = json.loads(data)
-        ret, networks = reply['value']
+        ret, networks = self._send_message(edge, 'resolve_networks', value)
         node_as_dict['networks'].update(networks)
         return ret
 
@@ -223,13 +169,7 @@ class JanusEdgeApi(Service):
         node_name = node.name
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, container], kwargs=kwargs)
-        message = {"msg": {"handler": EPType.EDGE.name,
-                           "event": 'exec_create',
-                           "value": value}}
-
-        edge.send(json.dumps(message))
-        data = edge.receive()
-        reply = json.loads(data)
+        ret = self._send_message(edge, 'exec_create', value)
 
         import queue
 
@@ -241,29 +181,20 @@ class JanusEdgeApi(Service):
         else:
             self._exec_map[node_name][container] = q
 
-        return reply['value']
+        return ret
 
     def exec_start(self, node: Node, ectx, **kwargs):
         edge = self.get_edge(node.name)
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, ectx], kwargs=kwargs)
-        message = {"msg": {"handler": EPType.EDGE.name,
-                           "event": 'exec_start',
-                           "value": value}}
-        edge.send(json.dumps(message))
-        data = edge.receive()
-        reply = json.loads(data)
-        return reply['value']
+        return self._send_message(edge, 'exec_start', value)
 
     def exec_stream(self, node: Node, container, eid, **kwargs):
         edge = self.get_edge(node.name)
         node_name = node.name
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, container, eid], kwargs=kwargs)
-        message = {"msg": {"handler": EPType.EDGE.name,
-                           "event": 'exec_stream',
-                           "value": value}}
-
+        message = {"event": 'exec_stream', "value": value}
         edge.send(json.dumps(message))
 
         def _get_stream(aqueue, aedge):
@@ -317,16 +248,6 @@ class JanusEdgeApi(Service):
             kwargs['data_ipv4'] = data_ipv4
             kwargs['data_ipv6'] = data_ipv6
 
-        print(f"CURRR V4:{addrs_v4}")
-        print(f"CURRR V6:{addrs_v6}")
-
         sreq = json.loads(sreq.model_dump_json())
         value = dict(args=[sname, sreq], kwargs=kwargs)
-        message = {"msg": {"handler": EPType.EDGE.name,
-                           "event": 'create_service_record',
-                           "value": value}}
-
-        edge.send(json.dumps(message))
-        data = edge.receive()
-        reply = json.loads(data)
-        return reply['value']
+        return self._send_message(edge, 'create_service_record', value)

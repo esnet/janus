@@ -190,8 +190,6 @@ class WebsocketBackend:
         node.name = self.node_name
         ectx = args[1]
         kwargs = value['kwargs']
-
-        print(f"edge exec start: {node.name}:{ectx}")
         ret = self.handler.exec_start(node, ectx, **kwargs)
         log.info(f"{__name__}:exec start stream OK:{node.name}:{ret}")
         return ret
@@ -289,8 +287,9 @@ class WebsocketBackend:
 
     def _close(self, quiet):
         try:
+            log.info(f"{__name__}:closing socket :{self.ws}: quiet={quiet}")
             self.ws.close()
-            log.info(f"{__name__}:closed socket :{self.ws}: quiet=true")
+            log.info(f"{__name__}:closed socket :{self.ws}: quiet={quiet}")
         except Exception as e:
             log.warning(f"{__name__}:Error closing socket :{self.ws}: quiet=true")
             if not quiet:
@@ -303,9 +302,9 @@ class WebsocketBackend:
             event = js['event']
             temp_js = json.dumps(js)
             self.ws.send(temp_js)
-            log.info(f"{__name__}:sent response to {event}...")
+            log.info(f"{__name__}:sent response: event={event}...")
         except Exception as e:
-            log.warning(f"{__name__}:error sending response to {js}...")
+            log.warning(f"{__name__}:error sending response to {js}...:closing socket ...")
             self._close(quiet=True)
             raise e
 
@@ -347,19 +346,19 @@ class WebsocketBackend:
                 raise e
 
             try:
-                message = json.loads(data)
+                js = json.loads(data)
 
-                if not isinstance(message, dict) and not message.get("msg"):
-                    raise Exception(f"Got invalid {message}")
+                if not isinstance(js, dict) or not js.get("event") or not js.get("value"):
+                    raise Exception(f"Got invalid {js}")
 
-                js = message['msg']
-                log.info(f"{__name__}:received {js['handler']}:{js['event']}...")
+                log.info(f"{__name__}:received event={js['event']}")
             except Exception as e:
                 log.error(f'Error validating message in while loop {__name__} : {e}')
                 self._close(quiet=True)
                 raise e
 
             try:
+                # TODO What should we do about the exception here?
                 if js['event'] == 'exec_stream':
                     q = self.exec_stream(js['value'])
 
@@ -401,17 +400,12 @@ class WebsocketBackend:
                 elif js['event'] == 'exec_start':
                     js['value'] = self.exec_start(js['value'])
                 else:
-                    js['value'] = f"Event {js['event']} is not supported."
-
-                print("HUMMMMMM ....")
+                    js['error'] = f"Event {js['event']} is not supported."
             except Exception as e:
-                print("HUMMMMMM AHA....")
                 log.error(f"{__name__}: error handling {js['event']}: {e}")
-                js['value'] = f"Error handling {js['event']} : {e}"
+                js['error'] = f"Error handling {js['event']}:{type(e)}:{e}"
 
-            print("GGGGGGGGGGGGG ....")
             self._send_message(js)
-            print("GGGGGGGGGGGGG22222222 ....")
 
 
 class WebsocketBackendRunner:
