@@ -138,33 +138,33 @@ def get_next_vf(node, dnet):
 def get_next_cport(node, prof, curr=set()):
     if not prof.settings.ctrl_port_range:
         return None
-    # make a set out of the port range
-    avail = set(range(prof.settings.ctrl_port_range[0],
-                      prof.settings.ctrl_port_range[1]+1))
     alloced = node['allocated_ports']
+    avail = set()
+    for start, end in prof.settings.ctrl_port_range:
+        avail |= set(range(start, end + 1))
     avail = avail - set(alloced) - curr
-    try:
-        port = next(iter(avail))
-    except:
-        raise Exception("No more ctrl ports available")
-    curr.add(port)
-    return str(port)
+    if avail:
+        # port = next(iter(avail))
+        sorted_avail = sorted(avail)
+        port = sorted_avail[0] # Always get the smallest available port
+        curr.add(port)
+        return str(port)
+    raise Exception("No more ctrl ports available")
 
 def get_next_sport(node, prof, curr=set()):
     if not prof.settings.serv_port_range:
         return None
-    # make a set out of the port range
-    avail = set(range(prof.settings.serv_port_range[0],
-                      prof.settings.serv_port_range[1]+1))
     alloced = node['allocated_ports']
+    avail = set()
+    for start, end in prof.settings.serv_port_range:
+        avail |= set(range(start, end + 1))
     avail = avail - set(alloced) - curr
-    try:
-        port = next(iter(avail))
-    except:
-        raise Exception("No more service ports available")
-    curr.add(port)
-    return str(port)
-
+    if avail:
+        sorted_avail = sorted(avail)
+        port = sorted_avail[0] # Always get the smallest available port
+        curr.add(port)
+        return str(port)
+    raise Exception("No more serv ports available")
 
 def get_next_ipv4(net, curr, cidr=False, key=None, name=None):
     dbase = cfg.db

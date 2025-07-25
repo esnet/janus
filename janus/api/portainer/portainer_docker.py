@@ -603,10 +603,10 @@ class PortainerDockerApi(Service):
         data_ipv6 = None
         cport = get_next_cport(node, prof, cports)
         sport = get_next_sport(node, prof, sports)
-        internal_port = prof.settings.internal_port or cport
+        internal_port = prof.settings.internal_port
 
-        if dpr:
-            dports = "{},{}".format(dpr[0],dpr[1])
+        if dpr and len(dpr) > 0:
+            dports = ",".join(f"{start},{end}" for (start, end) in dpr)
         else:
             dports = ""
 
@@ -645,11 +645,11 @@ class PortainerDockerApi(Service):
 
         if cport:
             docker_kwargs["HostConfig"]["PortBindings"].update({
-                "{}/tcp".format(internal_port): [
+                "{}/tcp".format(cport): [
                     {"HostPort": "{}".format(cport)}]
             })
             docker_kwargs["ExposedPorts"].update({
-                "{}/tcp".format(internal_port): {}
+                "{}/tcp".format(cport): {}
             })
 
         if sport:
@@ -660,6 +660,16 @@ class PortainerDockerApi(Service):
             docker_kwargs["ExposedPorts"].update({
                 "{}/tcp".format(sport): {}
             })
+
+        if internal_port:
+            for iport in internal_port:
+                docker_kwargs["HostConfig"]["PortBindings"].update({
+                    "{}/tcp".format(iport): [
+                        {"HostPort": "{}".format(iport)}]
+                })
+                docker_kwargs["ExposedPorts"].update({
+                    "{}/tcp".format(iport): {}
+                })
 
         if mnet.name and not mnet.is_host():
             try:
