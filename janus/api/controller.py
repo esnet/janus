@@ -401,8 +401,10 @@ class Exec(Resource):
         try:
             handler = cfg.sm.get_handler(node)
             ret = handler.exec_create(Node(**node), container, **kwargs)
+            ret.update({"response": None})
             if start:
-                handler.exec_start(Node(**node), ret)
+                res = handler.exec_start(Node(**node), ret)
+                ret['response'] = res['response']
         except Exception as e:
             log.error(f"Could not exec in container on {nname}: {e.reason}: {e.body}")
             return {"error": e.reason}, 503
