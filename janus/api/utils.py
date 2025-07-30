@@ -14,6 +14,9 @@ import queue
 import websocket
 from threading import Thread
 from kubernetes.stream.ws_client import WSClient
+from simple_websocket.ws import Server
+from threading import Lock
+
 
 log = logging.getLogger(__name__)
 
@@ -436,4 +439,41 @@ class ExecKubeSession:
         except Exception as e:
             log.warning(f"Error in exec receiver thread {e}")
 
+        self._receiver.join(timeout)
+
+
+class ExecWebsocketServerSession:
+    def __init__(self, ws_server: Server, mutex: Lock):
+        self.ws_server = ws_server
+        self.mutex: Lock = mutex
+        self.receive_queue = queue.Queue()
+        self.send_queue = queue.Queue()
+        self._sender = Thread(target=self._send_loop, daemon=True)
+        self._receiver = Thread(target=self._recv_loop, daemon=True)
+        self._sender.start()
+        self._receiver.start()
+
+    def _send_loop(self):
+        pass
+
+    def _recv_loop(self):
+        try:
+            with self.mutex:
+                while self.ws_server.connected:
+                    r = self.ws_server.receive()
+                    r = json.loads(r)
+                    ret = r['value']
+                    if ret is None:
+                        break
+
+                    self.receive_queue.put(ret)
+        except Exception as e:
+            log.exception(f"Error in exec receiver thread {e}:")
+        finally:
+            self.receive_queue.put(None)
+            log.debug("Exec receiver thread exiting")
+
+    def close(self, timeout: float = None):
+        self.send_queue.put(None)
+        self._sender.join(timeout)
         self._receiver.join(timeout)

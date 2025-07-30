@@ -331,19 +331,26 @@ class WebsocketBackend:
 
             try:
                 # TODO What should we do about the exception here?
+                # TODO Handle bidirection  see sockets.py
                 if js['event'] == 'exec_stream':
-                    q = self.exec_stream(js['value'])
+                    from threading import Thread
+                    session = self.exec_stream(js['value'])
+                    receive_queue = session.receive_queue
+
+                    def forward_output():
+                        try:
+                            for chunk in iter(receive_queue.get, None):
+                                js['value'] = chunk
+                                self._send_message(js)
+                        finally:
+                            receive_queue.task_done()
+
+                    output_thread = Thread(target=forward_output, daemon=True)
+                    output_thread.start()
+                    output_thread.join()
+                    session.close()
+                    js['value'] = None
                     self._send_message(js)
-
-                    while True:
-                        r = q.get()
-                        js['value'] = r
-
-                        self._send_message(js)
-
-                        if r.get("eof"):
-                            break
-
                     continue
 
                 if js['event'] == 'get_nodes':
@@ -416,7 +423,10 @@ class WebsocketBackendRunner:
     def stop(self):
         log.debug(f"Stopping {__name__}")
         self._stop = True
-        self.ws_backend.ws.close()
+
+        if self.ws_backend.ws:
+            self.ws_backend.ws.close()
+
         self._th.join()
 
     def keep_running(self):

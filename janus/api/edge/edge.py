@@ -155,7 +155,7 @@ class JanusEdgeApi(Service):
         value = dict(args=[node, network], kwargs=kwargs)
         return self._send_message(edge, 'remove_network', value)
 
-    # prof is of type ContainerProfile
+    # NOTE: prof is of type ContainerProfile
     def resolve_networks(self, node: dict, prof, **kwargs):
         from janus.api.models import Network
         from janus.api.constants import Constants
@@ -185,22 +185,11 @@ class JanusEdgeApi(Service):
         return ret
 
     def exec_create(self, node: Node, container, **kwargs):
-        edge = self.get_edge(node.name)
-        node_name = node.name
+        edge: EdgeServerSocket = self.get_edge(node.name)
+        # node_name = node.name  # TODO The kube session is getting created in exec_stream below. Is that a problem?
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, container], kwargs=kwargs)
         ret = self._send_message(edge, 'exec_create', value)
-
-        import queue
-
-        q = queue.Queue()
-
-        if not self._exec_map.get(node_name):
-            self._exec_map[node_name] = dict()
-            self._exec_map[node_name][container] = q
-        else:
-            self._exec_map[node_name][container] = q
-
         return ret
 
     def exec_start(self, node: Node, ectx, **kwargs):
@@ -214,35 +203,17 @@ class JanusEdgeApi(Service):
         node_name = node.name
         node = json.loads(node.model_dump_json())
         value = dict(args=[node, container, eid], kwargs=kwargs)
-        # message = {"event": 'exec_stream', "value": value}
-        # edge.send(json.dumps(message))
         self._send_message(edge, 'exec_stream', value)
 
-        def _get_stream(aqueue, aedge: EdgeServerSocket):
-            with aedge.mutex:
-                while aedge.sock.connected:
-                    # noinspection PyBroadException
-                    try:
-                        r = aedge.receive()
-                        r = json.loads(r)
-                        ret = r['value']
-                        aqueue.put(ret)
+        from janus.api.utils import ExecWebsocketServerSession
 
-                        if ret.get("eof"):
-                            break
-                    except Exception as e:
-                        log.error(f"_get_stream got  {e}")
-                        import traceback
-                        traceback.print_exc()
+        if not self._exec_map.get(node_name):
+            self._exec_map[node_name] = dict()
+            self._exec_map[node_name][container] = ExecWebsocketServerSession(edge.sock, edge.mutex)
+        else:
+            self._exec_map[node_name][container] = ExecWebsocketServerSession(edge.sock, edge.mutex)
 
-
-
-        from threading import Thread
-
-        q = self._exec_map.get(node_name).get(container)
-        t = Thread(target=_get_stream, args=(q, edge, ))
-        t.start()
-        return q
+        return self._exec_map.get(node_name).get(container)
 
     def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports, **kwargs):
         from janus.api.models import Network
