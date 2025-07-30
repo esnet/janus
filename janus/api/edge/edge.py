@@ -69,8 +69,9 @@ class JanusEdgeApi(Service):
         log.info(f"received OK reply from {edge}:event={event}")
         return reply['value']
 
-    def _do_get_nodes(self, event, refresh=False):
+    def get_nodes(self, nname=None, cb=None, refresh=False):
         value = dict(args=[refresh], kwargs=dict())
+        event = 'get_nodes'
         nodes = list()
 
         for node_name, edge in self.edges.items():
@@ -81,9 +82,6 @@ class JanusEdgeApi(Service):
                 log.error(f"__do_get_nodes from {node_name}:got {e}")
 
         return nodes
-
-    def get_nodes(self, nname=None, cb=None, refresh=False):
-        return self._do_get_nodes('get_nodes', refresh=refresh)
 
     def remove_node(self, nid):
         pass

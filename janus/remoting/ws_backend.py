@@ -55,30 +55,13 @@ class WebsocketBackend:
 
     def create_service(self, value: dict):
         from janus.api.models import SessionRequest
-        from janus.api.models import SessionConstraints
 
         args = value['args']
         sname = args[0]
         sr_args = args[1]
         node = sr_args['node']
-        image = sr_args['image']
-        profile = sr_args['profile']
-        constraints = sr_args['constraints']
-        arguments = sr_args['arguments']
-        remove_container = sr_args['remove_container']
-        kwargs = sr_args['kwargs']
-        overrides = sr_args['overrides']
-        constraints = SessionConstraints(**constraints)
         node['name'] = self.node_name
-        sreq = SessionRequest(node=node,
-                              profile=profile,
-                              image=image,
-                              arguments=arguments,
-                              remove_container=remove_container,
-                              constraints=constraints,
-                              kwargs=kwargs,
-                              overrides=overrides
-                              )
+        sreq = SessionRequest(**sr_args)
         addrs_v4 = set()  # keep a running set of addresses and ports allocated for this request
         addrs_v6 = set()
         cports = set()
