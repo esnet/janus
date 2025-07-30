@@ -53,7 +53,7 @@ class WebsocketBackend:
             self.nodes = [node]
         return self.nodes
 
-    def create_service(self, value: dict):
+    def create_service_record(self, value: dict):
         from janus.api.models import SessionRequest
 
         args = value['args']
@@ -336,32 +336,10 @@ class WebsocketBackend:
                     self._send_message(js)
                     continue
 
-                if js['event'] == 'get_nodes':
-                    js['value'] = self.get_nodes(js['value'])
-                elif js['event'] == 'create_service_record':
-                    js['value'] = self.create_service(js['value'])
-                elif js['event'] == 'create_container':
-                    js['value'] = self.create_container(js['value'])
-                elif js['event'] == 'start_container':
-                    js['value'] = self.start_container(js['value'])
-                elif js['event'] == 'stop_container':
-                    js['value'] = self.stop_container(js['value'])
-                elif js['event'] == 'create_network':
-                    js['value'] = self.create_network(js['value'])
-                elif js['event'] == 'connect_network':
-                    js['value'] = self.connect_network(js['value'])
-                elif js['event'] == 'remove_network':
-                    js['value'] = self.remove_network(js['value'])
-                elif js['event'] == 'resolve_networks':
-                    js['value'] = self.resolve_networks(js['value'])
-                elif js['event'] == 'inspect_container':
-                    js['value'] = self.inspect_container(js['value'])
-                elif js['event'] == 'remove_container':
-                    js['value'] = self.remove_container(js['value'])
-                elif js['event'] == 'exec_create':
-                    js['value'] = self.exec_create(js['value'])
-                elif js['event'] == 'exec_start':
-                    js['value'] = self.exec_start(js['value'])
+                func = getattr(self, js['event'], None)
+
+                if func:
+                    js['value'] = func(js['value'])
                 else:
                     js['error'] = f"Event {js['event']} is not supported."
             except Exception as e:
