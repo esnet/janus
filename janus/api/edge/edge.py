@@ -21,6 +21,7 @@ class EdgeServerSocket:
         self.name = name
         self.sock: Server = sock
         self.mutex = Lock()
+        self.active = True
 
     def send(self, json_text):
         self.sock.send(json_text)
@@ -44,7 +45,12 @@ class JanusEdgeApi(Service):
         return EPType.EDGE
 
     def add_edge(self, name, sock: Server):
+        if name in self.edges:
+            temp: EdgeServerSocket = self.edges[name]
+            temp.active = False
+
         self.edges[name] = EdgeServerSocket(name, sock)
+        return self.edges[name]
 
     def get_edge(self, name) -> EdgeServerSocket:
         if name not in self.edges:

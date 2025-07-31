@@ -463,10 +463,10 @@ class ExecWebsocketServerSession:
                     r = self.ws_server.receive()
                     r = json.loads(r)
                     ret = r['value']
+                    self.receive_queue.put(ret)
+
                     if ret is None:
                         break
-
-                    self.receive_queue.put(ret)
         except Exception as e:
             log.exception(f"Error in exec receiver thread {e}:")
         finally:

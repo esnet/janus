@@ -47,7 +47,7 @@ def handle_websocket(sock):
             return
         try:
             cfg.sm.add_node(req)  # TODO AES add_node takes AddEndpointRequest and do we need to call add_node?
-            cfg.sm.service_map[EPType.EDGE].add_edge(req.name, sock)
+            edge_handle = cfg.sm.service_map[EPType.EDGE].add_edge(req.name, sock)
             log.info(f"Added edge {peer}: {req}")
         except Exception as e:
             import traceback
@@ -56,8 +56,12 @@ def handle_websocket(sock):
             sock.send(json.dumps({"error": f"Controller in trouble: {e}"}))
             return
 
-        while True:
-            time.sleep(10)
+        # noinspection PyProtectedMember
+        while edge_handle.sock.connected and edge_handle.active:
+            time.sleep(1)
+
+        log.warning(f"AGENT_REGISTER:inactive edge handle{peer}: {edge_handle.sock.connected}:{edge_handle.active}")
+        return
 
     if typ == WSType.EVENTS:
         peer = sock.sock.getpeername()
@@ -89,8 +93,12 @@ def handle_websocket(sock):
         output_thread.start()
 
         try:
-            while True:
-                data = sock.receive()
+            while output_thread.is_alive():
+                data = sock.receive(1)
+
+                if not data:
+                    continue
+
                 if data in ("exit", "quit", "\x03"):
                     break
                 send_queue.put(data)

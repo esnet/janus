@@ -21,6 +21,7 @@ class WebsocketBackend:
         self.handler = KubernetesApi()
         self._node_name = None
         self.nodes = list()
+        self.keep_running = True
 
     @property
     def node_name(self):
@@ -262,7 +263,7 @@ class WebsocketBackend:
             self._close(quiet=True)
             raise e
 
-    def run(self, runner):
+    def run(self):
         from janus.api.models_ws import EdgeAgentRegister
         from janus.api.constants import WSType, WSEPType
         import websocket
@@ -277,11 +278,6 @@ class WebsocketBackend:
         EdgeAgentRegister(**msg)
 
         log.info(f"{__name__}:registration={msg}")
-        # CTRL_HOST = os.getenv("JANUS_WEB_CTRL_HOST", "localhost")
-        # CTRL_PORT = os.getenv("JANUS_WEB_CTRL_PORT", "5000")
-        # CTRL_WS_PROTOCOL = os.getenv("CTRL_WS_PROTOCOL", "wss")
-        # JANUS_CONTROLLER_WS_URL = "{}://{}:{}".format(CTRL_WS_PROTOCOL, CTRL_HOST, CTRL_PORT)
-
         ws_url = self.properties.get('ws_url')  # f"{JANUS_CONTROLLER_WS_URL}/ws"
         log.info(f"{__name__}:controller is at ={ws_url}")
 
@@ -290,7 +286,7 @@ class WebsocketBackend:
         self.ws.send(json.dumps(msg))
         log.info(f"{__name__}:registered ok ....")
 
-        while runner.keep_running():
+        while self.keep_running:
             try:
                 log.debug(f"{__name__}:In while loop. Going to wait for messages ...")
                 data = self.ws.recv()
@@ -318,6 +314,9 @@ class WebsocketBackend:
                 if js['event'] == 'exec_stream':
                     from threading import Thread
                     session = self.exec_stream(js['value'])
+                    js['value'] = "created session"
+                    self._send_message(js)
+                    # noinspection PyUnusedLocal
                     receive_queue = session.receive_queue
 
                     def forward_output():
@@ -352,7 +351,6 @@ class WebsocketBackend:
 class WebsocketBackendRunner:
     def __init__(self, janus_config_path):
         self._stop = False
-        self._interval = 10
         self._th = None
         parser = ConfigParser(allow_no_value=True)
         parser.read(janus_config_path)
@@ -386,32 +384,28 @@ class WebsocketBackendRunner:
         self._stop = True
 
         if self.ws_backend.ws:
+            self.ws_backend.keep_running = False
             self.ws_backend.ws.close()
 
         self._th.join()
 
-    def keep_running(self):
-        return not self._stop
-
     def _run(self):
         import time
 
-        cnt = 0
         log.debug(f"Running {__name__}:stop={self._stop}")
 
         while not self._stop:
-            time.sleep(1)
-            cnt += 1
-            if cnt == self._interval:
-                try:
-                    self.ws_backend.run(self)
-                except OSError as e:
-                    log.error(f'OS Error running {__name__} : {e}')
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    log.error(f'Error running {__name__} : {e}')
+            time.sleep(10)
 
-                cnt = 0
+            try:
+                log.debug(f"{__name__} calling ws_backend.run:stop={self._stop}")
+                self.ws_backend.run()
+                log.debug(f"{__name__} ws_backend.returned XXXXXXXXXXXX:stop={self._stop}")
+            except OSError as e:
+                log.error(f'OS Error running {__name__} : {e}')
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                log.error(f'Error running {__name__} : {e}')
 
         log.info(f"Exiting {__name__}:stop={self._stop}")
