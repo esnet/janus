@@ -16,7 +16,7 @@ from janus.settings import cfg, AGENT_AUTO_TUNE
 log = logging.getLogger(__name__)
 
 
-class ServiceManager():
+class ServiceManager:
     def __init__(self, db):
         self._db = db
         self._am = AgentMonitor()
@@ -29,7 +29,7 @@ class ServiceManager():
         self._pubsub = Publisher()
 
     @property
-    def pubsub(self):
+    def pubsub(self) -> Publisher:
         return self._pubsub
 
     def _add_node_cb(self, node: dict, name, url):
@@ -70,6 +70,7 @@ class ServiceManager():
                 self._am.tune(ep.public_url, post=True)
             except Exception as e:
                 log.error(f"Could not apply auto-tuning, agent not running?: {e}")
+        return n
 
     def remove_node(self, node: dict = None, nname=None):
         if nname:

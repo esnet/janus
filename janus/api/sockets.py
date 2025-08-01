@@ -1,17 +1,16 @@
 import json
 import logging
-import queue
-import websocket
 from threading import Thread
 
 from janus.settings import cfg
-from janus.api.constants import WSType
+from janus.api.constants import WSType, EPType
 from janus.api.models_ws import WSExecStream, EdgeAgentRegister
 from janus.api.models import Node
 from janus.api.pubsub import Subscriber, TOPIC
 
 
 log = logging.getLogger(__name__)
+
 
 def handle_websocket(sock):
     data = sock.receive()
@@ -35,14 +34,42 @@ def handle_websocket(sock):
             sock.send(msg)
 
     if typ == WSType.AGENT_REGISTER:
+        import time
+
+        # sock is of type simple_websocket.ws.Server
         peer = sock.sock.getpeername()
         try:
             req = EdgeAgentRegister(**js)
-            cfg.sm.add_node(req)
         except Exception as e:
-            log.error(f"Invalid request: {e}")
+            log.error(f"Invalid request from {peer}: {e}: {js}")
             sock.send(json.dumps({"error": f"Invalid request: {e}"}))
             return
+
+        try:
+            from janus.api.jwt_utils import JwtUtils
+
+            JwtUtils.verify_token(req.jwt)
+        except Exception as e:
+            log.error(f"Invalid token from {peer}: {e}: {req.jwt}")
+            sock.send(json.dumps({"error": f"Invalid token: {e}"}))
+            return
+
+        try:
+            edge_handle = cfg.sm.add_node(req, sock=sock)
+            log.info(f"Added edge {peer}: {req.name}")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            log.error(f"Severe error add edge from {peer}: {e}")
+            sock.send(json.dumps({"error": f"Controller in trouble: {e}"}))
+            return
+
+        # noinspection PyProtectedMember
+        while edge_handle.sock.connected and edge_handle.active:
+            time.sleep(1)
+
+        log.warning(f"AGENT_REGISTER:inactive edge handle{peer}: {edge_handle.sock.connected}:{edge_handle.active}")
+        return
 
     if typ == WSType.EVENTS:
         peer = sock.sock.getpeername()
@@ -74,8 +101,12 @@ def handle_websocket(sock):
         output_thread.start()
 
         try:
-            while True:
-                data = sock.receive()
+            while output_thread.is_alive():
+                data = sock.receive(1)
+
+                if not data:
+                    continue
+
                 if data in ("exit", "quit", "\x03"):
                     break
                 send_queue.put(data)
