@@ -1,7 +1,5 @@
 import json
 import logging
-import queue
-import websocket
 from threading import Thread
 
 from janus.settings import cfg
@@ -12,6 +10,7 @@ from janus.api.pubsub import Subscriber, TOPIC
 
 
 log = logging.getLogger(__name__)
+
 
 def handle_websocket(sock):
     data = sock.receive()
@@ -45,10 +44,20 @@ def handle_websocket(sock):
             log.error(f"Invalid request from {peer}: {e}: {js}")
             sock.send(json.dumps({"error": f"Invalid request: {e}"}))
             return
+
+        try:
+            from janus.api.jwt_utils import JwtUtils
+
+            JwtUtils.verify_token(req.jwt)
+        except Exception as e:
+            log.error(f"Invalid token from {peer}: {e}: {req.jwt}")
+            sock.send(json.dumps({"error": f"Invalid token: {e}"}))
+            return
+
         try:
             cfg.sm.add_node(req)  # TODO AES add_node takes AddEndpointRequest and do we need to call add_node?
             edge_handle = cfg.sm.service_map[EPType.EDGE].add_edge(req.name, sock)
-            log.info(f"Added edge {peer}: {req}")
+            log.info(f"Added edge {peer}: {req.name}")
         except Exception as e:
             import traceback
             traceback.print_exc()

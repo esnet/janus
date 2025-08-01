@@ -23,11 +23,8 @@ from janus.api.sockets import handle_websocket
 app = Flask(__name__)
 sock = Sock(app)
 
-try:
-    logging.config.fileConfig(settings.LOG_CFG_PATH)
-except:
-    logging_conf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), 'config/logging.conf'))
-    logging.config.fileConfig(logging_conf_path)
+logging_conf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), 'config/logging.conf'))
+logging.config.fileConfig(logging_conf_path)
 log = logging.getLogger(__name__)
 
 
@@ -67,6 +64,7 @@ def parse_config(fpath):
     except Exception as e:
         raise AttributeError(f"Config file parser error: {e}")
     
+
 def register_api(name, title, version, desc, prefix, nslist):
     blueprint = Blueprint(name, __name__, url_prefix=prefix)
     api = Api(blueprint,
@@ -79,18 +77,27 @@ def register_api(name, title, version, desc, prefix, nslist):
         api.add_namespace(n)
     return api
 
+
+# noinspection PyShadowingNames
 def init(app):
     api = register_api("Janus", "The ESnet Janus container API", "0.1",
                        "REST endpoints for container provisioning and tuning",
                        settings.API_PREFIX, [])
-    if (cfg.is_agent):
+    if cfg.is_agent:
         api.add_namespace(agent_ns)
-    if (cfg.is_controller):
+    if cfg.is_controller:
         api.add_namespace(controller_ns)
 
+        from janus.api.jwt_utils import JwtUtils
+
+        JwtUtils.configure_namespace(controller_ns)
+        JwtUtils.configure_app(app)
+
+    # noinspection PyShadowingNames
     @sock.route("/ws")
     def WebSocket(sock):
         handle_websocket(sock)
+
 
 def main():
     parser = argparse.ArgumentParser(description='Janus Controller/Agent')
@@ -122,11 +129,11 @@ def main():
 
     if args.controller:
         try:
-            # Setup the Database Layer
+            # Set up the Database Layer
             db = DBLayer(path=args.database)
-            # Setup the Profile Manager
+            # Set up the Profile Manager
             pm = ProfileManager(db, args.profiles)
-            # Setup the Service Manager
+            # Set up the Service Manager
             sm = ServiceManager(db)
             # Save handles to these in our global config class
             cfg.setdb(db, pm, sm)
@@ -150,6 +157,7 @@ def main():
         if args.edge:
             from janus.remoting.ws_backend import WebsocketBackendRunner
 
+            log.info("Starting WebsocketBackendRunner ...")
             runner = WebsocketBackendRunner(args.config)
             runner.start()
 
@@ -159,7 +167,7 @@ def main():
     # signal closure for re-reading profiles
     def sighup_handler(signum, frame):
         if args.controller:
-            log.info(f"Caught HUP signal, reading profiles at {args.profiles}")
+            log.info(f"Caught HUP signal {signum}/{frame}, reading profiles at {args.profiles}")
             cfg.db.read_profiles(refresh=True)
     signal.signal(signal.SIGHUP, sighup_handler)
 

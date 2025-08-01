@@ -32,7 +32,7 @@ class WebsocketBackend:
         return self._node_name
 
     # noinspection PyUnusedLocal
-    def get_nodes(self,  value: dict):
+    def get_nodes(self, value: dict):
         from janus.api.constants import EPType
 
         refresh = False
@@ -188,7 +188,7 @@ class WebsocketBackend:
         log.info(f"{__name__}:connect network OK:{node.name}:{nid}:{cid}:{ret}")
         return ret
 
-    def remove_network(self,  value: dict):
+    def remove_network(self, value: dict):
         from janus.api.models import Node
 
         args = value['args']
@@ -271,15 +271,19 @@ class WebsocketBackend:
 
         msg = {"type": WSType.AGENT_REGISTER,
                "jwt": self.properties.get('jwt'),
-               "name": self.properties.get('name'),
+               "name": self.properties.get('name', None),
                "edge_type": WSEPType(1000 + self.eptype),
                "public_url": self.properties.get('public_url')}
 
-        EdgeAgentRegister(**msg)
+        reg = EdgeAgentRegister(**msg)
 
-        log.info(f"{__name__}:registration={msg}")
-        ws_url = self.properties.get('ws_url')  # f"{JANUS_CONTROLLER_WS_URL}/ws"
-        log.info(f"{__name__}:controller is at ={ws_url}")
+        log.info(f"{__name__}:edge_registration:name={reg.name}:type={reg.edge_type}")
+
+        if reg.jwt is None or len(reg.jwt) == 0:
+            raise Exception(f"jwt is not set jwt={reg.jwt}")
+
+        ws_url = self.properties.get('ws_url')
+        log.info(f"{__name__}:controller is at {ws_url}")
 
         import json
         self.ws = websocket.create_connection(ws_url, sslopt={"cert_reqs": ssl.CERT_NONE})
@@ -356,7 +360,7 @@ class WebsocketBackendRunner:
         parser.read(janus_config_path)
         properties = WebsocketBackendRunner._parse_from_config(parser)
         self.ws_backend = WebsocketBackend(properties)
-        log.info(f"Initialized {__name__}:{ properties}")
+        log.info(f"Initialized {__name__}:{properties['name']}")
 
     @staticmethod
     def _parse_from_config(parser: ConfigParser, agent_registration='AGENT_REGISTRATION'):
@@ -364,8 +368,8 @@ class WebsocketBackendRunner:
             raise Exception("Missing agent registration configuration")
 
         name = parser.get(agent_registration, 'AGENT_NAME', fallback=None)
-        public_url = parser.get(agent_registration, 'JWT', fallback=None)
-        jwt = parser.get(agent_registration, 'PUBLIC_URL', fallback=None)
+        jwt = parser.get(agent_registration, 'JWT', fallback=None)
+        public_url = parser.get(agent_registration, 'PUBLIC_URL', fallback=None)
         eptype = parser.get(agent_registration, 'ENDPOINT_TYPE', fallback=2)
         ws_url = parser.get(agent_registration, 'CONTROLLER_WS_URL',
                             fallback='wss://localhost:5000/ws')
