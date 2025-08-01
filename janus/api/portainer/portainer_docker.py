@@ -29,6 +29,9 @@ from janus.settings import cfg, IGNORE_EPS
 from janus.api.utils import (
     get_next_cport,
     get_next_sport,
+    format_data_ports,
+    get_data_ports,
+    get_exp_ports,
     get_next_vf,
     get_next_ipv4,
     get_next_ipv6,
@@ -579,7 +582,8 @@ class PortainerDockerApi(Service):
         nname = sreq.node.get('name')
         kwargs = sreq.kwargs
         qos = cfg.get_qos(prof["qos"]) if "qos" in prof else dict()
-        dpr = prof.settings.data_port_range
+        dpr = prof.settings.data_ports
+        expr = prof.settings.exposed_ports
         dnet = Network(prof.settings.data_net, nname)
         mnet = Network(prof.settings.mgmt_net, nname)
         priv = prof.settings.privileged
@@ -603,10 +607,9 @@ class PortainerDockerApi(Service):
         data_ipv6 = None
         cport = get_next_cport(node, prof, cports)
         sport = get_next_sport(node, prof, sports)
-        internal_port = prof.settings.internal_port
 
         if dpr and len(dpr) > 0:
-            dports = ",".join(f"{start},{end}" for (start, end) in dpr)
+            dports = format_data_ports(dpr)
         else:
             dports = ""
 
@@ -661,14 +664,14 @@ class PortainerDockerApi(Service):
                 "{}/tcp".format(sport): {}
             })
 
-        if internal_port:
-            for iport in internal_port:
+        if expr:
+            exp_ports = get_exp_ports(expr)
+            for port in exp_ports:
                 docker_kwargs["HostConfig"]["PortBindings"].update({
-                    "{}/tcp".format(iport): [
-                        {"HostPort": "{}".format(iport)}]
+                    "{}/tcp".format(port): [{"HostPort": "{}".format(port)}]
                 })
                 docker_kwargs["ExposedPorts"].update({
-                    "{}/tcp".format(iport): {}
+                    "{}/tcp".format(port): {}
                 })
 
         if mnet.name and not mnet.is_host():
@@ -751,10 +754,10 @@ class PortainerDockerApi(Service):
         else:
             docker_kwargs["Env"].append("DATA_IFACE={}".format(node['public_url']))
             if not mnet.is_host() and dpr:
-                for p in range(dpr[0], dpr[1]+1):
+                data_ports = get_data_ports(dpr)
+                for p in data_ports:
                     docker_kwargs["HostConfig"]["PortBindings"].update(
-                        {"{}/tcp".format(p):
-                         [{"HostPort": "{}".format(p)}]}
+                        {"{}/tcp".format(p): [{"HostPort": "{}".format(p)}]}
                     )
                     docker_kwargs["ExposedPorts"].update({"{}/tcp".format(p): {}})
 

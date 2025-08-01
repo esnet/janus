@@ -136,35 +136,80 @@ def get_next_vf(node, dnet):
     return vf
 
 def get_next_cport(node, prof, curr=set()):
-    if not prof.settings.ctrl_port_range:
+    ctrl_ports = prof.settings.ctrl_ports
+    if not ctrl_ports:
         return None
-    alloced = node['allocated_ports']
+    alloced = set(node['allocated_ports'])
     avail = set()
-    for start, end in prof.settings.ctrl_port_range:
-        avail |= set(range(start, end + 1))
-    avail = avail - set(alloced) - curr
+    for item in ctrl_ports:
+        if isinstance(item, int):
+            avail.add(item)
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            start, end = item
+            avail.update(range(start, end + 1))
+        else:
+            raise ValueError(f"Invalid ctrl_port entry: {item}")
+    avail = avail - alloced - curr
     if avail:
-        # port = next(iter(avail))
-        sorted_avail = sorted(avail)
-        port = sorted_avail[0] # Always get the smallest available port
+        port = min(avail)
         curr.add(port)
         return str(port)
     raise Exception("No more ctrl ports available")
 
 def get_next_sport(node, prof, curr=set()):
-    if not prof.settings.serv_port_range:
+    serv_ports = prof.settings.serv_ports
+    if not serv_ports:
         return None
-    alloced = node['allocated_ports']
+    alloced = set(node['allocated_ports'])
     avail = set()
-    for start, end in prof.settings.serv_port_range:
-        avail |= set(range(start, end + 1))
-    avail = avail - set(alloced) - curr
+    for item in serv_ports:
+        if isinstance(item, int):
+            avail.add(item)
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            start, end = item
+            avail.update(range(start, end + 1))
+        else:
+            raise ValueError(f"Invalid serv_port entry: {item}")
+    avail = avail - alloced - curr
     if avail:
-        sorted_avail = sorted(avail)
-        port = sorted_avail[0] # Always get the smallest available port
+        port = min(avail)
         curr.add(port)
         return str(port)
     raise Exception("No more serv ports available")
+
+def get_exp_ports(exposed_ports):
+    ports = []
+    for item in exposed_ports:
+        if isinstance(item, int):
+            ports.append(item)
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            ports.extend(range(item[0], item[1] + 1))
+        else:
+            raise ValueError(f"Invalid exposed_ports entry: {item}")
+    return ports
+
+def format_data_ports(data_ports):
+    ports = []
+    for item in data_ports:
+        if isinstance(item, int):
+            ports.append(str(item))
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            ports.append(f"{item[0]},{item[1]}")
+        else:
+            raise ValueError(f"Invalid data_ports entry: {item}")
+    dprs =  ",".join(ports)
+    return dprs
+
+def get_data_ports(data_ports):
+    ports = []
+    for item in data_ports:
+        if isinstance(item, int):
+            ports.append(item)
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            ports.extend(range(item[0], item[1] + 1))
+        else:
+            raise ValueError(f"Invalid data_ports entry: {item}")
+    return ports
 
 def get_next_ipv4(net, curr, cidr=False, key=None, name=None):
     dbase = cfg.db

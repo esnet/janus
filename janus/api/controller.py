@@ -404,7 +404,7 @@ class Exec(Resource):
             ret.update({"response": None})
             if start:
                 res = handler.exec_start(Node(**node), ret)
-                ret['response'] = res['response']
+                ret['response'] = res.get('response')
         except Exception as e:
             log.error(f"Could not exec in container on {nname}: {e.reason}: {e.body}")
             return {"error": e.reason}, 503
