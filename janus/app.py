@@ -63,7 +63,7 @@ def parse_config(fpath):
             cfg.plugins.append(SENSEMetaRunner(cfg=cfg, properties=sense_properties))
     except Exception as e:
         raise AttributeError(f"Config file parser error: {e}")
-    
+
 
 def register_api(name, title, version, desc, prefix, nslist):
     blueprint = Blueprint(name, __name__, url_prefix=prefix)
@@ -155,10 +155,10 @@ def main():
         cfg._agent = True
 
         if args.edge and (not settings.FLASK_DEBUG or (settings.FLASK_DEBUG and werkzeug.serving.is_running_from_reloader())):
-                from janus.remoting.ws_backend import WebsocketBackendRunner
-                log.info("Starting WebsocketBackendRunner ...")
-                runner = WebsocketBackendRunner(args.config)
-                runner.start()
+            from janus.remoting.ws_backend import WebsocketBackendRunner
+            log.info("Starting WebsocketBackendRunner ...")
+            runner = WebsocketBackendRunner(args.config)
+            runner.start()
 
     if args.dryrun:
         cfg._dry_run = True

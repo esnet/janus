@@ -44,14 +44,6 @@ class JanusEdgeApi(Service):
     def type(self):
         return EPType.EDGE
 
-    def add_edge(self, name, sock: Server):
-        if name in self.edges:
-            temp: EdgeServerSocket = self.edges[name]
-            temp.active = False
-
-        self.edges[name] = EdgeServerSocket(name, sock)
-        return self.edges[name]
-
     def get_edge(self, name) -> EdgeServerSocket:
         if name not in self.edges:
             raise Exception(f'edge {name} is not registered')
@@ -108,8 +100,13 @@ class JanusEdgeApi(Service):
         pass
 
     def create_node(self, ep: AddEndpointRequest, **kwargs):
-        log.info(f"NOT_IMPLEMENTED:create node {ep.name}")   # TODO
-        pass
+        sock = kwargs.get('sock')
+        if ep.name in self.edges:
+            temp: EdgeServerSocket = self.edges[ep.name]
+            temp.active = False
+
+        self.edges[ep.name] = EdgeServerSocket(ep.name, sock)
+        return self.edges[ep.name]
 
     def create_container(self, node: Node, image: str, cname: str = None, **kwargs):
         edge = self.get_edge(node.name)

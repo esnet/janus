@@ -70,6 +70,7 @@ class ServiceManager:
                 self._am.tune(ep.public_url, post=True)
             except Exception as e:
                 log.error(f"Could not apply auto-tuning, agent not running?: {e}")
+        return n
 
     def remove_node(self, node: dict = None, nname=None):
         if nname:

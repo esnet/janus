@@ -644,16 +644,6 @@ class JanusAuth(Resource, QueryUser):
         log.debug(req)
         return (users, groups)
 
-    # def query_builder(self, id=None, name=None):
-    #     qs = list()
-    #     if id:
-    #         qs.append(eq(where('id'), id))
-    #     elif name:
-    #         qs.append(eq(where('name'), name))
-    #     if len(qs):
-    #         return reduce(lambda a, b: a & b, qs)
-    #     return None
-
     @httpauth.login_required
     @ns.doc(params={"resource": {"example": "|".join(Constants.AUTH_RESOURCES+["jwt"]),
                                  "description": "Resource type to get auth for"}})

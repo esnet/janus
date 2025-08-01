@@ -55,8 +55,7 @@ def handle_websocket(sock):
             return
 
         try:
-            cfg.sm.add_node(req)  # TODO AES add_node takes AddEndpointRequest and do we need to call add_node?
-            edge_handle = cfg.sm.service_map[EPType.EDGE].add_edge(req.name, sock)
+            edge_handle = cfg.sm.add_node(req, sock=sock)
             log.info(f"Added edge {peer}: {req.name}")
         except Exception as e:
             import traceback
