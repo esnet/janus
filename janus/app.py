@@ -154,12 +154,11 @@ def main():
     if args.agent:
         cfg._agent = True
 
-        if args.edge:
-            from janus.remoting.ws_backend import WebsocketBackendRunner
-
-            log.info("Starting WebsocketBackendRunner ...")
-            runner = WebsocketBackendRunner(args.config)
-            runner.start()
+        if args.edge and (not settings.FLASK_DEBUG or (settings.FLASK_DEBUG and werkzeug.serving.is_running_from_reloader())):
+                from janus.remoting.ws_backend import WebsocketBackendRunner
+                log.info("Starting WebsocketBackendRunner ...")
+                runner = WebsocketBackendRunner(args.config)
+                runner.start()
 
     if args.dryrun:
         cfg._dry_run = True
@@ -175,7 +174,8 @@ def main():
                                                                        settings.API_PREFIX))
     log.info("Using database file {}".format(cfg.get_dbpath()))
 
-    init(app)
+    if not settings.FLASK_DEBUG or (settings.FLASK_DEBUG and werkzeug.serving.is_running_from_reloader()):
+        init(app)
     if settings.FLASK_DEBUG:
         app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
 

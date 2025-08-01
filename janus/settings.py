@@ -21,7 +21,7 @@ AGENT_AUTO_TUNE = True
 log = logging.getLogger(__name__)
 
 try:
-    FLASK_DEBUG = True #os.environ['DEBUG']
+    FLASK_DEBUG = os.environ['DEBUG']
 except:
     FLASK_DEBUG = False
 
