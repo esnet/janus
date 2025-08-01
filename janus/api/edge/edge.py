@@ -108,7 +108,7 @@ class JanusEdgeApi(Service):
         pass
 
     def create_node(self, ep: AddEndpointRequest, **kwargs):
-        log.info(ep)
+        log.info(f"NOT_IMPLEMENTED:create node {ep.name}")   # TODO
         pass
 
     def create_container(self, node: Node, image: str, cname: str = None, **kwargs):
