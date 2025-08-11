@@ -111,6 +111,5 @@ def handle_websocket(sock):
                     break
                 send_queue.put(data)
         finally:
-            sock.send(json.dumps({"status": "session_ended"}))
             session.close()
             output_thread.join(2)
