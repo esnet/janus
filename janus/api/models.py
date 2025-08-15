@@ -1,5 +1,5 @@
-from pydantic import BaseModel, SerializeAsAny, root_validator, create_model
-from typing import List, Optional, Union
+from pydantic import BaseModel, SerializeAsAny, root_validator, create_model, validator
+from typing import List, Optional, Union, Tuple
 
 
 class QoSProfileSettings(BaseModel):
@@ -53,10 +53,10 @@ class ContainerProfileSettings(BaseModel):
     cpu_set: Optional[str] = None
     mgmt_net: Optional[Union[dict, str]] = None
     data_net: Optional[Union[dict, str]] = None
-    internal_port: Optional[str] = None
-    ctrl_port_range: Optional[List[int]] = None
-    data_port_range: Optional[List[int]] = None
-    serv_port_range: Optional[List[int]] = None
+    exposed_ports: Optional[List[Union[int, Tuple[int, int]]]] = None
+    data_ports: Optional[List[Union[int, Tuple[int, int]]]] = None
+    ctrl_ports: Optional[List[Union[int, Tuple[int, int]]]] = None
+    serv_ports: Optional[List[Union[int, Tuple[int, int]]]] = None
     features: Optional[List[str]] = None
     volumes: Optional[List[str]] = None
     environment: Optional[List[str]] = None
