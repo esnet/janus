@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 
 
 from kubernetes import client, config
@@ -35,6 +36,8 @@ class KubernetesApi(Service):
     NS = "default"
     DEF_MEM = "4Gi"
     DEF_CPU = "2"
+    RETRIES = 12
+    SLEEP_TIME = 5
 
     def __init__(self):
         super().__init__()
@@ -252,27 +255,64 @@ class KubernetesApi(Service):
                                  namespace=self._get_namespace(node.name))
         pod = v1.read_namespaced_pod(name=container,
                                      namespace=self._get_namespace(node.name))
-        metadata = pod.metadata
+        attempt = 0
+        retries = self.RETRIES
+
+        while pod.status.phase == 'Pending' and attempt < retries:
+            attempt += 1
+            log.debug(f"Starting container={pod.metadata.name}:phase={pod.status.phase}:attempt={attempt}/{retries}")
+            pod = v1.read_namespaced_pod(name=container, namespace=self._get_namespace(node.name))
+
+            if pod.status.phase == 'Running':
+                break
+
+            time.sleep(self.SLEEP_TIME)
+
+        if pod.status.phase != 'Running':
+            wait_time = attempt * self.SLEEP_TIME
+            log.error(f'Starting container={pod.metadata.name}:phase={pod.status.phase}:wait_time={wait_time}s')
+            raise Exception(f'Starting container={pod.metadata.name}:phase={pod.status.phase}:wait_time={wait_time}s')
+
         cpod = {
-            "name": metadata.name,
+            "name": pod.metadata.name,
             "phase": pod.status.phase
         }
 
-        log.info(f"Pod started container: {cpod}")
+        log.info(f"Started container: {cpod}:wait_time={attempt * self.SLEEP_TIME}s")
         return cpod
 
     def stop_container(self, node: Node, container, **kwargs):
         api_client = self._get_client(node.name)
         api = client.CoreV1Api(api_client)
         pod = api.delete_namespaced_pod(str(container), self._get_namespace(node.name))
-        metadata = pod.metadata
+        deleted = False
+        attempt = 0
+        retries = self.RETRIES
+
+        while attempt < retries:
+            try:
+                pod = api.read_namespaced_pod(name=container, namespace=self._get_namespace(node.name))
+            except ApiException as ae:
+                deleted = str(ae.status) == "404"
+
+                if deleted:
+                    break
+
+                log.warning(f'Stopping container={pod.metadata.name}:{ae}:attempt={attempt}/{retries}')
+
+            attempt += 1
+            time.sleep(self.SLEEP_TIME)
+
+        if not deleted:
+            log.error(f'Stopping container={pod.metadata.name}:wait_time={attempt * self.SLEEP_TIME}s')
+            raise Exception(f'Stopping container={pod.metadata.name}:wait_time={attempt * self.SLEEP_TIME}s')
 
         cpod = {
-            "name": metadata.name,
+            "name": pod.metadata.name,
             "phase": pod.status.phase
         }
 
-        log.info(f"Pod has been deleted: {cpod}")
+        log.info(f"Stopped container: {cpod}:wait_time={attempt * self.SLEEP_TIME}s")
         return cpod
 
     def inspect_container(self, node: Node, container, **kwargs):
