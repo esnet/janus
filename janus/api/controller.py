@@ -21,7 +21,8 @@ from janus.api.models_api import (
     SessionRequest,
     ProfileRequest,
     ExecRequest,
-    AuthRequest
+    AuthRequest,
+    ExecStatus
 )
 from janus.api.utils import (
     Constants
@@ -39,6 +40,7 @@ sessionRequestModel = ns.schema_model('SessionRequestModel', SessionRequest.mode
 profileRequestModel = ns.schema_model('ProfileRequestModel', ProfileRequest.model_json_schema())
 execRequestModel = ns.schema_model('ExecRequestModel', ExecRequest.model_json_schema())
 authRequestModel = ns.schema_model('AuthRequestModel', AuthRequest.model_json_schema())
+execStatusModel = ns.schema_model('ExecStatusModel', ExecStatus.model_json_schema())
 
 
 @httpauth.error_handler
@@ -401,12 +403,35 @@ class Exec(Resource):
         try:
             handler = cfg.sm.get_handler(node)
             ret = handler.exec_create(Node(**node), container, **kwargs)
+            print(f"==============ret1 in post==========={ret}")
             ret.update({"response": None})
             if start:
                 res = handler.exec_start(Node(**node), ret)
                 ret['response'] = res.get('response')
         except Exception as e:
             log.error(f"Could not exec in container on {nname}: {e.reason}: {e.body}")
+            return {"error": e.reason}, 503
+        return ret
+
+    @httpauth.login_required
+    @ns.expect(execStatusModel, validate=True)
+    def get(self):
+        """
+        Check the status of an exec instance
+        """
+        req = ns.payload
+        log.debug(req)
+
+        nname = req["node"]
+        dbase = cfg.db
+        table = dbase.get_table('nodes')
+        node = dbase.get(table, name=nname)
+
+        try:
+            handler = cfg.sm.get_handler(node)
+            ret = handler.exec_status(Node(**node), req['exec_id'])
+        except Exception as e:
+            log.error(f"Could not get status of exec instance in container on {nname}: {e.reason}: {e.body}")
             return {"error": e.reason}, 503
         return ret
 

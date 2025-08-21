@@ -90,3 +90,7 @@ class Service(ABC):
     @abstractmethod
     def exec_stream(self, node: Node, container, eid, **kwargs):
         pass
+
+    @abstractmethod
+    def exec_status(self, node: Node, eid):
+        pass

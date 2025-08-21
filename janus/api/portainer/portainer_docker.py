@@ -441,6 +441,17 @@ class PortainerDockerApi(Service):
         ws_url = f"{cfg.PORTAINER_WS}/exec?token={self.client.jwt}&id={exec_id}&endpointId={node.id}"
         return ExecSession(ws_url)
 
+    def exec_status(self, node: Node, exec_id, **kwargs):
+        kwargs['_return_http_data_only'] = True
+        res = self._call(
+            "/endpoints/{}/docker/exec/{}/json".format(node.id, exec_id),
+            "GET",
+            body=None,
+            **kwargs
+        )
+        string = json.loads(res.data)
+        return string
+
     @auth
     def _call(self, url, method, body, headers=[], **kwargs):
         all_params = ['body', 'query']  # noqa: E501
