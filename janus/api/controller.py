@@ -22,7 +22,6 @@ from janus.api.models_api import (
     ProfileRequest,
     ExecRequest,
     AuthRequest,
-    ExecStatus
 )
 from janus.api.utils import (
     Constants
@@ -40,7 +39,6 @@ sessionRequestModel = ns.schema_model('SessionRequestModel', SessionRequest.mode
 profileRequestModel = ns.schema_model('ProfileRequestModel', ProfileRequest.model_json_schema())
 execRequestModel = ns.schema_model('ExecRequestModel', ExecRequest.model_json_schema())
 authRequestModel = ns.schema_model('AuthRequestModel', AuthRequest.model_json_schema())
-execStatusModel = ns.schema_model('ExecStatusModel', ExecStatus.model_json_schema())
 
 
 @httpauth.error_handler
@@ -403,7 +401,6 @@ class Exec(Resource):
         try:
             handler = cfg.sm.get_handler(node)
             ret = handler.exec_create(Node(**node), container, **kwargs)
-            print(f"==============ret1 in post==========={ret}")
             ret.update({"response": None})
             if start:
                 res = handler.exec_start(Node(**node), ret)
@@ -414,25 +411,33 @@ class Exec(Resource):
         return ret
 
     @httpauth.login_required
-    @ns.expect(execStatusModel, validate=True)
+    @ns.doc(params={
+        "node": "Name of the node",
+        "exec_id": "Exec instance ID"
+    })
     def get(self):
         """
         Check the status of an exec instance
         """
-        req = ns.payload
-        log.debug(req)
+        log.debug(request)
+        nname = request.args.get('node', None)
+        exec_id = request.args.get('exec_id', None)
 
-        nname = req["node"]
+        if not nname or not exec_id:
+            return {"error": "Both 'node' and 'exec_id' query parameters are required"}, 400
+
         dbase = cfg.db
         table = dbase.get_table('nodes')
         node = dbase.get(table, name=nname)
 
         try:
             handler = cfg.sm.get_handler(node)
-            ret = handler.exec_status(Node(**node), req['exec_id'])
+            ret = handler.exec_status(Node(**node), exec_id)
         except Exception as e:
-            log.error(f"Could not get status of exec instance in container on {nname}: {e.reason}: {e.body}")
-            return {"error": e.reason}, 503
+            reason = getattr(e, "reason", str(e))
+            body = getattr(e, "body", "")
+            log.error(f"Could not get status of exec instance in container on {nname}: {reason}: {body}")
+            return {"error": reason}, 503
         return ret
 
 

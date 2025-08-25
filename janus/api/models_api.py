@@ -35,11 +35,6 @@ class ExecRequest(BaseModel):
     tty: Optional[bool] = False
 
 
-class ExecStatus(BaseModel):
-    node: str
-    exec_id: str
-
-
 class AuthRequest(BaseModel):
     users: List[str]
     groups: List[str]

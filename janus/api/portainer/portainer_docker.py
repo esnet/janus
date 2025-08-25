@@ -7,6 +7,7 @@ import websocket
 import shlex
 from threading import Thread
 from concurrent.futures.thread import ThreadPoolExecutor
+from json import JSONDecodeError
 
 from portainer_api.api_client import ApiClient
 from portainer_api.rest import ApiException
@@ -449,8 +450,26 @@ class PortainerDockerApi(Service):
             body=None,
             **kwargs
         )
-        string = json.loads(res.data)
-        return string
+        if isinstance(res, dict):
+            return res
+
+            # Ensure we have data to parse
+        if not hasattr(res, "data") or not res.data:
+            return {
+                "error": "Empty response from Portainer/Docker",
+                "exec_id": exec_id,
+                "node": getattr(node, "name", None)
+            }
+
+        try:
+            return json.loads(res.data)
+        except JSONDecodeError:
+            return {
+                "error": "Invalid JSON returned from Portainer/Docker",
+                "raw_response": res.data.decode("utf-8", errors="replace"),
+                "exec_id": exec_id,
+                "node": getattr(node, "name", None)
+            }
 
     @auth
     def _call(self, url, method, body, headers=[], **kwargs):
