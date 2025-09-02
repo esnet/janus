@@ -450,26 +450,34 @@ class PortainerDockerApi(Service):
             body=None,
             **kwargs
         )
+
         if isinstance(res, dict):
-            return res
+            raw_data = res
+        else:
+            if not hasattr(res, "data") or not res.data:
+                return {
+                    "error": "Empty response from Portainer/Docker",
+                    "exec_id": exec_id,
+                    "node": getattr(node, "name", None)
+                }
 
-            # Ensure we have data to parse
-        if not hasattr(res, "data") or not res.data:
-            return {
-                "error": "Empty response from Portainer/Docker",
-                "exec_id": exec_id,
-                "node": getattr(node, "name", None)
-            }
+            try:
+                raw_data = json.loads(res.data)
+            except JSONDecodeError:
+                return {
+                    "error": "Invalid JSON returned from Portainer/Docker",
+                    "raw_response": res.data.decode("utf-8", errors="replace"),
+                    "exec_id": exec_id,
+                    "node": getattr(node, "name", None)
+                }
 
-        try:
-            return json.loads(res.data)
-        except JSONDecodeError:
-            return {
-                "error": "Invalid JSON returned from Portainer/Docker",
-                "raw_response": res.data.decode("utf-8", errors="replace"),
-                "exec_id": exec_id,
-                "node": getattr(node, "name", None)
-            }
+        return {
+            "exec_id": raw_data.get("ID"),
+            "running": raw_data.get("Running"),
+            "command": [raw_data.get("ProcessConfig", {}).get("entrypoint")] +
+                       (raw_data.get("ProcessConfig", {}).get("arguments") or []),
+            "container_id": raw_data.get("ContainerID"),
+        }
 
     @auth
     def _call(self, url, method, body, headers=[], **kwargs):
