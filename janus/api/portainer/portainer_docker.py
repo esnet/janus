@@ -7,6 +7,7 @@ import websocket
 import shlex
 from threading import Thread
 from concurrent.futures.thread import ThreadPoolExecutor
+from json import JSONDecodeError
 
 from portainer_api.api_client import ApiClient
 from portainer_api.rest import ApiException
@@ -440,6 +441,43 @@ class PortainerDockerApi(Service):
     def exec_stream(self, node, container, exec_id):
         ws_url = f"{cfg.PORTAINER_WS}/exec?token={self.client.jwt}&id={exec_id}&endpointId={node.id}"
         return ExecSession(ws_url)
+
+    def exec_status(self, node: Node, exec_id, **kwargs):
+        kwargs['_return_http_data_only'] = True
+        res = self._call(
+            "/endpoints/{}/docker/exec/{}/json".format(node.id, exec_id),
+            "GET",
+            body=None,
+            **kwargs
+        )
+
+        if isinstance(res, dict):
+            raw_data = res
+        else:
+            if not hasattr(res, "data") or not res.data:
+                return {
+                    "error": "Empty response from Portainer/Docker",
+                    "exec_id": exec_id,
+                    "node": getattr(node, "name", None)
+                }
+
+            try:
+                raw_data = json.loads(res.data)
+            except JSONDecodeError:
+                return {
+                    "error": "Invalid JSON returned from Portainer/Docker",
+                    "raw_response": res.data.decode("utf-8", errors="replace"),
+                    "exec_id": exec_id,
+                    "node": getattr(node, "name", None)
+                }
+
+        return {
+            "exec_id": raw_data.get("ID"),
+            "running": raw_data.get("Running"),
+            "command": [raw_data.get("ProcessConfig", {}).get("entrypoint")] +
+                       (raw_data.get("ProcessConfig", {}).get("arguments") or []),
+            "container_id": raw_data.get("ContainerID"),
+        }
 
     @auth
     def _call(self, url, method, body, headers=[], **kwargs):

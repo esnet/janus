@@ -21,7 +21,7 @@ from janus.api.models_api import (
     SessionRequest,
     ProfileRequest,
     ExecRequest,
-    AuthRequest
+    AuthRequest,
 )
 from janus.api.utils import (
     Constants
@@ -408,6 +408,36 @@ class Exec(Resource):
         except Exception as e:
             log.error(f"Could not exec in container on {nname}: {e.reason}: {e.body}")
             return {"error": e.reason}, 503
+        return ret
+
+    @httpauth.login_required
+    @ns.doc(params={
+        "node": "Name of the node",
+        "exec_id": "Exec instance ID"
+    })
+    def get(self):
+        """
+        Check the status of an exec instance
+        """
+        log.debug(request)
+        nname = request.args.get('node', None)
+        exec_id = request.args.get('exec_id', None)
+
+        if not nname or not exec_id:
+            return {"error": "Both 'node' and 'exec_id' query parameters are required"}, 400
+
+        dbase = cfg.db
+        table = dbase.get_table('nodes')
+        node = dbase.get(table, name=nname)
+
+        try:
+            handler = cfg.sm.get_handler(node)
+            ret = handler.exec_status(Node(**node), exec_id)
+        except Exception as e:
+            reason = getattr(e, "reason", str(e))
+            body = getattr(e, "body", "")
+            log.error(f"Could not get status of exec instance in container on {nname}: {reason}: {body}")
+            return {"error": reason}, 503
         return ret
 
 
