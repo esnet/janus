@@ -474,6 +474,7 @@ class PortainerDockerApi(Service):
         return {
             "exec_id": raw_data.get("ID"),
             "running": raw_data.get("Running"),
+            "exit_code": raw_data.get("ExitCode"),
             "command": [raw_data.get("ProcessConfig", {}).get("entrypoint")] +
                        (raw_data.get("ProcessConfig", {}).get("arguments") or []),
             "container_id": raw_data.get("ContainerID"),
