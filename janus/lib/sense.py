@@ -125,7 +125,8 @@ class SENSEMetaManager(DBHandler):
         net_names = session_manager.create_networks(session_requests)
         sense_session['networks'] = net_names
         janus_session_id = session_manager.create_session(
-            None, None, session_requests, requests, owner, users=sense_session["users"]
+            None, None, session_requests, requests, owner,
+            users=sense_session["users"], session_name=sense_session["name"]
         )
 
         return [janus_session_id]
@@ -209,9 +210,10 @@ class SENSEMetaManager(DBHandler):
                 clusters.append(target['name'])
 
         if not alias:
-            alias = f'sense-janus-{"-".join(instance_id.split("-")[0:2])}'
+            alias = f'janus-{"-".join(instance_id.split("-")[0:2])}'
         else:
-            alias = f'sense-janus-{alias.replace(" ", "-")}-{"-".join(instance_id.split("-")[0:2])}'
+            alias = alias.replace(" ", "-").replace(",", "-")
+            alias = f'janus-{alias}-{"-".join(instance_id.split("-")[0:2])}'
 
         users = list()
         for target in targets:
@@ -260,7 +262,8 @@ class SENSEMetaManager(DBHandler):
                 targets = config['targets']
                 command = config['command']
                 task_id = task['uuid']
-                log.debug(f'RETRIEVED_TASK:command={command}:task_id={task_id}:targets={targets}')
+                alias = config['context']['alias']
+                log.debug(f'RETRIEVED_TASK:command={command}:task_id={task_id}:alias={alias}:{len(targets)}')
 
                 if command not in ['handle-sense-instance', 'instance-termination-notice']:
                     self.sense_api_handler.reject_task(task_id, targets, f"unknown command:{command}")
@@ -273,10 +276,12 @@ class SENSEMetaManager(DBHandler):
                 sense_session = sense_sessions[0] if sense_sessions else dict()
 
                 if sense_session and 'status' in sense_session and sense_session['status'] == 'PENDING':
-                    log.debug(f'DELAYING_HANDLING_RETRIEVED_TASK:command={command}:task_id={task_id}:targets={targets}')
+                    log.debug(
+                        f'DELAYING_HANDLING_RETRIEVED_TASK:command={command}:task_id={task_id}:targets={targets}')
                     continue
 
-                log.debug(f'HANDLING_RETRIEVED_TASK:command={command}:task_id={task_id}:targets={targets}')
+                log.debug(
+                    f'HANDLING_RETRIEVED_TASK:command={command}:task_id={task_id}:alias={alias}:targets={targets}')
                 users = list()
 
                 for target in targets:

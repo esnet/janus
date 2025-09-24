@@ -116,40 +116,45 @@ class LogCollection(Resource, QueryUser):
 
 @ns.route('/active', methods=['GET'])
 @ns.route('/active/<int:aid>')
+@ns.route('/active/<path:name>', methods=['GET'])
 class ActiveCollection(Resource, QueryUser):
 
     @httpauth.login_required
     @ns.doc(params={"fields": "Comma separated list of fields to return"})
-    def get(self, aid=None, nname=None):
+    def get(self, aid=None, name=None):
         """
         Get active sessions
         """
         (user, group) = get_authinfo(request)
-        query = self.query_builder(user, group, {"id": aid})
+        query = self.query_builder(user, group, {"id": aid, "name": name})
         fields = request.args.get('fields')
         dbase = cfg.db
         table = dbase.get_table('active')
+
         if query and aid:
             res = dbase.get(table, query=query)
             if not res:
                 return {"error": "Not found"}, 404
-            if (fields):
+
+            if fields:
                 return {k: v for k, v in res.items() if k in fields.split(',')}
-            else:
-                return res
+
+            return res
         elif query:
-            return dbase.search(table, query=query)
+            res = dbase.search(table, query=query)
         else:
             res = dbase.all(table)
-            if (fields):
-                ret = list()
-                for r in res:
-                    if not r:
-                        continue
-                    ret.append({k: v for k, v in r.items() if k in fields.split(',')})
-                return ret
-            else:
-                return res
+
+        if fields:
+            ret = list()
+            fields = fields.split(',')
+            for r in res:
+                if not r:
+                    continue
+                ret.append({k: v for k, v in r.items() if k in fields})
+            return ret
+
+        return res
 
     @ns.response(204, 'Allocation successfully deleted.')
     @ns.response(404, 'Not found.')
@@ -271,11 +276,12 @@ class NodeCollection(Resource, QueryUser):
 @ns.response(400, 'Bad Request')
 @ns.response(503, 'Service unavailable')
 @ns.route('/create')
+@ns.route('/create/<path:name>')
 class Create(Resource, QueryUser):
 
     @httpauth.login_required
     @ns.expect([sessionRequestModel], validate=True)
-    def post(self):
+    def post(self, name=None):
         """
         Create one or more new sessions.
         """
@@ -296,7 +302,9 @@ class Create(Resource, QueryUser):
             session_manager.validate_request(req)
             session_requests = session_manager.parse_requests(user, group, req)
             session_manager.create_networks(session_requests)
-            janus_sessionid = session_manager.create_session(user, group, session_requests, req, current_user, users)
+            janus_sessionid = session_manager.create_session(
+                user, group, session_requests, req, current_user, users, session_name=name
+            )
             return {janus_sessionid: dict(id=janus_sessionid)}
         except InvalidSessionRequestException as e:
             raise BadRequest(f'Creating session failed: {e}')

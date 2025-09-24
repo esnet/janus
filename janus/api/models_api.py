@@ -18,7 +18,7 @@ class SessionRequest(BaseModel):
     arguments: Optional[str] = None
     remove_container: Optional[bool] = False
     kwargs: Optional[dict] = dict()
-    overrides: Optional[dict] = dict()
+    overrides: Optional[List[dict]] = list()
 
 
 class ProfileRequest(BaseModel):

@@ -75,6 +75,12 @@ class Service(ABC):
     def start_container(self, node: Node, container, service=None, **kwargs):
         pass
 
+    def check_container_running(self, node: Node, container, **kwargs):
+        pass
+
+    def check_container_stopped(self, node: Node, container, **kwargs):
+        pass
+
     @abstractmethod
     def stop_container(self, node: Node, container, **kwargs):
         pass
