@@ -1,10 +1,7 @@
 import json
 import logging
 import os
-<<<<<<< Updated upstream
-=======
 import uuid
->>>>>>> Stashed changes
 import time
 
 
@@ -12,6 +9,7 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from kubernetes.config import KUBE_CONFIG_DEFAULT_LOCATION
 from kubernetes.stream import stream
+from kubernetes.stream.ws_client import WSClient
 
 from janus.api.constants import Constants
 from janus.api.constants import EPType
@@ -28,7 +26,8 @@ from janus.api.utils import (
     get_next_ipv6,
     get_cpu,
     get_mem,
-    is_subset
+    is_subset,
+    ExecKubeSession
 )
 from janus.settings import cfg
 
@@ -329,10 +328,6 @@ class KubernetesApi(Service):
         pass
 
     def exec_create(self, node: Node, container, **kwargs):
-        from kubernetes.stream import stream
-        from kubernetes.stream.ws_client import WSClient
-        from janus.api.utils import ExecKubeSession
-
         api_client = self._get_client(node.name)
         api = client.CoreV1Api(api_client)
 
