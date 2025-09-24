@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 
 class KubernetesApi(Service):
     CNI_VERSION = "0.3.1"
-    NS = "default"
+    NS = "janus"
     DEF_MEM = "4Gi"
     DEF_CPU = "2"
     RETRIES = 12
@@ -551,7 +551,34 @@ class KubernetesApi(Service):
         }
 
         if constraints.nodeName:
-            kwargs['spec'].update({"nodeName": constraints.nodeName})
+            # kwargs['spec'].update({"nodeName": constraints.nodeName}) # Does not work anymore with nautilus.
+            node_affinity = client.V1NodeAffinity(
+                required_during_scheduling_ignored_during_execution=client.V1NodeSelector(
+                    node_selector_terms=[
+                        client.V1NodeSelectorTerm(
+                            match_expressions=[
+                                client.V1NodeSelectorRequirement(
+                                    key='kubernetes.io/hostname',  # Standard node name label
+                                    operator='In',
+                                    values=[constraints.nodeName]  # The node you want the pod to land on
+                                )
+                            ]
+                        )
+                    ]
+                )
+            )
+
+            affinity = client.V1Affinity(node_affinity=node_affinity)
+            sanitized_affinity = client.ApiClient().sanitize_for_serialization(affinity)
+            kwargs['spec'].update({"affinity": sanitized_affinity})
+            toleration = client.V1Toleration(
+               key="nautilus.io/reservation",
+               operator="Equal", 
+               value="sense",
+               effect="NoSchedule"
+            )
+            sanitized_toleration = client.ApiClient().sanitize_for_serialization(toleration)
+            kwargs['spec'].update({"tolerations": [sanitized_toleration]})
 
         if mnet.is_host():
             kwargs['spec'].update({"hostNetwork": True})
