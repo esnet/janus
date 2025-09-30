@@ -190,7 +190,8 @@ class SessionManager(QueryUser):
 
         return net_names
 
-    def create_session(self, user, group, session_requests: List[SessionRequest], req, current_user, users=None):
+    def create_session(self, user, group, session_requests: List[SessionRequest],
+                       req, current_user, users=None, session_name=None):
         users = users or list()
         db_id = precommit_db()
         svcs = dict()  # get an ID from the DB
@@ -206,10 +207,10 @@ class SessionManager(QueryUser):
                 if nname not in svcs:
                     svcs[nname] = list()
 
-                if s.profile.name.startswith('sense-janus'):
-                    sname = cname_from_id(db_id, i + 1, s.profile.name)
+                if session_name:
+                    sname = cname_from_id(db_id, i + 1, session_name)
                 else:
-                    sname = cname_from_id(db_id, i + 1, 'janus' + '-' + s.profile.name)
+                    sname = cname_from_id(db_id, i + 1, 'janus-' + s.profile.name)
 
                 overrides = s.overrides
 
@@ -244,6 +245,7 @@ class SessionManager(QueryUser):
 
         record = dict(uuid=str(uuid.uuid4()), user=user if user else current_user, state=State.INITIALIZED.name)
         record['id'] = db_id
+        record['name'] = session_name
         record['services'] = svcs
         record['request'] = req
         record['users'] = user.split(",") if user else users
@@ -303,13 +305,15 @@ class SessionManager(QueryUser):
         # start the services
         error = False
         services = svc.get("services", dict())
+
+        for k in services:
+            if not dbase.get(ntable, name=k):
+                raise ResourceNotFoundException(f"Node not found: {k}")
+
         for k, v in services.items():
+            node = dbase.get(ntable, name=k)
+
             for s in v:
-                node = dbase.get(ntable, name=k)
-
-                if not node:
-                    raise ResourceNotFoundException(f"Node not found: {k}")
-
                 handler = cfg.sm.get_handler(node)
                 cid = s["container_id"]
                 log.debug(f"Starting container {cid} on {k}")
@@ -320,16 +324,35 @@ class SessionManager(QueryUser):
 
                     try:
                         handler.start_container(Node(**node), cid, s)  # TODO Handle qos
-                    except PortainerApiException as e:
-                        log.error(f"Portainer error for {k}: {e.body}")
-                        error_svc(s, e.body)
+                    except Exception as e:
+                        body = e.body if hasattr(e, 'body') else e
+                        log.error(f"Could not start container {k}: {body}")
+                        error_svc(s, body)
                         error = True
                         continue
+
+                    # Trim logged errors
+                    errcnt = len(s.get('errors'))
+                    if not errcnt - orig_errcnt:
+                        s['errors'] = list()
+                    else:
+                        s['errors'] = s['errors'][orig_errcnt - errcnt:]
+
+
+            for s in v:
+                handler = cfg.sm.get_handler(node)
+                cid = s["container_id"]
+                log.debug(f"Checking container {cid} on {k}")
+
+                if not cfg.dryrun:
+                    orig_errcnt = len(s.get('errors'))
+
+                    try:
+                        handler.check_container_running(Node(**node), cid)
                     except Exception as e:
-                        import traceback
-                        traceback.print_exc()
-                        log.error(f"Could not start container on {k}: {e}")
-                        error_svc(s, e)
+                        body = e.body if hasattr(e, 'body') else e
+                        log.error(f"Could not check on container {k}: {body}")
+                        error_svc(s, body)
                         error = True
                         continue
 
@@ -342,18 +365,6 @@ class SessionManager(QueryUser):
                         s['errors'] = list()
                     else:
                         s['errors'] = s['errors'][orig_errcnt - errcnt:]
-                # End of Ansible job
-
-        if not error and svc.get('peer'):
-            peer = svc.get('peer')
-
-            if isinstance(svc.get('peer'), list):
-                peer = peer[0]
-
-            try:
-                self.start_session(peer['id'])
-            except Exception as e:
-                log.error(f"Could not start peer session using {peer['id']}: {e}")
 
         svc['state'] = State.MIXED.name if error else State.STARTED.name
         return commit_db(svc, session_id, realized=True)
@@ -395,17 +406,22 @@ class SessionManager(QueryUser):
                         error = True
                         continue
 
+            for s in v:
+                cid = s['container_id']
+                node = dbase.get(ntable, name=k)
+                log.debug(f"Stopping container {cid} on {k}")
+
+                if not cfg.dryrun:
+                    try:
+                        cfg.sm.get_handler(node).check_container_stopped(Node(**node), cid, **{'service': s})
+                    except Exception as e:
+                        log.error(f"Could not stop container on {k}: {e}")
+                        error_svc(s, e)
+                        error = True
+                        continue
+
         svc['state'] = State.MIXED.name if error else State.STOPPED.name
         svc = commit_db(svc, session_id, delete=True, realized=True)
-
-        if peers := svc.get('peer'):
-            assert isinstance(peers, list)
-            for peer in peers:
-                try:
-                    self.stop_session(peer['id'])
-                except Exception as e:
-                    log.error(f"Could not stop peer session using {peer['id']}: {e}")
-
         return svc
 
     def delete(self, aid, force=False, user=None, group=None):

@@ -17,6 +17,24 @@ class SenseConstants:
 
 
 class SenseUtils:
+
+    @staticmethod
+    def to_alias(alias, instance_id):
+        if not alias:
+            return f'janus-{instance_id}'
+
+        undesired = "'\",!_~+*^%@#$();/\\ "
+        translation_table = str.maketrans(undesired, ":" * len(undesired))
+        alias = alias.translate(translation_table)
+        alias = alias.replace(":", "")
+        alias = alias[0:20]
+
+        if not alias:
+            return f'janus-{instance_id}'
+
+        alias = f'janus-{alias}-{"-".join(instance_id.split("-")[0:2])}'
+        return alias.lower()
+
     @staticmethod
     def parse_from_config(cfg: JanusConfig, parser: ConfigParser, plugin_section='PLUGINS'):
         if plugin_section in parser:

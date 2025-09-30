@@ -255,12 +255,27 @@ class KubernetesApi(Service):
                                  namespace=self._get_namespace(node.name))
         pod = v1.read_namespaced_pod(name=container,
                                      namespace=self._get_namespace(node.name))
+        cpod = {
+            "name": pod.metadata.name,
+            "phase": pod.status.phase
+        }
+
+        log.info(f"Created container: {cpod}.")
+        return cpod
+
+    def check_container_running(self, node: Node, container, **kwargs):
+        api_client = self._get_client(node.name)
+        v1 = client.CoreV1Api(api_client)
+        pod = v1.read_namespaced_pod(name=container, namespace=self._get_namespace(node.name))
+
         attempt = 0
         retries = self.RETRIES
 
         while pod.status.phase == 'Pending' and attempt < retries:
             attempt += 1
-            log.debug(f"Starting container={pod.metadata.name}:phase={pod.status.phase}:attempt={attempt}/{retries}")
+            log.debug(
+                f"Checking container running:cpod={pod.metadata.name}:phase={pod.status.phase}"
+                f":attempt={attempt}/{retries}")
             pod = v1.read_namespaced_pod(name=container, namespace=self._get_namespace(node.name))
 
             if pod.status.phase == 'Running':
@@ -270,50 +285,58 @@ class KubernetesApi(Service):
 
         if pod.status.phase != 'Running':
             wait_time = attempt * self.SLEEP_TIME
-            log.error(f'Starting container={pod.metadata.name}:phase={pod.status.phase}:wait_time={wait_time}s')
-            raise Exception(f'Starting container={pod.metadata.name}:phase={pod.status.phase}:wait_time={wait_time}s')
+            log.error(f'Checking container running:cpod={pod.metadata.name}:phase={pod.status.phase}'
+                      f':wait_time={wait_time}s')
+            raise Exception(f'Checking container running:cpod={pod.metadata.name}:phase={pod.status.phase}'
+                            f':wait_time={wait_time}s')
 
         cpod = {
             "name": pod.metadata.name,
             "phase": pod.status.phase
         }
 
-        log.info(f"Started container: {cpod}:wait_time={attempt * self.SLEEP_TIME}s")
+        log.info(f"Checking container's running:{cpod} took {attempt * self.SLEEP_TIME}s")
         return cpod
 
     def stop_container(self, node: Node, container, **kwargs):
         api_client = self._get_client(node.name)
         api = client.CoreV1Api(api_client)
         pod = api.delete_namespaced_pod(str(container), self._get_namespace(node.name))
+        cpod = {
+            "name": pod.metadata.name,
+            "phase": pod.status.phase
+        }
+
+        log.info(f"Stopped container: {cpod}")
+        return cpod
+
+    def check_container_stopped(self, node: Node, container, **kwargs):
+        api_client = self._get_client(node.name)
+        api = client.CoreV1Api(api_client)
         deleted = False
         attempt = 0
         retries = self.RETRIES
 
         while attempt < retries:
             try:
-                pod = api.read_namespaced_pod(name=container, namespace=self._get_namespace(node.name))
+                api.read_namespaced_pod(name=container, namespace=self._get_namespace(node.name))
             except ApiException as ae:
                 deleted = str(ae.status) == "404"
 
                 if deleted:
                     break
 
-                log.warning(f'Stopping container={pod.metadata.name}:{ae}:attempt={attempt}/{retries}')
+                log.warning(f'Checking for deleted:container={container}:{ae}:attempt={attempt}/{retries}')
 
             attempt += 1
             time.sleep(self.SLEEP_TIME)
 
         if not deleted:
-            log.error(f'Stopping container={pod.metadata.name}:wait_time={attempt * self.SLEEP_TIME}s')
-            raise Exception(f'Stopping container={pod.metadata.name}:wait_time={attempt * self.SLEEP_TIME}s')
+            log.error(f'Checking for deleted:container={container}:wait_time={attempt * self.SLEEP_TIME}s')
+            raise Exception(f'Checking for deleted:container={container}:wait_time={attempt * self.SLEEP_TIME}s')
 
-        cpod = {
-            "name": pod.metadata.name,
-            "phase": pod.status.phase
-        }
 
-        log.info(f"Stopped container: {cpod}:wait_time={attempt * self.SLEEP_TIME}s")
-        return cpod
+        log.info(f"Checking for deleted:container={container} took {attempt * self.SLEEP_TIME}s")
 
     def inspect_container(self, node: Node, container, **kwargs):
         pass
