@@ -209,12 +209,6 @@ class SENSEMetaManager(DBHandler):
             else:
                 clusters.append(target['name'])
 
-        if not alias:
-            alias = f'janus-{"-".join(instance_id.split("-")[0:2])}'
-        else:
-            alias = alias.replace(" ", "-").replace(",", "-")
-            alias = f'janus-{alias}-{"-".join(instance_id.split("-")[0:2])}'
-
         users = list()
         for target in targets:
             users.extend(target['principals'])
@@ -263,6 +257,9 @@ class SENSEMetaManager(DBHandler):
                 command = config['command']
                 task_id = task['uuid']
                 alias = config['context']['alias']
+                instance_id = config['context']['uuid']
+                alias = SenseUtils.to_alias(alias, instance_id)
+                config['context']['alias'] = alias
                 log.debug(f'RETRIEVED_TASK:command={command}:task_id={task_id}:alias={alias}:{len(targets)}')
 
                 if command not in ['handle-sense-instance', 'instance-termination-notice']:
@@ -270,7 +267,6 @@ class SENSEMetaManager(DBHandler):
                     rejected_tasks.append(task)
                     continue
 
-                instance_id = config['context']['uuid']
                 sense_sessions = self.find_sense_session(sense_session_key=instance_id)
                 assert len(sense_sessions) <= 1
                 sense_session = sense_sessions[0] if sense_sessions else dict()
