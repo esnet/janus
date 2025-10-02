@@ -356,13 +356,18 @@ class KubernetesApi(Service):
             "session": ExecKubeSession(ws_client)
         }
 
-        return {"exec_id": exec_id, "response": "websocket created"}
+        return {"Id": exec_id, "response": "websocket created"}
 
     def exec_start(self, node: Node, ectx, **kwargs):
         return ectx
 
-    def exec_stream(self, node: Node, container, eid, **kwargs):
-        return self._exec_map.get(node.name).get(container)
+    def exec_stream(self, node: Node, container, exec_id, **kwargs):
+        entry = self._exec_map.get(exec_id)
+
+        if not entry:
+            return None
+
+        return entry["session"]
 
     def exec_status(self, node: Node, exec_id, **kwargs):
         entry = self._exec_map.get(exec_id)
@@ -373,8 +378,8 @@ class KubernetesApi(Service):
                 "node": getattr(node, "name", None)
             }
 
-        session = entry.get("session")
-        running = getattr(session, "is_open", lambda: False)()
+        session: ExecKubeSession = entry["session"]
+        running = session.ws_client.is_open()
 
         # Update stored running state
         entry["running"] = running
