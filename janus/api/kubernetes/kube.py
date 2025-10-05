@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import uuid
 import time
 
 
@@ -8,6 +9,7 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from kubernetes.config import KUBE_CONFIG_DEFAULT_LOCATION
 from kubernetes.stream import stream
+from kubernetes.stream.ws_client import WSClient
 
 from janus.api.constants import Constants
 from janus.api.constants import EPType
@@ -24,7 +26,8 @@ from janus.api.utils import (
     get_next_ipv6,
     get_cpu,
     get_mem,
-    is_subset
+    is_subset,
+    ExecKubeSession
 )
 from janus.settings import cfg
 
@@ -348,36 +351,70 @@ class KubernetesApi(Service):
         pass
 
     def exec_create(self, node: Node, container, **kwargs):
-        from kubernetes.stream.ws_client import WSClient
-        from janus.api.utils import ExecKubeSession
-
         api_client = self._get_client(node.name)
         api = client.CoreV1Api(api_client)
-        ws_client: WSClient = stream(api.connect_get_namespaced_pod_exec,
-                                     name=container,
-                                     namespace=self._get_namespace(node.name),
-                                     command=kwargs.get("Cmd"),
-                                     container=container,
-                                     stderr=kwargs.get("AttachStderr", True),
-                                     stdin=kwargs.get("AttachStdin", True),
-                                     stdout=kwargs.get("AttachStdout", True),
-                                     tty=kwargs.get("Tty", False),
-                                     _preload_content=False
-                                     )
 
-        if not self._exec_map.get(node.name):
-            self._exec_map[node.name] = dict()
-            self._exec_map[node.name][container] = ExecKubeSession(ws_client)
-        else:
-            self._exec_map[node.name][container] = ExecKubeSession(ws_client)
+        ws_client: WSClient = stream(
+            api.connect_get_namespaced_pod_exec,
+            name=container,
+            namespace=self._get_namespace(node.name),
+            command=kwargs.get("Cmd"),
+            container=container,
+            stderr=kwargs.get("AttachStderr", True),
+            stdin=kwargs.get("AttachStdin", True),
+            stdout=kwargs.get("AttachStdout", True),
+            tty=kwargs.get("Tty", False),
+            _preload_content=False
+        )
 
-        return {"response": "websocket created"}
+        exec_id = str(uuid.uuid4())
+        self._exec_map[exec_id] = {
+            "node": node.name,
+            "pod_name": container,
+            "container": container,
+            "command": kwargs.get("Cmd"),
+            "start_time": time.time(),
+            "running": True,
+            "exit_code": None,
+            "session": ExecKubeSession(ws_client)
+        }
+
+        return {"Id": exec_id, "response": "websocket created"}
 
     def exec_start(self, node: Node, ectx, **kwargs):
         return ectx
 
-    def exec_stream(self, node: Node, container, eid, **kwargs):
-        return self._exec_map.get(node.name).get(container)
+    def exec_stream(self, node: Node, container, exec_id, **kwargs):
+        entry = self._exec_map.get(exec_id)
+
+        if not entry:
+            return None
+
+        return entry["session"]
+
+    def exec_status(self, node: Node, exec_id, **kwargs):
+        entry = self._exec_map.get(exec_id)
+        if not entry:
+            return {
+                "error": "Exec ID not found",
+                "exec_id": exec_id,
+                "node": getattr(node, "name", None)
+            }
+
+        session: ExecKubeSession = entry["session"]
+        running = session.ws_client.is_open()
+
+        # Update stored running state
+        entry["running"] = running
+
+        return {
+            "exec_id": exec_id,
+            "running": running,
+            "exit_code": entry.get("exit_code"),
+            "command": entry.get("command"),
+            "pod_name": entry.get("pod_name"),
+            "container": entry.get("container")
+        }
 
     @staticmethod
     def to_cnet(net):
