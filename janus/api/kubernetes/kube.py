@@ -631,12 +631,19 @@ class KubernetesApi(Service):
             affinity = client.V1Affinity(node_affinity=node_affinity)
             sanitized_affinity = client.ApiClient().sanitize_for_serialization(affinity)
             kwargs['spec'].update({"affinity": sanitized_affinity})
+            # toleration = client.V1Toleration(
+            #   key="nautilus.io/reservation",
+            #   operator="Equal", 
+            #   value="sense",
+            #   effect="NoSchedule"
+            # )
+
             toleration = client.V1Toleration(
                key="nautilus.io/reservation",
-               operator="Equal", 
-               value="sense",
+               operator="Exists",
                effect="NoSchedule"
             )
+
             sanitized_toleration = client.ApiClient().sanitize_for_serialization(toleration)
             kwargs['spec'].update({"tolerations": [sanitized_toleration]})
 

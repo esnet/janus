@@ -32,7 +32,16 @@ class SenseUtils:
         if not alias:
             return f'janus-{instance_id}'
 
-        alias = f'janus-{alias}-{"-".join(instance_id.split("-")[0:2])}'
+        if alias.startswith("-"):
+            alias = f'janus{alias}'
+        else:
+            alias = f'janus-{alias}'
+
+        if alias.endswith("-"):
+            alias = f'{alias}{"-".join(instance_id.split("-")[0:2])}'
+        else:
+            alias = f'{alias}-{"-".join(instance_id.split("-")[0:2])}'
+
         return alias.lower()
 
     @staticmethod
