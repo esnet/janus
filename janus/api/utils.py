@@ -441,6 +441,7 @@ class ExecSession:
 class ExecKubeSession:
     def __init__(self, ws_client: WSClient):
         self.ws_client = ws_client
+        self.output = []
         self.receive_queue = queue.Queue()
         self.send_queue = queue.Queue()
         self._sender = Thread(target=self._send_loop, daemon=True)
@@ -468,6 +469,7 @@ class ExecKubeSession:
             while self.ws_client.is_open():
                 self.ws_client.update(1)
                 data = self.ws_client.read_all()
+                self.output.append(data)
                 self.receive_queue.put(data)
         except Exception as e:
             log.exception(f"Error in exec receiver thread {e}:")

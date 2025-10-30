@@ -353,7 +353,6 @@ class KubernetesApi(Service):
     def exec_create(self, node: Node, container, **kwargs):
         api_client = self._get_client(node.name)
         api = client.CoreV1Api(api_client)
-
         ws_client: WSClient = stream(
             api.connect_get_namespaced_pod_exec,
             name=container,
@@ -378,6 +377,7 @@ class KubernetesApi(Service):
             "exit_code": None,
             "session": ExecKubeSession(ws_client)
         }
+
 
         return {"Id": exec_id, "response": "websocket created"}
 
@@ -413,7 +413,8 @@ class KubernetesApi(Service):
             "exit_code": entry.get("exit_code"),
             "command": entry.get("command"),
             "pod_name": entry.get("pod_name"),
-            "container": entry.get("container")
+            "container": entry.get("container"),
+            "output": session.output
         }
 
     @staticmethod
@@ -568,6 +569,7 @@ class KubernetesApi(Service):
     # noinspection PyTypeChecker
     def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports, **kwargs):
         data_net_overrides = kwargs
+        volume_overides = data_net_overrides.get('volume', {})
         srec = dict()
         node = sreq.node
         prof = sreq.profile
@@ -609,6 +611,20 @@ class KubernetesApi(Service):
                 ]
             }
         }
+
+        if isinstance(prof.settings.volumes, list) and prof.settings.volumes:
+            vprof = cfg.pm.get_profile(Constants.VOL, prof.settings.volumes[0], None, None)
+            volume_name = volume_overides.get('name', vprof.settings.source)
+            mount_path = volume_overides.get('mountPath', vprof.settings.target)
+            claim_name = volume_overides.get('claimName', volume_name)
+            volumes = [
+                {'name': volume_name, 'persistentVolumeClaim': {'claimName': claim_name}},
+            ]
+            kwargs['spec'].update({"volumes": volumes})
+            volume_mounts = [
+                {'name': volume_name, 'mountPath': mount_path}
+            ]
+            kwargs['spec']['containers'][0]['volumeMounts'] = volume_mounts
 
         if constraints.nodeName:
             # kwargs['spec'].update({"nodeName": constraints.nodeName}) # Does not work anymore with nautilus.

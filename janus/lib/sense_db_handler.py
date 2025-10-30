@@ -370,14 +370,17 @@ class DBHandler(object):
     def update_janus_sessions(self, sense_session: dict):
         for network_profile_name in sense_session['network_profile']:
             network_profiles = self.find_network_profiles(name=network_profile_name)
-            assert len(network_profiles) == 1
-            network_profiles[0]['users'] = sense_session['users']
+
+            if network_profiles:
+                network_profiles[0]['users'] = sense_session['users']
+
             self.save_network_profile(network_profiles[0])
 
         for host_profile_name in sense_session['host_profile']:
             host_profiles = self.find_host_profiles(name=host_profile_name)
-            assert len(host_profiles) == 1
-            host_profiles[0]['users'] = sense_session['users']
+
+            if host_profiles:
+                host_profiles[0]['users'] = sense_session['users']
             self.save_host_profile(host_profiles[0])
 
         for janus_session in self.find_janus_session(host_profile_names=sense_session['host_profile']):
