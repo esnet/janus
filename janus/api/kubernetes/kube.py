@@ -361,14 +361,16 @@ class KubernetesApi(Service):
         meta = net.get('metadata')
         name = meta.get('name')
         spec = json.loads(net.get('spec').get('config'))
-        plugins = spec.get('plugins')[0]
+        plugins = spec.get('plugins', dict())
         snets = list()
-        if plugins.get('ipam') and plugins.get('ipam').get('addresses'):
-            for a in plugins.get('ipam').get('addresses'):
-                snets.append({
-                    'Subnet': a.get('address'),
-                    'Gateway': a.get('gateway')
-                })
+        if plugins and isinstance(list, plugins):
+            plugins = plugins[0]
+            if plugins.get('ipam') and plugins.get('ipam').get('addresses'):
+                for a in plugins.get('ipam').get('addresses'):
+                    snets.append({
+                        'Subnet': a.get('address'),
+                        'Gateway': a.get('gateway')
+                    })
 
         cnet = {
             'name': name,
