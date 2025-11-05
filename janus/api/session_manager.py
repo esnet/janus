@@ -437,6 +437,25 @@ class SessionManager(QueryUser):
         if doc is None:
             return
 
+        if True: # AES use force to delete the kube network attachments (IRI)?
+            for k, v in doc['services'].items():
+                n = dbase.get(nodes, name=k)
+                if not n:
+                    raise ResourceNotFoundException(f"Node {k} not found")
+
+                if not cfg.dryrun:
+                    handler = cfg.sm.get_handler(n)
+
+                    for s in v:
+                        data_net_name = s.get('data_net_name')
+
+                        if data_net_name:
+                            try:
+                                handler.remove_network(Node(**n), data_net_name)
+                            except (KubeApiException, PortainerApiException) as ae:
+                                if str(ae.status) != "404":
+                                    log.warning(f"Could not remove network {data_net_name} on {k}:{ae}")
+
         futures = list()
 
         with ThreadPoolExecutor(max_workers=8) as executor:
