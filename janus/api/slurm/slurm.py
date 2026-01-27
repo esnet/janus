@@ -56,7 +56,7 @@ def send_event(func):
 class JanusSlurmApi(Service):
     DEF_MEM = "4G"
     DEF_CPU = "2"
-    DEF_VER = "v0.0.38"
+    DEF_VER = "v0.0.42"
 
     def __init__(self):
         self.api_name = os.getenv('SLURM_NAME')
@@ -92,7 +92,7 @@ class JanusSlurmApi(Service):
 
     def get_nodes(self, nname=None, cb=None, refresh=False):
         ret = list()
-        if not self._config:
+        if not self._config or nname:
             return ret
         api_client = self._get_client()
         try:

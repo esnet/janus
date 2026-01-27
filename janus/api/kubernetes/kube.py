@@ -41,9 +41,9 @@ class KubernetesApi(Service):
 
     def __init__(self):
         super().__init__()
-        self.api_key = os.getenv('KUBE_API_KEY')
-        self.api_cluster_url = os.getenv('KUBE_CLUSTER_URL')
-        self.api_cluster_name = os.getenv('KUBE_CLUSTER_NAME')
+        self.api_key = os.getenv('KUBE_API_KEY', None)
+        self.api_cluster_url = os.getenv('KUBE_CLUSTER_URL', None)
+        self.api_cluster_name = os.getenv('KUBE_CLUSTER_NAME', None)
         self.api_namespace = os.getenv('KUBE_NAMESPACE')
         self.config = None
         self._exec_map = dict()
