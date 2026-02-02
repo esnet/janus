@@ -1,7 +1,6 @@
 # Janus Controller
 
-A container (Portainer Docker) controller with profiles for common Data Transfer
-Node (DTN) capabilities. Support DTN-as-a-Service deployments.
+Lightweight, profile-based container orchestration with various backends, including Kubernetes and Portainer support. Janus also supports DTN-as-a-Service deployments with Agent host tuning.
 
 ## Build Instructions
 ```
