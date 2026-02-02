@@ -1,0 +1,56 @@
+name: BuildDockerImageAndTest 
+
+on:
+  workflow_dispatch:
+
+env:
+  janus_image: janus:cicd
+  KUBE_TOKEN: ${{ secrets.KUBE_TOKEN }}
+  RUN_TEST_SENSE: ${{ vars.RUN_TEST_SENSE }}
+
+jobs:
+  DockerBuildAndTest:
+    runs-on: ubuntu-22.04
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: cicd/docker/Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.janus_image }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new
+
+      - name: Save Kube Token 
+        if: false
+        run: |
+          mkdir -p ${{ github.workspace }}/.kube
+          echo ${{ env.KUBE_TOKEN }} | base64 --decode > ${{ github.workspace }}/.kube/config
+          ls -l ${{ github.workspace }}/.kube/config
+
+      - name: Validate KubeToken 
+        if: false
+        run: |
+          docker run --rm -v ${{ github.workspace }}/.kube:/root/.kube -t ${{ env.janus_image }} kubectl get net-attach-def
+
+      - name: Run Sense Kubernetes Tests
+        if: ${{ env.RUN_TEST_SENSE == 'true' }}
+        run: |
+          docker run --rm -v ${{ github.workspace }}/tests:/tests -v ${{ github.workspace }}/.kube:/root/.kube -w /tests -t ${{ env.janus_image }} ./run_sense_test.sh 
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache

@@ -1,15 +1,15 @@
-version: '3.7'
 services:
   portainer-ce:
     image: portainer/portainer-ce
     container_name: portainer-ce
     restart: unless-stopped
+    command: --admin-password $$2y$$05$$YPtwKQG4eZb/reXBR1P/we.I7AKfK2oJsL69CIbWyjvf8r9woedcS
     volumes:
       - portainer_data:/data
     expose:
       - 9000
     ports:
-      - "9000:9000"
+      - "[::1]:9000:9000"
     networks:
       - dtnaas
 
@@ -23,23 +23,26 @@ services:
     expose:
       - 9001
     ports:
-      - "9001:9001"
-    network_mode: bridge
+      - "[::1]:9001:9001"
+    networks:
+      - dtnaas
 
   controller:
-    image: dtnaas/controller
+    image: dtnaas/controller:sense-plugin
     container_name: janus-controller
     restart: unless-stopped
     environment:
+      - SENSE_AUTH_OVERRIDE=/etc/janus/sense-o-auth.yaml
+      - PYTHONUNBUFFERED=1
       - PORT=5000
       - DEBUG=1
     volumes:
-      - /opt/janus/controller:/opt/janus
-      - /etc/janus:/etc/janus
+      - ./..:/opt/janus
+      - ./../janus/config:/etc/janus
     expose:
       - 5000
     ports:
-      - "5000:5000"
+      - "[::1]:5000:5000"
     networks:
       - dtnaas
 
@@ -47,15 +50,31 @@ services:
     image: dtnaas/agent
     container_name: janus-agent
     restart: unless-stopped
+    privileged: true
     environment:
+      - PYTHONUNBUFFERED=1
       - AGENT_BIND=0.0.0.0
       - AGENT_PORT=5050
       - AGENT_SSL=--ssl
     expose:
       - 5050
     ports:
-      - "5050:5050"
+      - "[::1]:5050:5050"
     network_mode: host
+
+  janus-web:
+    image: dtnaas/janus-web:0.3rc1
+    container_name: janus-web
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - JANUS_WEB_CTRL_HOST=controller
+    expose:
+      - 8000
+    ports:
+      - "8000:8000"
+    networks:
+      - dtnaas
 
 volumes:
   portainer_data:

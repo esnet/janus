@@ -8,14 +8,15 @@ from tinydb import TinyDB, Query
 from janus import settings
 from janus.settings import cfg
 from janus.api.utils import handle_image
-from janus.api.portainer_docker import PortainerDockerApi
+from janus.api.portainer import PortainerDockerApi
+from janus.api.models import Node
 from portainer_api.rest import ApiException
 
 
 log = logging.getLogger(__name__)
 
 class AgentMonitor(object):
-    def __init__(self, client):
+    def __init__(self, client=None):
         self._th = None
         self._stop = False
         self._client = client
@@ -30,8 +31,8 @@ class AgentMonitor(object):
         self._stop = True
         self._th.join()
 
-    def start_agent(self, n):
-        log.info(f"Attempting to start agent {n['name']}")
+    def start_agent(self, n: Node):
+        log.info(f"Attempting to start agent {n.name}")
         img = settings.AGENT_IMAGE
         docker_kwargs = {
             "HostConfig": {
@@ -43,31 +44,29 @@ class AgentMonitor(object):
             "Env": [f"AGENT_PORT={settings.AGENT_PORT}"]
         }
         try:
-            ret = self._dapi.get_containers(n['id'])
+            ret = self._dapi.get_containers(n)
             for i in ret:
                 if i['Image'] == settings.AGENT_IMAGE:
-                    log.info(f"Agent container is already running on {n['name']}, check firewall?")
+                    log.info(f"Agent container is already running on {n.name}, check firewall?")
                     return
             handle_image(n, img, self._dapi)
-            ret = self._dapi.create_container(n['id'], img, **docker_kwargs)
-            self._dapi.start_container(n['id'], ret['Id'])
+            ret = self._dapi.create_container(n, img, **docker_kwargs)
+            self._dapi.start_container(n, ret['Id'])
         except ApiException as e:
-            log.error(f"Could not start agent container on {n['name']}: {e.reason}: {e.body}")
+            log.error(f"Could not start agent container on {n.name}: {e.reason}: {e.body}")
 
-    def check_agent(self, n, url=None):
-        url = url if url else n['public_url']
+    def check_agent(self, n: Node, url):
         try:
             ret = requests.get("{}://{}:{}/api/janus/agent/node".format(settings.AGENT_PROTO,
                                                                         url,
                                                                         settings.AGENT_PORT),
                                verify=settings.AGENT_SSL_VERIFY,
                                timeout=2)
-            return n, ret
+            return ret
         except Exception as e:
             raise e
 
-    def tune(self, n, url=None, post=False):
-        url = url if url else n['public_url']
+    def tune(self, url, post=False):
         if post:
             fn = requests.post
             log.debug("Applying agent tuning at {}".format(url))
@@ -80,7 +79,7 @@ class AgentMonitor(object):
                      verify=settings.AGENT_SSL_VERIFY,
                      timeout=2,
                      auth=(settings.AGENT_USERNAME, settings.AGENT_PASSWORD))
-            return n, ret
+            return ret
         except Exception as e:
             raise e
 

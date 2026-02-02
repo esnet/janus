@@ -1,0 +1,37 @@
+networks:
+  bridge:
+    driver: bridge
+  host:
+    driver: host
+  none:
+    driver: "null"
+
+  macvlan-tester:
+   driver: macvlan
+   ipam:
+    config:
+     -
+      subnet: 10.10.1.0/24
+      gateway: 10.10.1.1
+     -
+      subnet: 2001:400:2001:1111::/126
+      gateway: 2001:400:2001:1111::1
+   options:
+     parent: enp0s3
+     vlan: 1000
+     mtu: 1400
+
+  vlan-tester:
+   driver: vlan
+   ipam:
+    config:
+     -
+      subnet: 192.168.2.0/24
+      gateway: 192.168.2.1
+     -
+      subnet: 2001:400:2001:1110::/126
+      gateway: 2001:400:2001:1110::1
+   options:
+     parent: enp0s3
+     vlan: 2000
+     mtu: 1412

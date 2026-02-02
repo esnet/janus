@@ -4,9 +4,10 @@ from pydantic import ValidationError
 from janus.settings import cfg
 
 from flask import request, jsonify
-from flask_restplus import Namespace, Resource
+from flask_restx import Namespace, Resource
 from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import check_password_hash
+from janus.api.models import QoS_Agent
 from .sys.cpu import build_cpu
 from .sys.mem import build_mem
 from .sys.net import build_sriov
@@ -14,7 +15,6 @@ from .sys.numa import build_numa
 from .sys.disk import build_block
 from .sys.sysctl import DEF_SYSCTL, get_tune, set_tune
 from .sys.tc import get_eth_iface_rules, Delay, Latency, Filter, Pacing, Netem
-from .validator import QoS_Agent
 
 
 # Basic auth
@@ -23,11 +23,6 @@ httpauth = HTTPBasicAuth()
 log = logging.getLogger(__name__)
 
 ns = Namespace('janus/agent', description='Operations for node tuning')
-
-
-def init_db():
-    pass
-
 
 @httpauth.error_handler
 def auth_error(status):

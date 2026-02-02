@@ -1,147 +1,99 @@
 import logging
-import uuid
-import time
-import json
-from enum import Enum
-from tinydb import Query, where
-import concurrent
-from concurrent.futures.thread import ThreadPoolExecutor
-from operator import eq
-from functools import reduce
-
-from flask import request, jsonify
-from flask_restplus import Namespace, Resource
-from flask_httpauth import HTTPBasicAuth
-from werkzeug.security import check_password_hash
-from werkzeug.exceptions import BadRequest
-
-from pydantic import ValidationError
+from functools import wraps
 from urllib.parse import urlsplit
-from janus import settings
-from janus.lib import AgentMonitor
+
+from flask import request, jsonify, abort
+from flask_httpauth import HTTPBasicAuth
+from flask_restx import Namespace, Resource
+from pydantic import ValidationError
+from werkzeug.exceptions import BadRequest, NotFound, InternalServerError
+from werkzeug.security import check_password_hash
+
+from janus.api.db import init_db, QueryUser
+from janus.api.models import (
+    Node,
+    ContainerProfile,
+    NetworkProfile,
+    VolumeProfile
+)
+from janus.api.models_api import (
+    AddEndpointRequest,
+    SessionRequest,
+    ProfileRequest,
+    ExecRequest,
+    AuthRequest,
+)
+from janus.api.utils import (
+    Constants
+)
 from janus.settings import cfg
-from janus.api.utils import create_service, commit_db, precommit_db, error_svc, handle_image, set_qos
-from janus.api.db import init_db
-from janus.api.query import QueryUser
-from janus.api.validator import Profile as ProfileSchema
-from janus.api.ansible_job import AnsibleJob
-
-# XXX: Portainer will eventually go behind an ABC interface
-# so we can support other provisioning backends
-from portainer_api.configuration import Configuration as Config
-from portainer_api.api_client import ApiClient
-from portainer_api.api import AuthApi
-from portainer_api.models import AuthenticateUserRequest
-from portainer_api.rest import ApiException
-from janus.api.portainer_docker import PortainerDockerApi
-from janus.api.endpoints_api import EndpointsApi
-
-
-class State(Enum):
-    UNKNOWN = 0
-    INITIALIZED = 1
-    STARTED = 2
-    STOPPED = 3
-    MIXED = 4
-
-class EPType(Enum):
-    UNKNOWN = 0,
-    PORTAINER = 1
-    KUBERNETES = 2
-    DOCKER = 3
-
+from janus.api.constants import WSType
 
 # Basic auth
 httpauth = HTTPBasicAuth()
-
 log = logging.getLogger(__name__)
-
 ns = Namespace('janus/controller', description='Operations for Janus on-demand container provisioning')
 
-pclient = None
-auth_expire = None
-db_init = False
+addEndpointRequestModel = ns.schema_model('AddEndpointModel', AddEndpointRequest.model_json_schema())
+sessionRequestModel = ns.schema_model('SessionRequestModel', SessionRequest.model_json_schema())
+profileRequestModel = ns.schema_model('ProfileRequestModel', ProfileRequest.model_json_schema())
+execRequestModel = ns.schema_model('ExecRequestModel', ExecRequest.model_json_schema())
+authRequestModel = ns.schema_model('AuthRequestModel', AuthRequest.model_json_schema())
+
 
 @httpauth.error_handler
 def auth_error(status):
     return jsonify(error="Unauthorized"), status
 
+
 @httpauth.verify_password
 def verify_password(username, password):
     users = cfg.get_users()
     if username in users and \
-            check_password_hash(users.get(username), password):
+       check_password_hash(users.get(username), password):
         return username
 
+
+def admin_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not httpauth.current_user() == 'admin':
+            abort(403)
+        return f(*args, **kwargs)
+    return wrapper
+
+
 def get_authinfo(request):
-    user = request.args.get('user', None)
-    group = request.args.get('group', None)
+    api_user = httpauth.current_user()
+    if api_user == 'admin':
+        user = request.args.get('user', None)
+        group = request.args.get('group', None)
+    else:
+        user = api_user
+        group = None
     log.debug(f"User: {user}, Group: {group}")
-    return (user,group)
+    return (user, group)
 
-class auth(object):
-    def __init__(self, func):
-        self.func = func
 
-    def __call__(self, *args, **kwargs):
-        global db_init
-        try:
-            client = self.do_auth()
-
-            # also setup testing DB
-            # could also update DB on some interval...
-            if not db_init:
-                init_db(client, refresh=True)
-                db_init = True
-        except Exception as e:
-            return json.loads(e.body), 500
-        return self.func(*args, **kwargs)
-
-    def do_auth(self):
-        global pclient
-        global auth_expire
-        if auth_expire and pclient and (time.time() < auth_expire):
-            return pclient
-
-        pcfg = Config()
-        pcfg.host = cfg.PORTAINER_URI
-        pcfg.username = cfg.PORTAINER_USER
-        pcfg.password = cfg.PORTAINER_PASSWORD
-        pcfg.verify_ssl = cfg.PORTAINER_VERIFY_SSL
-
-        if not pcfg.username or not pcfg.password:
-            raise Exception("No Portainer username or password defined")
-
-        pclient = ApiClient(pcfg)
-        aa_api = AuthApi(pclient)
-        res = aa_api.authenticate_user(AuthenticateUserRequest(pcfg.username,
-                                                               pcfg.password))
-
-        pcfg.api_key = {'Authorization': res.jwt}
-        pcfg.api_key_prefix = {'Authorization': 'Bearer'}
-
-        log.debug("Authenticating with token: {}".format(res.jwt))
-        pclient.jwt = res.jwt
-        auth_expire = time.time() + 14400
-
-        return pclient
-
-@ns.route('/active')
-@ns.route('/active/<int:aid>')
-@ns.route('/active/<int:aid>/logs/<path:nname>')
-class ActiveCollection(Resource, QueryUser):
+@ns.route('/active/<int:aid>/logs/<path:nname>', methods=['GET'])
+class LogCollection(Resource, QueryUser):
 
     @httpauth.login_required
-    @auth
+    @ns.doc(params={"timestamps": {"description": "Include timestamps in logs", "type": "integer"},
+                    "stderr": {"description": "Include stderr in logs", "type": "integer"},
+                    "stdout": {"description": "Include stdout in logs", "type": "integer"},
+                    "since": {"description": "Return logs since this timestamp", "type": "integer"},
+                    "tail": {"description": "Number of lines to return from the end of the log", "type": "integer"}})
     def get(self, aid=None, nname=None):
         """
-        Returns active sessions
+        Display logs for a specific active session and node.
         """
-        table = cfg.db.table('active')
-        (user,group) = get_authinfo(request)
+        (user, group) = get_authinfo(request)
         query = self.query_builder(user, group, {"id": aid})
+        dbase = cfg.db
+        table = dbase.get_table('active')
         if query and aid:
-            res = table.get(query)
+            res = dbase.get(table, query=query)
             if not res:
                 return {"error": "Not found"}, 404
             if nname:
@@ -152,177 +104,168 @@ class ActiveCollection(Resource, QueryUser):
                     since = request.args.get('since', 0)
                     tail = request.args.get('tail', 100)
                     svc = res['services'][nname]
-                    nid = svc[0]['node_id']
                     cid = svc[0]['container_id']
-                    dapi = PortainerDockerApi(pclient)
-                    return dapi.get_log(nid, cid, since, stderr, stdout, tail, ts)
+                    n = Node(id=svc[0]['node_id'], name=nname)
+                    handler = cfg.sm.get_handler(nname=nname)
+                    return handler.get_logs(n, cid, since, stderr, stdout, tail, ts)
                 except Exception as e:
-                    return {"error": f"Could not retrieve container logs: {e}"}
+                    import traceback
+                    traceback.print_exc()
+                    return {"error": f"Could not retrieve container logs: {e}"}, 500
+
+
+@ns.route('/active', methods=['GET'])
+@ns.route('/active/<int:aid>')
+class ActiveCollection(Resource, QueryUser):
+
+    @httpauth.login_required
+    @ns.doc(params={"fields": "Comma separated list of fields to return"})
+    def get(self, aid=None, nname=None):
+        """
+        Get active sessions
+        """
+        (user, group) = get_authinfo(request)
+        query = self.query_builder(user, group, {"id": aid})
+        fields = request.args.get('fields')
+        dbase = cfg.db
+        table = dbase.get_table('active')
+        if query and aid:
+            res = dbase.get(table, query=query)
+            if not res:
+                return {"error": "Not found"}, 404
+            if (fields):
+                return {k: v for k, v in res.items() if k in fields.split(',')}
             else:
                 return res
         elif query:
-            return table.search(query)
+            return dbase.search(table, query=query)
         else:
-            return table.all()
+            res = dbase.all(table)
+            if (fields):
+                ret = list()
+                for r in res:
+                    if not r:
+                        continue
+                    ret.append({k: v for k, v in r.items() if k in fields.split(',')})
+                return ret
+            else:
+                return res
 
     @ns.response(204, 'Allocation successfully deleted.')
     @ns.response(404, 'Not found.')
     @ns.response(500, 'Internal server error')
     @httpauth.login_required
-    @auth
     def delete(self, aid):
         """
-        Deletes an active allocation (e.g. stops containers)
+        Delete a session by id.
         """
-        nodes = cfg.db.table('nodes')
-        table = cfg.db.table('active')
-        (user,group) = get_authinfo(request)
-        query = self.query_builder(user, group, {"id": aid})
-        doc = table.get(query)
-        if doc == None:
-            return {"error": "Not found", "id": aid}, 404
+        (user, group) = get_authinfo(request)
 
-        force = request.args.get('force', None)
-        dapi = PortainerDockerApi(pclient)
-        futures = list()
+        from janus.api.session_manager import SessionManager, ResourceNotFoundException, SessionManagerException
 
-        allocations = doc.get("allocations", dict())
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            for k, v in allocations.items():
-                try:
-                    Node = Query()
-                    n = nodes.search(Node.name == k)[0]
-                    if not (cfg.dryrun):
-                        for alloc in v:
-                            futures.append(executor.submit(dapi.stop_container, n['id'], alloc))
-                except Exception as e:
-                    log.error("Could not find node/container to stop, or already stopped: {}".format(k))
-        if not (cfg.dryrun):
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    res = future.result()
-                    if "container_id" in res:
-                        log.debug(f"Removing container {res['container_id']}")
-                        dapi.remove_container(res['node_id'], res['container_id'])
-                except Exception as e:
-                    log.error("Could not remove container on remote node: {}".format(e))
-                    if not force:
-                        return {"error": "{}".format(e)}, 503
-        # delete always removes realized state info
-        commit_db(doc, aid, delete=True, realized=True)
-        commit_db(doc, aid, delete=True)
-        return None, 204
+        try:
+            force = request.args.get('force', None)
+            session_manager = SessionManager()
+            session_manager.delete(aid, force, user, group)
+            return None, 204
+        except ResourceNotFoundException as e:
+            raise NotFound(f'Creating session failed:{e}')
+        except SessionManagerException as e:
+            raise InternalServerError(f'Stopping session failed:{e}')
+        except Exception as e:
+            raise InternalServerError(f'Stopping session failed:FATAL:{type(e)}:{e}')
+
 
 @ns.response(400, 'Bad Request')
-@ns.route('/nodes')
-@ns.route('/nodes/<node>')
-@ns.route('/nodes/<int:id>')
+@ns.route('/nodes', methods=['GET', 'POST'])
+@ns.route('/nodes/<node>', methods=['GET', 'DELETE'])
+@ns.route('/nodes/<int:id>', methods=['GET', 'DELETE'])
 class NodeCollection(Resource, QueryUser):
 
     @httpauth.login_required
-    @auth
+    @ns.doc(params={"refresh": "Set to 'true' to refresh the endpoint DB"})
     def get(self, node: str = None, id: int = None):
         """
-        Returns list of existing nodes
+        Get a list of existing nodes (endpoints).
         """
-        cfg.db.clear_cache()
-        (user,group) = get_authinfo(request)
+        (user, group) = get_authinfo(request)
         refresh = request.args.get('refresh', None)
         if refresh and refresh.lower() == 'true':
             log.info("Refreshing endpoint DB...")
-            global pclient
-            init_db(pclient, refresh=True)
+            init_db(refresh=True)
         else:
-            init_db(pclient, refresh=False)
-        table = cfg.db.table('nodes')
+            init_db(refresh=False)
+        dbase = cfg.db
+        table = dbase.get_table('nodes')
         query = self.query_builder(user, group, {"id": id, "name": node})
         if query and (id or node):
-            res = table.get(query)
+            res = dbase.get(table, query=query)
             if not res:
                 return {"error": "Not found"}, 404
             return res
         elif query:
-            return table.search(query)
+            return dbase.search(table, query=query)
         else:
-            return table.all()
+            return dbase.all(table)
 
     @ns.response(204, 'Node successfully deleted.')
     @ns.response(404, 'Not found.')
     @httpauth.login_required
-    @auth
     def delete(self, node: str = None, id: int = None):
         """
-        Deletes a node (endpoint)
+        Deletes a node (endpoint).
         """
         if not node and not id:
             return {"error": "Must specify node name or id"}, 400
-        Node = Query()
-        nodes = cfg.db.table('nodes')
-        (user,group) = get_authinfo(request)
+        (user, group) = get_authinfo(request)
         query = self.query_builder(user, group, {"id": id, "name": node})
-        doc = nodes.get(query)
+        dbase = cfg.db
+        nodes = dbase.get_table('nodes')
+        doc = dbase.get(nodes, query=query)
         if doc == None:
             return {"error": "Not found"}, 404
-        eapi = EndpointsApi(pclient)
         try:
-            eapi.endpoint_delete(doc.get('id'))
+            cfg.sm.remove_node(doc)
         except Exception as e:
-            log.info("Could not remove portainer endpoint, ignoring...")
-        nodes.remove(doc_ids=[doc.doc_id])
+            log.info(f"Could not remove node, ignoring: {e}")
+        dbase.remove(nodes, ids=doc.doc_id)
         return None, 204
 
     @httpauth.login_required
-    @auth
+    @ns.expect([addEndpointRequestModel], validate=True)
     def post(self):
         """
-        Handle the creation of a new endpoint (Node)
+        Add a new node (endpoint).
         """
-        req = request.get_json()
-        if not req:
-            raise BadRequest("Body is empty")
+        req = ns.payload
         if type(req) is dict:
             req = [req]
         log.debug(req)
         eps = list()
         try:
             for r in req:
-                url_split = urlsplit(r['url'])
-                ep = {"name": r['name'],
-                      "url": r['url'],
-                      "public_url": url_split.hostname if not "public_url" in r else r['public_url'],
-                      "type": EPType(r['type'])}
+                ep = AddEndpointRequest(**r)
+                if not ep.public_url:
+                    url_split = urlsplit(r['url'])
+                    ep.public_url = url_split.hostname
                 eps.append(ep)
         except Exception as e:
             br = BadRequest()
             br.data = f"error decoding request: {e}"
             raise br
-
-        eapi = EndpointsApi(pclient)
         try:
             for ep in eps:
-                if ep['type'] == EPType.PORTAINER:
-                    eptype = 2 # We use Portainer Agent registration method
-                else:
-                    raise BadRequest("Unsupported endpoint type")
-                kwargs = {"url": ep['url'],
-                          "public_url": ep['public_url'],
-                          "tls": "true",
-                          "tls_skip_verify": "true",
-                          "tls_skip_client_verify": "true"}
-                ret = eapi.endpoint_create(name=ep['name'], endpoint_type=eptype, **kwargs)
-                # Tune remote endpoints after addition if requested
-                if settings.AGENT_AUTO_TUNE:
-                    am = AgentMonitor(pclient)
-                    am.tune(ep, post=True)
+                ret = cfg.sm.add_node(ep)
         except Exception as e:
-            return {"error": "{}".format(e)}, 500
+            return {"error": str(e)}, 500
 
         try:
             log.info("New Node added, refreshing endpoint DB...")
-            init_db(pclient, refresh=True)
+            init_db(refresh=True)
         except Exception as e:
             return {"error": "Refresh DB failed"}, 500
         return None, 204
+
 
 @ns.response(200, 'OK')
 @ns.response(400, 'Bad Request')
@@ -331,167 +274,38 @@ class NodeCollection(Resource, QueryUser):
 class Create(Resource, QueryUser):
 
     @httpauth.login_required
-    @auth
+    @ns.expect([sessionRequestModel], validate=True)
     def post(self):
         """
-        Handle the creation of a container service
+        Create one or more new sessions.
         """
-        (user,group) = get_authinfo(request)
-        req = request.get_json()
-        if not req:
-            raise BadRequest("Body is empty")
+        (user, group) = get_authinfo(request)
+        req = ns.payload
         if type(req) is dict:
             req = [req]
         log.debug(req)
+        from janus.api.session_manager import (SessionManager,
+                                               InvalidSessionRequestException,
+                                               ResourceNotFoundException,
+                                               SessionManagerException)
 
-        cfg.db.clear_cache()
-        ntable = cfg.db.table('nodes')
-        ptable = cfg.db.table('profiles')
-        itable = cfg.db.table('images')
-
-        # Do auth and resource availability checks first
-        create = list()
-        for r in req:
-            instances = r.get("instances", None)
-            profile = r.get("profile", None)
-            image = r.get("image", None)
-            if instances == None or profile == None or image == None:
-                raise BadRequest("Missing fields in POST data")
-            # Profile
-            if not profile or profile == "default":
-                profile = settings.DEFAULT_PROFILE
-            query = self.query_builder(user, group, {"name": profile})
-            prof = cfg.get_profile(profile, user, group)
-            if not prof:
-                return {"error": f"Profile {profile} not found"}, 404
-            # Image
-            # By default try to pull the specified image name even if
-            # we don't know about it
-            if not user and not group:
-                img = image
-            else:
-                parts = image.split(":")
-                query = self.query_builder(user, group, {"name": parts[0]})
-                img = itable.get(query)
-                if not img:
-                    return {"error": f"Image {image} not found"}, 404
-                img = image
-            # Nodes
-            for ep in instances:
-                query = self.query_builder(user, group, {"name": ep})
-                node = ntable.get(query)
-                if not node:
-                    return {"error": f"Node {ep} not found"}, 404
-                create.append(
-                    {"node": node,
-                     "profile": prof,
-                     "image": img,
-                     "kwargs": r.get("kwargs", dict())
-                     }
-                )
-
-        svcs = dict()
         try:
-            # keep a running set of addresses and ports allocated for this request
-            addrs_v4 = set()
-            addrs_v6 = set()
-            cports = set()
-            sports = set()
-            for r in create:
-                s = r['node']['name']
-                if s not in svcs:
-                    svcs[s] = list()
-                svcs[s].append(create_service(r['node'], r['image'], r['profile'], addrs_v4, addrs_v6,
-                                              cports, sports, **r['kwargs']))
+            session_manager = SessionManager()
+            current_user = user if user else httpauth.current_user()
+            users = user.split(",") if user else []
+            session_manager.validate_request(req)
+            session_requests = session_manager.parse_requests(user, group, req)
+            session_manager.create_networks(session_requests)
+            janus_sessionid = session_manager.create_session(user, group, session_requests, req, current_user, users)
+            return {janus_sessionid: dict(id=janus_sessionid)}
+        except InvalidSessionRequestException as e:
+            raise BadRequest(f'Creating session failed: {e}')
+        except ResourceNotFoundException as e:
+            raise NotFound(f'Creating session failed: {e}')
+        except SessionManagerException as e:
+            raise InternalServerError(f'Creating session failed: {e}')
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            log.error("Could not allocate request: {}".format(e))
-            return {"error": "{}".format(e)}, 503
-
-        # setup simple accounting
-        record = {'uuid': str(uuid.uuid4()),
-                  'user': user if user else httpauth.current_user(),
-                  'state': State.INITIALIZED.name,
-                  'allocations': dict()}
-
-        dapi = PortainerDockerApi(pclient)
-        # get an ID from the DB
-        Id = precommit_db()
-        errs = False
-        for k, v in svcs.items():
-            for s in svcs[k]:
-                # the portainer node this service will start on
-                n = s['node']
-                if (cfg.dryrun):
-                    ret = {'Id': str(uuid.uuid4())}
-                else:
-                    # Docker-specific v4 vs v6 image registry nonsense. Need to abstract this away.
-                    try:
-                        img = s['image']
-                        handle_image(n, img, dapi, s['pull_image'])
-                    except Exception as e:
-                        log.error("Could not pull image {} on node {}, {}: {}".format(img,
-                                                                                      n['name'],
-                                                                                      e.reason,
-                                                                                      e.body))
-                        errs = error_svc(s, e)
-                        try:
-                            v6img = f"registry.ipv6.docker.com/{s['image']}"
-                            handle_image(n, v6img, dapi, s['pull_image'])
-                            s['image'] = v6img
-                        except Exception as e:
-                            log.error("Could not pull image {} on node {}, {}: {}".format(v6img,
-                                                                                          n['name'],
-                                                                                          e.reason,
-                                                                                          e.body))
-                            errs = error_svc(s, e)
-                            continue
-                    # clear any errors if image resolved
-                    s['errors'] = list()
-                    errs = False
-                    try:
-                        name = f"janus_{Id}" if Id else None
-                        ret = dapi.create_container(n['id'], s['image'], name, **s['docker_kwargs'])
-                    except ApiException as e:
-                        log.error("Could not create container on {}: {}: {}".format(n['name'],
-                                                                                    e.reason,
-                                                                                    e.body))
-                        errs = error_svc(s, e)
-                        continue
-
-                if not (cfg.dryrun):
-                    try:
-                        # if specified, connect the management network to this created container
-                        if s['mgmt_net']:
-                            dapi.connect_network(n['id'], s['mgmt_net']['id'], ret['Id'],
-                                                 **s['net_kwargs'])
-                    except ApiException as e:
-                        log.error("Could not connect network on {}: {}: {}".format(n['name'],
-                                                                                   e.reason,
-                                                                                   e.body))
-                        errs = error_svc(s, e)
-                        continue
-
-                s['container_id'] = ret['Id']
-                s['container_name'] = name
-                if n['name'] not in record['allocations']:
-                    record['allocations'].update({n['name']: list()})
-                record['allocations'][n['name']].append(ret['Id'])
-                if "node" in s:
-                    del s['node']
-
-        # complete accounting
-        record['id'] = Id
-        record['services'] = svcs
-        record['request'] = req
-        record['users'] = user.split(",") if user else []
-        record['groups'] = group.split(",") if group else []
-        if errs:
-            precommit_db(Id, delete=True)
-            return {Id: record}
-        else:
-            return commit_db(record, Id)
+            raise InternalServerError(f'Creating session failed. Unexpected: {type(e)}:{e}')
 
 
 @ns.response(200, 'OK')
@@ -499,82 +313,25 @@ class Create(Resource, QueryUser):
 @ns.response(503, 'Service unavailable')
 @ns.route('/start/<int:id>')
 class Start(Resource, QueryUser):
-
     @httpauth.login_required
-    @auth
-    def put(self, id=None):
+    def put(self, id):
         """
-        Handle the starting of container services
+        Start a container service by id.
         """
-        table = cfg.db.table('active')
-        ntable = cfg.db.table('nodes')
-        (user,group) = get_authinfo(request)
-        query = self.query_builder(user, group, {"id": id})
-        if id:
-            svc = table.get(query)
-        if not svc:
-            return {"error": "id not found"}, 404
+        from janus.api.session_manager import SessionManager, ResourceNotFoundException, SessionManagerException
 
-        if svc['state'] == State.STARTED.name:
-            return {"error": "Service {} already started".format(svc['uuid'])}, 503
+        (user, group) = get_authinfo(request)
 
-        # start the services
-        error = False
-        dapi = PortainerDockerApi(pclient)
-        services = svc.get("services", dict())
-        for k,v in services.items():
-            for s in v:
-                if not s['container_id']:
-                    log.debug("Skipping service with no container_id: {}".format(k))
-                    continue
-                c = s['container_id']
-                Node = Query()
-                node = ntable.get(Node.name == k)
-                log.debug("Starting container {} on {}".format(c, k))
+        try:
+            session_manager = SessionManager()
+            return session_manager.start_session(id, user, group)
+        except ResourceNotFoundException as e:
+            raise NotFound(f'Creating session failed:{e}')
+        except SessionManagerException as e:
+            raise InternalServerError(f'Starting session failed:{e}')
+        except Exception as e:
+            raise InternalServerError(f'Starting ession failed:FATAL:{type(e)}:{e}')
 
-                if not (cfg.dryrun):
-                    try:
-                        dapi.start_container(node['id'], c)
-                        if s['qos']: # is not None and s['qos'].isinstance(dict)
-                            qos = s["qos"]
-                            qos["container"] = c
-                            set_qos(node["public_url"], qos)
-
-                    except ApiException as e:
-                        log.error("Could not start container on {}: {}: {}".format(k,
-                                                                                   e.reason,
-                                                                                   e.body))
-                        error_svc(s, e)
-                        error = True
-                        continue
-
-                #
-                # Ansible job is requested if configured
-                # - Enviroment variabls must be set to access Ansible Tower server:
-                #   TOWER_HOST, TOWER_USERNAME, TOWER_PASSWORD, TOWER_SSL_VERIFY
-                # - It may take some time for the ansible job to finish or timeout (300 seconds)
-                #
-                prof = cfg.get_profile(s['profile'])
-                for psname in prof['settings']['post_starts']:
-                    ps = cfg.get_poststart(psname)
-                    if ps['type'] == 'ansible':
-                        jt_name = ps['jobtemplate']
-                        gateway = ps['gateway']
-                        ipprot = ps['ipprot']
-                        inf = ps['interface']
-                        limit = ps['limit']
-                        default_name= ps['container_name']
-                        container_name= s.get('container_name', default_name)
-                        ex_vars = f'{{"ipprot": "{ipprot}", "interface": "{inf}", "gateway": "{gateway}", "container": "{container_name}"}}'
-                        job = AnsibleJob()
-                        try:
-                            result = job.launch(job_template=jt_name, monitor=True, wait=True, timeout=600, extra_vars=ex_vars, limits=limit)
-                        except Exception as e:
-                            error_svc(s, e)
-                            continue
-                # End of Ansible job
-        svc['state'] = State.MIXED.name if error else State.STARTED.name
-        return commit_db(svc, id, realized=True)
 
 @ns.response(200, 'OK')
 @ns.response(404, 'Not found')
@@ -583,48 +340,22 @@ class Start(Resource, QueryUser):
 class Stop(Resource, QueryUser):
 
     @httpauth.login_required
-    @auth
-    def put(self, id=None):
+    def put(self, id):
         """
-        Handle the stopping of container services
+        Stop a container service by id.
         """
-        Srv = Query()
-        table = cfg.db.table('active')
-        ntable = cfg.db.table('nodes')
-        if id:
-            svc = table.get(doc_id=id)
-        if not svc:
-            return {"error": "id not found"}, 404
+        from janus.api.session_manager import SessionManager, ResourceNotFoundException, SessionManagerException
 
-        if svc['state'] == State.STOPPED.name:
-            return {"error": "Service {} already stopped".format(svc['uuid'])}, 503
-        if svc['state'] == State.INITIALIZED.name:
-            return {"error": "Service {} is in initialized state".format(svc['uuid'])}, 503
+        try:
+            session_manager = SessionManager()
+            return session_manager.stop_session(id)
+        except ResourceNotFoundException as e:
+            raise NotFound(f'Creating session failed:{e}')
+        except SessionManagerException as e:
+            raise InternalServerError(f'Stopping session failed:{e}')
+        except Exception as e:
+            raise InternalServerError(f'Stopping session failed:FATAL:{type(e)}:{e}')
 
-        # stop the services
-        error = False
-        dapi = PortainerDockerApi(pclient)
-        for k,v in svc['services'].items():
-            for s in v:
-                if not s['container_id']:
-                    log.debug("Skipping service with no container_id: {}".format(k))
-                    continue
-                c = s['container_id']
-                Node = Query()
-                node = ntable.get(Node.name == k)
-                log.debug("Stopping container {} on {}".format(c, k))
-                if not (cfg.dryrun):
-                    try:
-                        dapi.stop_container(node['id'], c)
-                    except ApiException as e:
-                        log.error("Could not stop container on {}: {}: {}".format(k,
-                                                                                  e.reason,
-                                                                                  e.body))
-                        error_svc(s, e)
-                        error = True
-                        continue
-        svc['state'] = State.MIXED.name if error else State.STOPPED.name
-        return commit_db(svc, id, delete=True, realized=True)
 
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
@@ -632,74 +363,83 @@ class Stop(Resource, QueryUser):
 class Exec(Resource):
 
     @httpauth.login_required
-    @auth
+    @ns.expect(execRequestModel, validate=True)
     def post(self):
         """
-        Handle the execution of a container command inside Service
+        Execute a container command inside an active session.
         """
         svcs = dict()
         start = False
         attach = True
         tty = False
-        req = request.get_json()
-        if type(req) is not dict or "Cmd" not in req:
-            return {"error": "invalid request format"}, 400
-        if "node" not in req:
-            return {"error": "node not specified"}, 400
-        if "container" not in req:
-            return {"error": "container not specified"}, 400
-        if type(req["Cmd"]) is not list:
-            return {"error": "Cmd is not a list"}, 400
+        req = ns.payload
         log.debug(req)
 
         nname = req["node"]
-        if "start" in req:
-            start = req["start"]
-        if "attach" in req:
-            attach = req["attach"]
-        if "tty" in req:
-            tty = req["tty"]
+        if str(req.get("start", "")).lower() == "true":
+            start = True
+        if str(req.get("attach", "")).lower() == "false":
+            attach = False
+        if str(req.get("tty", "")).lower() == "true":
+            tty = True
 
-        Node = Query()
-        table = cfg.db.table('nodes')
-        node = table.get(Node.name == nname)
+        dbase = cfg.db
+        table = dbase.get_table('nodes')
+        node = dbase.get(table, name=nname)
         if not node:
-            return {"error": "Node not found: {}".format(nname)}
+            return {"error": f"Node not found: {nname}"}
 
         container = req["container"]
         cmd = req["Cmd"]
 
-        dapi = PortainerDockerApi(pclient)
-        kwargs = {'AttachStdin': False,
+        kwargs = {'AttachStdin': attach,
                   'AttachStdout': attach,
                   'AttachStderr': attach,
                   'Tty': tty,
                   'Cmd': cmd
                   }
         try:
-            ret = dapi.exec_create(node["id"], container, **kwargs)
+            handler = cfg.sm.get_handler(node)
+            ret = handler.exec_create(Node(**node), container, **kwargs)
+            ret.update({"response": None})
             if start:
-                ret = dapi.exec_start(node["id"], ret["Id"])
-        except ApiException as e:
-            log.error("Could not exec in container on {}: {}: {}".format(nname,
-                                                                         e.reason,
-                                                                         e.body))
+                res = handler.exec_start(Node(**node), ret)
+                ret['response'] = res.get('response')
+        except Exception as e:
+            log.error(f"Could not exec in container on {nname}: {e.reason}: {e.body}")
             return {"error": e.reason}, 503
         return ret
 
-@ns.response(200, 'OK')
-@ns.response(503, 'Service unavailable')
-@ns.route('/qos')
-class QoS(Resource):
-
     @httpauth.login_required
+    @ns.doc(params={
+        "node": "Name of the node",
+        "exec_id": "Exec instance ID"
+    })
     def get(self):
-        name = request.args.get('name', None)
-        if name:
-            qos = cfg.get_qos(name)
-            return {name: qos}
+        """
+        Check the status of an exec instance
+        """
+        log.debug(request)
+        nname = request.args.get('node', None)
+        exec_id = request.args.get('exec_id', None)
 
-        return cfg.get_qos_list()
+        if not nname or not exec_id:
+            return {"error": "Both 'node' and 'exec_id' query parameters are required"}, 400
+
+        dbase = cfg.db
+        table = dbase.get_table('nodes')
+        node = dbase.get(table, name=nname)
+
+        try:
+            handler = cfg.sm.get_handler(node)
+            ret = handler.exec_status(Node(**node), exec_id)
+        except Exception as e:
+            reason = getattr(e, "reason", str(e))
+            body = getattr(e, "body", "")
+            log.error(f"Could not get status of exec instance in container on {nname}: {reason}: {body}")
+            return {"error": reason}, 503
+        return ret
+
 
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
@@ -709,75 +449,108 @@ class Images(Resource, QueryUser):
 
     @httpauth.login_required
     def get(self, name=None):
-        (user,group) = get_authinfo(request)
+        """
+        Get a list of images or a specific image by name.
+        """
+        (user, group) = get_authinfo(request)
         query = self.query_builder(user, group, {"name": name})
-        table = cfg.db.table('images')
+        dbase = cfg.db
+        table = dbase.get_table('images')
         if name:
-            res = table.get(query)
+            res = dbase.get(table, query=query)
             if not res:
                 return {"error": "Not found"}, 404
             return res
         elif query:
-            return table.search(query)
+            return dbase.search(table, query=query)
         else:
-            return table.all()
+            return dbase.all(table)
+
 
 @ns.response(200, 'OK')
 @ns.response(503, 'Service unavailable')
-@ns.route('/profiles')
-@ns.route('/profiles/<name>')
+@ns.route('/profiles', methods=['GET'], defaults={"resource": "host"})
+@ns.route('/profiles/<path:resource>', methods=['GET'])
+@ns.route('/profiles/<path:resource>/<path:rname>')
 class Profile(Resource):
+    resources = [
+        Constants.HOST,
+        Constants.NET,
+        Constants.VOL,
+        Constants.QOS
+    ]
 
     @httpauth.login_required
-    def get(self, name=None):
+    @ns.doc(params={"resource": {"example": "|".join(Constants.PROFILE_RESOURCES),
+                                 "description": "Resource type of the profile to get (defaults to host)"},
+                    "refresh": {"description": "Set to 'true' to refresh the profile DB from disk"},
+                    "reset": {"description": "Set to 'true' to reset the profile DB and read from disk"}})
+    def get(self, resource, rname=None):
+        """
+        Get a list of profiles.
+        """
+        if resource and resource not in self.resources:
+            return {"error": f"Invalid resource path: {resource}"}, 404
         refresh = request.args.get('refresh', None)
         reset = request.args.get('reset', None)
-        (user,group) = get_authinfo(request)
+        (user, group) = get_authinfo(request)
         if refresh and refresh.lower() == 'true':
             try:
-                cfg.read_profiles()
+                cfg.pm.read_profiles(refresh=True)
             except Exception as e:
                 return {"error": str(e)}, 500
 
         if reset and reset.lower() == 'true':
             try:
-                cfg.read_profiles(reset=True)
+                cfg.pm.read_profiles(reset=True)
             except Exception as e:
                 return {"error": str(e)}, 500
 
-        if name:
-            res = cfg.get_profile(name, user, group, inline=True)
+        if rname:
+            res = cfg.pm.get_profile(resource, rname, user, group, inline=True)
             if not res:
-                return {"error": "Profile not found: {}".format(name)}, 404
-            return res
+                return {"error": f"Profile not found: {rname}"}, 404
+            return res.dict()
         else:
             log.debug("Returning all profiles")
-            ret = cfg.get_profiles(user, group, inline=True)
+            ret = [p.dict() for p in cfg.pm.get_profiles(resource, user, group, inline=True)]
             return ret if ret else list()
 
     @httpauth.login_required
-    def post(self, name=None):
+    @ns.expect(profileRequestModel, validate=True)
+    @ns.doc(params={"resource": {"example": "|".join(Constants.PROFILE_RESOURCES),
+                                 "description": "Resource type to create the profile for"}})
+    def post(self, resource=None, rname=None):
+        """
+        Create a new profile.
+        """
         try:
-            req = request.get_json()
+            if not resource or resource not in self.resources:
+                return {"error": f"Invalid resource path: {resource}"}, 404
 
-            if (req is None) or (req and type(req) is not dict):
-                res = jsonify(error="Body is not json dictionary")
-                res.status_code = 400
-                return res
-
-            if "settings" not in req:
-                res = jsonify(error="please follow this format: {\"settings\": {\"key\": \"value\"}}")
-                res.status_code = 400
-                return res
-
+            req = ns.payload
             configs = req["settings"]
-            res = cfg.get_profile(name, inline=True)
+            res = cfg.pm.get_profile(resource, rname, inline=True)
             if res:
-                return {"error": "Profile {} already exists!".format(name)}, 400
+                return {"error": f"Profile {rname} already exists!"}, 400
 
-            default = cfg._base_profile.copy()
+            if resource == Constants.HOST:
+                default = cfg._base_profile.copy()
+
+            elif resource == Constants.VOL:
+                default = cfg._base_volumes.copy()
+
+            elif resource == Constants.NET:
+                default = cfg._base_networks.copy()
+
             default.update((k, configs[k]) for k in default.keys() & configs.keys())
-            ProfileSchema(**default)
+            prof = {"name": rname, "settings": default}
+            if resource == Constants.HOST:
+                ContainerProfile(**prof)
+            elif resource == Constants.VOL:
+                VolumeProfile(**prof)
+            elif resource == Constants.NET:
+                NetworkProfile(**prof)
 
         except ValidationError as e:
             return str(e), 400
@@ -786,99 +559,109 @@ class Profile(Resource):
             return str(e), 500
 
         try:
-            profile_tbl = cfg.db.table('profiles')
-            log.info("Creating profile {}".format(
-                profile_tbl.insert({
-                'name': name,
-                "settings": default
-                })
-            ))
+            tbl = cfg.db.get_table(resource)
+            record = {'name': rname, "settings": default}
+            res = cfg.db.insert(tbl, record)
+            log.info(f"Created {res}")
         except Exception as e:
             return str(e), 500
 
-        return cfg.get_profile(name), 200
+        return cfg.pm.get_profile(resource, rname).dict(), 200
 
     @httpauth.login_required
-    def put(self, name=None):
+    @ns.expect(profileRequestModel, validate=True)
+    @ns.doc(params={"resource": {"example": "|".join(Constants.PROFILE_RESOURCES),
+                                 "description": "Resource type to update the profile for"}})
+    def put(self, resource=None, rname=None):
+        """
+        Update an existing profile.
+        """
+        if not resource or resource not in self.resources:
+            return {"error": f"Invalid resource path: {resource}"}, 404
         try:
-            (user,group) = get_authinfo(request)
-            req = request.get_json()
-
-            if (req is None) or (req and type(req) is not dict):
-                res = jsonify(error="Body is not json dictionary")
-                raise BadRequest(res)
-
-            if "settings" not in req:
-                res = jsonify(error="please follow this format: {\"settings\": {\"key\": \"value\"}}")
-                raise BadRequest(res)
-
+            (user, group) = get_authinfo(request)
+            req = ns.payload
             configs = req["settings"]
-            if name == "default":
+            if rname == "default":
                 return {"error": "Cannot update default profile!"}, 400
 
-            res = cfg.get_profile(name, user, group, inline=True)
+            res = cfg.pm.get_profile(resource, rname, user, group, inline=True)
             if not res:
-                return {"error": "Profile not found: {}".format(name)}, 404
+                return {"error": f"Profile not found: {rname}"}, 404
 
+            res = res.dict()
             default = res.copy()
             default['settings'].update(configs)
-            ProfileSchema(**default)
+
+            if resource == Constants.HOST:
+                ContainerProfile(**default)
+            elif resource == Constants.NET:
+                NetworkProfile(**default)
+            elif resource == Constants.VOL:
+                VolumeProfile(**default)
 
         except ValidationError as e:
-            return {"error" : str(e)}, 400
+            return {"error": str(e)}, 400
 
         except Exception as e:
-            return {"error" : str(e)}, 500
+            return {"error": str(e)}, 500
 
         try:
-            query = Query()
-            profile_tbl = cfg.db.table('profiles')
-            profile_tbl.update(default, query.name == name)
+            profile_tbl = cfg.db.get_table(resource)
+            cfg.db.update(profile_tbl, default, name=rname)
         except Exception as e:
             return str(e), 500
 
-        return cfg.get_profile(name), 200
+        return cfg.pm.get_profile(resource, rname).dict(), 200
 
     @httpauth.login_required
-    def delete(self, name=None):
+    def delete(self, resource=None, rname=None):
+        """
+        Remove a profile.
+        """
+        if not resource or resource not in self.resources:
+            return {"error": f"Invalid resource path: {resource}"}, 404
         try:
-            (user,group) = get_authinfo(request)
+            (user, group) = get_authinfo(request)
 
-            if not name:
+            if not rname:
                 raise BadRequest("Must specify profile name")
 
-            if name == "default":
+            if rname == "default":
                 raise BadRequest("Cannot delete default profile")
 
-            res = cfg.get_profile(name, user, group, inline=True)
+            res = cfg.pm.get_profile(resource, rname, user, group, inline=True)
             if not res:
-                return {"error": "Profile not found: {}".format(name)}, 404
+                return {"error": f"Profile not found: {rname}"}, 404
 
         except Exception as e:
             return str(e), 500
 
         try:
-            query = Query()
-            profile_tbl = cfg.db.table('profiles')
-            profile_tbl.remove(query.name == name)
+            profile_tbl = cfg.db.get_table(resource)
+            cfg.db.remove(profile_tbl, name=rname)
         except Exception as e:
             return str(e), 500
 
         return {}, 204
 
+
 @ns.response(200, 'OK')
 @ns.response(204, 'Not modified')
 @ns.response(404, 'Not found')
 @ns.response(503, 'Service unavailable')
-@ns.route('/auth/<path:resource>')
+@ns.route('/auth/<path:resource>', methods=['GET'])
 @ns.route('/auth/<path:resource>/<int:rid>')
 @ns.route('/auth/<path:resource>/<path:rname>')
-class JanusAuth(Resource):
-    resources = ["nodes",
-                 "images",
-                 "profiles",
-                 "active"]
+class JanusAuth(Resource, QueryUser):
+    resources = Constants.AUTH_RESOURCES
     get_resources = ["jwt"]
+    resource_db_map = {
+        "nodes": "nodes",
+        "images": "images",
+        "profiles": "host",
+        "active": "active"
+    }
 
     def _marshall_req(self):
         req = request.get_json()
@@ -893,26 +676,24 @@ class JanusAuth(Resource):
         log.debug(req)
         return (users, groups)
 
-    def query_builder(self, id=None, name=None):
-        qs = list()
-        if id:
-            qs.append(eq(where('id'), id))
-        elif name:
-            qs.append(eq(where('name'), name))
-        return reduce(lambda a, b: a & b, qs)
-
     @httpauth.login_required
-    @auth
+    @ns.doc(params={"resource": {"example": "|".join(Constants.AUTH_RESOURCES+["jwt"]),
+                                 "description": "Resource type to get auth for"}})
     def get(self, resource, rid=None, rname=None):
+        """
+        Get user and group attributes for a named resource.
+        """
         if resource not in self.resources and resource not in self.get_resources:
             return {"error": f"Invalid resource path: {resource}"}, 404
         # Returns active token for backend client (e.g. Portainer)
         if resource in self.get_resources:
-            global plient
-            return {"jwt": pclient.jwt}, 200
-        query = self.query_builder(rid, rname)
-        table = cfg.db.table(resource)
-        res = table.get(query)
+            return {"jwt": cfg.sm.get_auth_token()}, 200
+        (user, group) = get_authinfo(request)
+        query = self.query_builder(user, group, qargs={"id": rid, "name": rname})
+        if not query:
+            return {"error": "Must specify resource id or name"}
+        table = cfg.db.get_table(self.resource_db_map.get(resource))
+        res = cfg.db.get(table, query=query)
         if not res:
             return {"error": f"{resource} resource not found with id {rid if rid else rname}"}, 404
         users = res.get("users", list())
@@ -920,26 +701,43 @@ class JanusAuth(Resource):
         return {"users": users, "groups": groups}, 200
 
     @httpauth.login_required
+    @ns.doc(params={"resource": {"example": "|".join(Constants.AUTH_RESOURCES),
+                                 "description": "Resource type to update auth for"}})
+    @ns.expect(authRequestModel, validate=True)
     def post(self, resource, rid=None, rname=None):
+        """
+        Set user and group attributes for a named resource.
+        """
+        if resource not in self.resources:
+            return {"error": f"Invalid resource path: {resource}"}, 404
         (users, groups) = self._marshall_req()
-        query = self.query_builder(rid, rname)
-        table = cfg.db.table(resource)
-        res = table.get(query)
+        (user, group) = get_authinfo(request)
+        query = self.query_builder(user, group, qargs={"id": rid, "name": rname})
+        dbase = cfg.db
+        table = cfg.db.get_table(self.resource_db_map.get(resource))
+        res = dbase.get(table, query=query)
         if not res:
             return {"error": f"{resource} resource not found with id {rid if rid else rname}"}, 404
         new_users = list(set(users).union(set(res.get("users", list()))))
         new_groups = list(set(groups).union(set(res.get("groups", list()))))
         res['users'] = new_users
         res['groups'] = new_groups
-        table.update(res, query)
+        dbase.update(table, res, query=query)
         return res, 200
 
     @httpauth.login_required
+    @ns.doc(params={"resource": {"example": "|".join(Constants.AUTH_RESOURCES),
+                                 "description": "Resource type to delete auth for"}})
     def delete(self, resource, rid=None, rname=None):
+        """
+        Remove user and group attributes for a named resource.
+        """
         (users, groups) = self._marshall_req()
-        query = self.query_builder(rid, rname)
-        table = cfg.db.table(resource)
-        res = table.get(query)
+        (user, group) = get_authinfo(request)
+        query = self.query_builder(user, group, qargs={"id": rid, "name": rname})
+        dbase = cfg.db
+        table = cfg.db.get_table(self.resource_db_map.get(resource))
+        res = dbase.get(table, query=query)
         if not res:
             return {"error": f"{resource} resource not found with id {rid if rid else rname}"}, 404
         for u in users:
@@ -952,5 +750,5 @@ class JanusAuth(Resource):
                 res['groups'].remove(g)
             except:
                 pass
-        table.update(res, query)
+        dbase.update(table, res, query=query)
         return res, 200
