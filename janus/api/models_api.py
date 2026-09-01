@@ -36,6 +36,14 @@ class SessionRequest(BaseModel):
     overrides: Optional[dict] = Field(
         default_factory=dict, description="Profile overrides specific to this session"
     )
+    entrypoint: Optional[str] = Field(
+        None,
+        description="Override the container entrypoint (e.g. '/bin/bash' for interactive setup)",
+    )
+    dns: Optional[List[str]] = Field(
+        None,
+        description="List of DNS server IPs to configure in the container",
+    )
 
 
 # Helper for list of requests
