@@ -1030,7 +1030,7 @@ def post_auth_bulk(body: AuthBulkRequest):
     responses={"200": AuthInfoResponse},
     summary="Get specific auth info by name",
 )
-@auth_required
+@admin_required
 def get_auth(path: AuthPath, query: AuthQuery):
     """
     Get user and group attributes for a named resource.

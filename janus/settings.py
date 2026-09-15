@@ -48,14 +48,11 @@ class JanusConfig:
         self.PORTAINER_VERIFY_SSL = True
         self.sense_metadata = False
 
-        user = os.getenv("JANUS_USER")
-        pwd = os.getenv("JANUS_PASSWORD")
-        if user and pwd:
-            self._users = {user: generate_password_hash(pwd)}
-        else:
-            self._users = {
-                "admin": generate_password_hash("admin")
-            }
+        # JANUS_USER and JANUS_PASSWORD must be set in the environment.
+        # The app will refuse to start if either is missing — no default fallback.
+        user = os.environ["JANUS_USER"]
+        pwd = os.environ["JANUS_PASSWORD"]
+        self._users = {user: generate_password_hash(pwd)}
 
         self._features = {
             "rdma": {
