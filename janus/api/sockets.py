@@ -13,6 +13,8 @@ log = logging.getLogger(__name__)
 
 
 def handle_websocket(sock):
+    from janus.api.jwt_utils import JwtUtils
+
     data = sock.receive()
     try:
         js = json.loads(data)
@@ -25,6 +27,21 @@ def handle_websocket(sock):
     if typ is None or typ not in [*WSType]:
         sock.send(json.dumps({"error": f"Invalid websocket request type: {typ}"}))
         return
+
+    # All connection types except AGENT_REGISTER require a valid JWT.
+    # AGENT_REGISTER performs its own token verification after parsing the request body.
+    if typ != WSType.AGENT_REGISTER:
+        token = js.get("jwt")
+        if not token:
+            log.warning(f"Unauthenticated WebSocket attempt: type={typ}, peer={sock.sock.getpeername()}")
+            sock.send(json.dumps({"error": "Authentication required"}))
+            return
+        try:
+            JwtUtils.verify_token(token)
+        except Exception as e:
+            log.warning(f"Invalid JWT on WebSocket: type={typ}, peer={sock.sock.getpeername()}, error={e}")
+            sock.send(json.dumps({"error": f"Invalid token: {e}"}))
+            return
 
     if typ == WSType.AGENT_COMM:
         while True:

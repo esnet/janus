@@ -8,6 +8,7 @@ from janus import settings
 from janus.api.models import Network, Node
 from janus.settings import cfg
 import requests
+import ssl
 import queue
 import websocket
 from threading import Thread
@@ -422,7 +423,7 @@ class ExecSession:
         # self.client = client
         # token = self.client.jwt
         # ws_url = f"{cfg.PORTAINER_WS}/exec?token={token}&id={exec_id}&endpointId={node_id}"
-        self.ws = websocket.create_connection(ws_url)
+        self.ws = websocket.create_connection(ws_url, sslopt={"cert_reqs": ssl.CERT_NONE})
         self.send_queue = queue.Queue()
         self.receive_queue = queue.Queue()
 
