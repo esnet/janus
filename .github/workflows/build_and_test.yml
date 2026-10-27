@@ -30,6 +30,9 @@ jobs:
           pip install pytest-cov
 
       - name: Run Tests with Coverage
+        env:
+          JANUS_USER: admin
+          JANUS_PASSWORD: admin
         run: |
           pytest --cov=janus -v
 
