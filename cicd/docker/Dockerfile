@@ -15,4 +15,4 @@ COPY ./janus /janus
 COPY ./tests /tests
 
 # Install the project in editable mode or normally
-RUN python3 -m pip install --break-system-packages --no-cache-dir --use-pep517 ".[swagger,scalar]"
+RUN python3 -m pip install --break-system-packages --no-cache-dir ".[swagger,scalar]"
