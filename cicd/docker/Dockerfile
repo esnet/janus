@@ -19,4 +19,5 @@ COPY ./janus /janus
 COPY ./tests /tests
 
 # Install the project and all dependencies
-RUN pip install --no-cache-dir ".[swagger,scalar]"
+RUN pip install --no-cache-dir setuptools wheel \
+    && pip install --no-cache-dir --no-build-isolation ".[swagger,scalar]"
