@@ -18,7 +18,34 @@ classifiers = [
     "License :: OSI Approved :: BSD License",
     "Operating System :: OS Independent",
 ]
-dynamic = ["version", "dependencies"]
+dynamic = ["version"]
+dependencies = [
+    "cryptography",
+    "Flask>=3.0.2",
+    "flask-openapi3[swagger,scalar]>=4.3.1",
+    "Flask-httpauth>=4.8.0",
+    "flask-sock>=0.7.0",
+    "PyJWT>=2.10.1",
+    "Flask-JWT-Extended>=4.7.1",
+    "portainer-api",
+    "psutil",
+    "py-cpuinfo",
+    "pyyaml",
+    "requests",
+    "six",
+    "tinydb",
+    "virtfs",
+    "tcconfig",
+    "Werkzeug>=3.0.1",
+    "pydantic>=2.12.0",
+    "ansible-tower-cli==3.3.8",
+    "pytest-xprocess",
+    "kubernetes>=29.0.0",
+    "openapi-slurm-0.0.38-client",
+    "sense-o-api==1.37",
+    "pytest-cov",
+    "coverage",
+]
 
 [project.urls]
 Homepage = "https://github.com/esnet/janus"
@@ -28,7 +55,6 @@ janus-ctrl = "janus.app:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "janus.__version__"}
-dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.packages.find]
 where = ["."]

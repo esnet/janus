@@ -10,11 +10,9 @@ RUN apt-get update && apt-get -u -y install lsb-release python3 binutils python3
     && chmod +x kubectl && mv kubectl /usr/local/bin/
 
 # Copy project files
-COPY ./requirements.txt /requirements.txt
 COPY ./pyproject.toml ./README.md ./MANIFEST.in /
 COPY ./janus /janus
 COPY ./tests /tests
 
-# Install dependencies first, then install the package without build isolation
-RUN pip install --break-system-packages --no-cache-dir --ignore-installed -r /requirements.txt \
-    && pip install --break-system-packages --no-cache-dir --no-build-isolation ".[swagger,scalar]"
+# Install the project and all dependencies
+RUN pip install --break-system-packages --no-cache-dir ".[swagger,scalar]"
