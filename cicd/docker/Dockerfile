@@ -10,6 +10,7 @@ RUN apt-get update && apt-get -u -y install lsb-release python3 binutils python3
     && chmod +x kubectl && mv kubectl /usr/local/bin/
 
 # Copy project files
+COPY ./requirements.txt /requirements.txt
 COPY ./pyproject.toml ./README.md ./MANIFEST.in /
 COPY ./janus /janus
 COPY ./tests /tests
