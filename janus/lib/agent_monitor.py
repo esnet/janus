@@ -15,6 +15,7 @@ from portainer_api.rest import ApiException
 
 log = logging.getLogger(__name__)
 
+
 class AgentMonitor(object):
     def __init__(self, client=None):
         self._th = None
@@ -38,30 +39,36 @@ class AgentMonitor(object):
             "HostConfig": {
                 "RestartPolicy": {"Name": "unless-stopped"},
                 "NetworkMode": "host",
-                "Privileged": True
+                "Privileged": True,
             },
             "Tty": True,
-            "Env": [f"AGENT_PORT={settings.AGENT_PORT}"]
+            "Env": [f"AGENT_PORT={settings.AGENT_PORT}"],
         }
         try:
             ret = self._dapi.get_containers(n)
             for i in ret:
-                if i['Image'] == settings.AGENT_IMAGE:
-                    log.info(f"Agent container is already running on {n.name}, check firewall?")
+                if i["Image"] == settings.AGENT_IMAGE:
+                    log.info(
+                        f"Agent container is already running on {n.name}, check firewall?"
+                    )
                     return
             handle_image(n, img, self._dapi)
             ret = self._dapi.create_container(n, img, **docker_kwargs)
-            self._dapi.start_container(n, ret['Id'])
+            self._dapi.start_container(n, ret["Id"])
         except ApiException as e:
-            log.error(f"Could not start agent container on {n.name}: {e.reason}: {e.body}")
+            log.error(
+                f"Could not start agent container on {n.name}: {e.reason}: {e.body}"
+            )
 
     def check_agent(self, n: Node, url):
         try:
-            ret = requests.get("{}://{}:{}/api/janus/agent/node".format(settings.AGENT_PROTO,
-                                                                        url,
-                                                                        settings.AGENT_PORT),
-                               verify=settings.AGENT_SSL_VERIFY,
-                               timeout=2)
+            ret = requests.get(
+                "{}://{}:{}/api/janus/agent/node".format(
+                    settings.AGENT_PROTO, url, settings.AGENT_PORT
+                ),
+                verify=settings.AGENT_SSL_VERIFY,
+                timeout=2,
+            )
             return ret
         except Exception as e:
             raise e
@@ -73,12 +80,14 @@ class AgentMonitor(object):
         else:
             fn = requests.get
         try:
-            ret = fn("{}://{}:{}/api/janus/agent/tune".format(settings.AGENT_PROTO,
-                                                              url,
-                                                              settings.AGENT_PORT),
-                     verify=settings.AGENT_SSL_VERIFY,
-                     timeout=2,
-                     auth=(settings.AGENT_USERNAME, settings.AGENT_PASSWORD))
+            ret = fn(
+                "{}://{}:{}/api/janus/agent/tune".format(
+                    settings.AGENT_PROTO, url, settings.AGENT_PORT
+                ),
+                verify=settings.AGENT_SSL_VERIFY,
+                timeout=2,
+                auth=(settings.AGENT_USERNAME, settings.AGENT_PASSWORD),
+            )
             return ret
         except Exception as e:
             raise e
@@ -87,14 +96,14 @@ class AgentMonitor(object):
         while not self._stop:
             log.info("Checking on agent status")
             DB = TinyDB(cfg.get_dbpath())
-            Node = Query()
-            nodes = DB.table('nodes').all()
+            Query()
+            nodes = DB.table("nodes").all()
             futures = list()
             with ThreadPoolExecutor(max_workers=8) as executor:
                 for n in nodes:
                     futures.append(executor.submit(self.check_agent, n))
             for future in concurrent.futures.as_completed(futures):
-                item,ret = future.result()
+                item, ret = future.result()
                 if not ret:
                     self.start_agent(item)
             time.sleep(10)

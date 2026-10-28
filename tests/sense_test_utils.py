@@ -12,14 +12,16 @@ from janus.lib.sense_api_handler import SENSEApiHandler
 from janus.lib.sense_utils import SenseUtils
 from janus.settings import cfg, SUPPORTED_IMAGES
 
-ENDPOINTS_FILTER = ['k8s-gen5-01.sdsc.optiputer.net',
-                    'k8s-gen5-02.sdsc.optiputer.net',
-                    'losa4-nrp-01.cenic.net',
-                    'k8s-3090-01.clemson.edu',
-                    'node-2-8.sdsc.optiputer.net']
-DB_FILE_NAME = 'db-test-sense.json'
-JANUS_CONF_TEST_FILE = 'janus-sense-test.conf'
-JANUS_LOGGING_CONF_TEST_FILE = 'janus-sense-logging-test.conf'
+ENDPOINTS_FILTER = [
+    "k8s-gen5-01.sdsc.optiputer.net",
+    "k8s-gen5-02.sdsc.optiputer.net",
+    "losa4-nrp-01.cenic.net",
+    "k8s-3090-01.clemson.edu",
+    "node-2-8.sdsc.optiputer.net",
+]
+DB_FILE_NAME = "db-test-sense.json"
+JANUS_CONF_TEST_FILE = "janus-sense-test.conf"
+JANUS_LOGGING_CONF_TEST_FILE = "janus-sense-logging-test.conf"
 _LOGGER = None
 
 
@@ -28,13 +30,17 @@ def _init_logger():
     import os
 
     # logging_conf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), '../janus/config/logging.conf'))
-    logging_conf_path = os.path.normpath(os.path.join(os.getcwd(), JANUS_LOGGING_CONF_TEST_FILE))
+    logging_conf_path = os.path.normpath(
+        os.path.join(os.getcwd(), JANUS_LOGGING_CONF_TEST_FILE)
+    )
 
     if not os.path.exists(logging_conf_path):
-        logging_conf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), JANUS_LOGGING_CONF_TEST_FILE))
+        logging_conf_path = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), JANUS_LOGGING_CONF_TEST_FILE)
+        )
 
     logging.config.fileConfig(logging_conf_path)
-    return logging.getLogger('logger_janus')
+    return logging.getLogger("logger_janus")
 
 
 def get_logger():
@@ -56,7 +62,9 @@ def get_db_file_path(db_file_name=None):
     db_path = os.path.normpath(os.path.join(os.getcwd(), db_file_name))
 
     if not os.path.exists(db_path):
-        special_db_path = os.path.normpath(os.path.join(os.path.dirname(__file__), 'db-test-sense-special.json'))
+        special_db_path = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "db-test-sense-special.json")
+        )
 
         shutil.copyfile(special_db_path, db_path, follow_symlinks=False)
 
@@ -72,7 +80,9 @@ def get_janus_conf_file_path():
     conf_path = os.path.normpath(os.path.join(os.getcwd(), JANUS_CONF_TEST_FILE))
 
     if not os.path.exists(conf_path):
-        conf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), JANUS_CONF_TEST_FILE))
+        conf_path = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), JANUS_CONF_TEST_FILE)
+        )
 
     if not os.path.exists(conf_path):
         raise Exception("db file not found ....")
@@ -87,54 +97,53 @@ class GeneratorDone(Exception):
 class SimpleScript:
     def __init__(self, prefix):
         self.prefix = prefix
-        self.context = {"alias": f"fake-alias-{self.prefix}", "uuid": f"fake-uuid-{self.prefix}"}
+        self.context = {
+            "alias": f"fake-alias-{self.prefix}",
+            "uuid": f"fake-uuid-{self.prefix}",
+        }
         self.principals = ["aessiari@lbl.gov"]
-        self.nodes = ['k8s-gen5-01.sdsc.optiputer.net', 'k8s-gen5-02.sdsc.optiputer.net']
-        self.ips = ['10.251.88.241/28', '10.251.88.242/28']
+        self.nodes = [
+            "k8s-gen5-01.sdsc.optiputer.net",
+            "k8s-gen5-02.sdsc.optiputer.net",
+        ]
+        self.ips = ["10.251.88.241/28", "10.251.88.242/28"]
 
     def script(self):
         tasks = list()
-        tasks.append(self.stask(3910))   # target1
+        tasks.append(self.stask(3910))  # target1
         tasks.append(self.terminate_task())
         return tasks
 
     @staticmethod
     def _create_target(name, vlan, ip, principals):
-        target = {
-            "name": name,
-            "vlan": vlan,
-            "ip": ip,
-            "principals": principals
-        }
+        target = {"name": name, "vlan": vlan, "ip": ip, "principals": principals}
 
         return target
 
     def _create_template(self, uuid, command):
         template = {
-            'config': {
-                "command": command,
-                "targets": [],
-                "context": self.context
-            },
-            'uuid': uuid
+            "config": {"command": command, "targets": [], "context": self.context},
+            "uuid": uuid,
         }
 
         return template
 
     def empty_task(self):
         task = self._create_template(f"{self.prefix}-empty", "handle-sense-instance")
-        task['config']['targets'] = []
+        task["config"]["targets"] = []
         return [task]
 
     def terminate_task(self):
-        task = self._create_template(f"{self.prefix}-terminate", "instance-termination-notice")
+        task = self._create_template(
+            f"{self.prefix}-terminate", "instance-termination-notice"
+        )
         return [task]
 
     def stask(self, vlan):
         task = self._create_template(self.prefix, "handle-sense-instance")
-        task['config']['targets'] = [
-            self._create_target(self.nodes[0], vlan, None, ['admin']),
-            self._create_target(self.nodes[1], vlan, None, self.principals)
+        task["config"]["targets"] = [
+            self._create_target(self.nodes[0], vlan, None, ["admin"]),
+            self._create_target(self.nodes[1], vlan, None, self.principals),
         ]
 
         return [task]
@@ -146,25 +155,25 @@ class BaseScript(SimpleScript):
 
     def script(self):
         tasks = list()
-        tasks.append(self.atask1(3910))   # target1
-        tasks.append(self.atask2(3910))   # target2 with same vlan
+        tasks.append(self.atask1(3910))  # target1
+        tasks.append(self.atask2(3910))  # target2 with same vlan
         tasks.append(self.empty_task())
-        tasks.append(self.atask3(3910))   # target3 and target2 with same vlan
-        tasks.append(self.atask4(3910))   # change the order
+        tasks.append(self.atask3(3910))  # target3 and target2 with same vlan
+        tasks.append(self.atask4(3910))  # change the order
         tasks.append(self.empty_task())
         tasks.append(self.terminate_task())
         return tasks
 
     def atask1(self, vlan) -> list:
         task = self._create_template(self.prefix, "handle-sense-instance")
-        task['config']['targets'] = [
-            self._create_target(self.nodes[0], vlan, self.ips[0], ['admin'])
+        task["config"]["targets"] = [
+            self._create_target(self.nodes[0], vlan, self.ips[0], ["admin"])
         ]
         return [task]
 
     def atask2(self, vlan):
         task = self._create_template(self.prefix, "handle-sense-instance")
-        task['config']['targets'] = [
+        task["config"]["targets"] = [
             self._create_target(self.nodes[1], vlan, None, self.principals)
         ]
 
@@ -172,18 +181,18 @@ class BaseScript(SimpleScript):
 
     def atask3(self, vlan):
         task = self._create_template(self.prefix, "handle-sense-instance")
-        task['config']['targets'] = [
-            self._create_target(self.nodes[0], vlan, self.ips[0], ['admin']),
-            self._create_target(self.nodes[1], vlan, None, self.principals)
+        task["config"]["targets"] = [
+            self._create_target(self.nodes[0], vlan, self.ips[0], ["admin"]),
+            self._create_target(self.nodes[1], vlan, None, self.principals),
         ]
 
         return [task]
 
     def atask4(self, vlan):
         task = self._create_template(self.prefix, "handle-sense-instance")
-        task['config']['targets'] = [
+        task["config"]["targets"] = [
             self._create_target(self.nodes[1], vlan, None, self.principals),
-            self._create_target(self.nodes[0], vlan, self.ips[0], ['admin']),
+            self._create_target(self.nodes[0], vlan, self.ips[0], ["admin"]),
         ]
 
         return [task]
@@ -215,14 +224,14 @@ class ComplexScript(SimpleScript):
 
     def ptask1(self, vlan) -> list:
         task = self._create_template(self.prefix, "handle-sense-instance")
-        task['config']['targets'] = [
-            self._create_target(self.nodes[0], vlan, self.ips[0], ['admin'])
+        task["config"]["targets"] = [
+            self._create_target(self.nodes[0], vlan, self.ips[0], ["admin"])
         ]
         return [task]
 
     def ptask2(self, vlan):
         task = self._create_template(self.prefix, "handle-sense-instance")
-        task['config']['targets'] = [
+        task["config"]["targets"] = [
             self._create_target(self.nodes[1], vlan, None, self.principals)
         ]
 
@@ -230,18 +239,18 @@ class ComplexScript(SimpleScript):
 
     def ptask3(self, vlan1, vlan2):
         task = self._create_template(self.prefix, "handle-sense-instance")
-        task['config']['targets'] = [
+        task["config"]["targets"] = [
             self._create_target(self.nodes[0], vlan1, self.ips[0], self.principals),
-            self._create_target(self.nodes[1], vlan2, self.ips[1], ['extra_user1'])
+            self._create_target(self.nodes[1], vlan2, self.ips[1], ["extra_user1"]),
         ]
 
         return [task]
 
     def ptask4(self, vlan1, vlan2):
         task = self._create_template(self.prefix, "handle-sense-instance")
-        task['config']['targets'] = [
+        task["config"]["targets"] = [
             self._create_target(self.nodes[0], vlan1, None, []),
-            self._create_target(self.nodes[1], vlan2, None, ['extra_user2'])
+            self._create_target(self.nodes[1], vlan2, None, ["extra_user2"]),
         ]
 
         return [task]
@@ -260,7 +269,7 @@ class TaskGenerator:
 
 class NoopSENSEApiHandler(SENSEApiHandler):
     def __init__(self):
-        super().__init__('noop_url')
+        super().__init__("noop_url")
 
     def retrieve_tasks(self, assigned, status):
         pass
@@ -272,7 +281,7 @@ class NoopSENSEApiHandler(SENSEApiHandler):
 # noinspection PyUnusedLocal
 class FakeSENSEApiHandler:
     def __init__(self, gen):
-        self.url = 'fake_url'
+        self.url = "fake_url"
         self.gen = gen.generate()
         self.last_task = []
         self.task_state_map = dict()
@@ -287,7 +296,7 @@ class FakeSENSEApiHandler:
         try:
             for task in self.gen:
                 self.last_task = task
-                task[0]['uuid'] = str(self.counter) + '-' + task[0]['uuid']
+                task[0]["uuid"] = str(self.counter) + "-" + task[0]["uuid"]
                 self.counter += 1
                 return task if not self.stop_processing else list()
         except GeneratorDone as e:
@@ -295,44 +304,46 @@ class FakeSENSEApiHandler:
             raise e
 
     def _update_task(self, data, **kwargs):
-        assert 'url' in data
-        assert 'targets' in data
-        assert 'message' in data
-        assert 'uuid' in kwargs
-        assert 'state' in kwargs
+        assert "url" in data
+        assert "targets" in data
+        assert "message" in data
+        assert "uuid" in kwargs
+        assert "state" in kwargs
 
-        if kwargs['uuid'] not in self.task_state_map:
-            self.task_state_map[kwargs['uuid']] = kwargs['state']
+        if kwargs["uuid"] not in self.task_state_map:
+            self.task_state_map[kwargs["uuid"]] = kwargs["state"]
         else:
-            self.task_state_map[kwargs['uuid']] += ',' + kwargs['state']
+            self.task_state_map[kwargs["uuid"]] += "," + kwargs["state"]
 
         import json
 
-        if kwargs['state'] in ['REJECTED', 'WAITING']:
-            log.warning(f'faking updating task attempts:{json.dumps(data, indent=2)}:{kwargs}')
+        if kwargs["state"] in ["REJECTED", "WAITING"]:
+            log.warning(
+                f"faking updating task attempts:{json.dumps(data, indent=2)}:{kwargs}"
+            )
             self.stop_processing = True
 
         return True
 
     def accept_task(self, uuid, targets, message):
-        data = dict(url=self.url, targets=targets,  message=message)
-        return self._update_task(data, uuid=uuid, state='ACCEPTED')
+        data = dict(url=self.url, targets=targets, message=message)
+        return self._update_task(data, uuid=uuid, state="ACCEPTED")
 
     def reject_task(self, uuid, targets, message):
         data = dict(url=self.url, targets=targets, message=message)
-        return self._update_task(data, uuid=uuid, state='REJECTED')
+        return self._update_task(data, uuid=uuid, state="REJECTED")
 
     def fail_task(self, uuid, targets, message):
         data = dict(url=self.url, targets=targets, message=message)
-        return self._update_task(data, uuid=uuid, state='FAILED')
+        return self._update_task(data, uuid=uuid, state="FAILED")
 
     def wait_task(self, uuid, targets, message):
         data = dict(url=self.url, targets=targets, message=message)
-        return self._update_task(data, uuid=uuid, state='WAITING')
+        return self._update_task(data, uuid=uuid, state="WAITING")
 
     def finish_task(self, uuid, targets, message):
         data = dict(url=self.url, targets=targets, message=message)
-        return self._update_task(data, uuid=uuid, state='FINISHED')
+        return self._update_task(data, uuid=uuid, state="FINISHED")
 
 
 def create_sense_meta_manager(database, config_file, sense_api_handler=None):
@@ -343,17 +354,18 @@ def create_sense_meta_manager(database, config_file, sense_api_handler=None):
     parser = ConfigParser(allow_no_value=True)
     parser.read(config_file)
 
-    if 'JANUS' in parser:
-        config = parser['JANUS']
-        cfg.PORTAINER_URI = str(config.get('PORTAINER_URI', None))
-        cfg.PORTAINER_WS = str(config.get('PORTAINER_WS', None))
-        cfg.PORTAINER_USER = str(config.get('PORTAINER_USER', None))
-        cfg.PORTAINER_PASSWORD = str(config.get('PORTAINER_PASSWORD', None))
-        vssl = str(config.get('PORTAINER_VERIFY_SSL', 'True'))
+    if "JANUS" in parser:
+        config = parser["JANUS"]
+        cfg.PORTAINER_URI = str(config.get("PORTAINER_URI", None))
+        cfg.PORTAINER_WS = str(config.get("PORTAINER_WS", None))
+        cfg.PORTAINER_USER = str(config.get("PORTAINER_USER", None))
+        cfg.PORTAINER_PASSWORD = str(config.get("PORTAINER_PASSWORD", None))
+        vssl = str(config.get("PORTAINER_VERIFY_SSL", "True"))
 
-        if vssl == 'False':
+        if vssl == "False":
             cfg.PORTAINER_VERIFY_SSL = False
             import urllib3
+
             urllib3.disable_warnings()
         else:
             cfg.PORTAINER_VERIFY_SSL = True
@@ -365,12 +377,12 @@ def create_sense_meta_manager(database, config_file, sense_api_handler=None):
 def load_images_if_needed(db, image_table):
     if not db.all(image_table):
         for img in SUPPORTED_IMAGES:
-            db.upsert(image_table, img, 'name', img['name'])
+            db.upsert(image_table, img, "name", img["name"])
 
 
 def load_nodes_if_needed(db, node_table, node_name_filter):
     if not db.all(node_table):
-        log.info(f"Loading nodes ....")
+        log.info("Loading nodes ....")
         kube_api = KubernetesApi()
         clusters = kube_api.get_nodes(refresh=True)
 
@@ -378,17 +390,17 @@ def load_nodes_if_needed(db, node_table, node_name_filter):
             if node_name_filter:
                 filtered_nodes = list()
 
-                for node in cluster['cluster_nodes']:
-                    if node['name'] in node_name_filter:
+                for node in cluster["cluster_nodes"]:
+                    if node["name"] in node_name_filter:
                         filtered_nodes.append(node)
 
-                cluster['cluster_nodes'] = filtered_nodes
-                cluster['users'] = list()
+                cluster["cluster_nodes"] = filtered_nodes
+                cluster["users"] = list()
 
-            cluster['allocated_ports'] = list()
-            db.upsert(node_table, cluster, 'name', cluster['name'])
+            cluster["allocated_ports"] = list()
+            db.upsert(node_table, cluster, "name", cluster["name"])
 
-        cluster_names = [cluster['name'] for cluster in clusters]
+        cluster_names = [cluster["name"] for cluster in clusters]
         log.info(f"saved nodes to db from cluster={cluster_names}")
 
 
@@ -397,6 +409,8 @@ def dump_janus_sessions(janus_sessions):
 
     for janus_session in janus_sessions:
         service_info = SenseUtils.get_service_info(janus_session)
-        janus_session_summaries.append(dict(id=janus_session['id'], service_info=service_info))
+        janus_session_summaries.append(
+            dict(id=janus_session["id"], service_info=service_info)
+        )
 
-    print(f"JanusSessionSummaries:", json.dumps(janus_session_summaries, indent=2))
+    print("JanusSessionSummaries:", json.dumps(janus_session_summaries, indent=2))

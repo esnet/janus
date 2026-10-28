@@ -1,1 +1,1 @@
-from .edge import JanusEdgeApi
+from .edge import JanusEdgeApi as JanusEdgeApi

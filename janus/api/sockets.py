@@ -3,7 +3,7 @@ import logging
 from threading import Thread
 
 from janus.settings import cfg
-from janus.api.constants import WSType, EPType
+from janus.api.constants import WSType
 from janus.api.models_ws import WSExecStream, EdgeAgentRegister
 from janus.api.models import Node
 from janus.api.pubsub import Subscriber, TOPIC
@@ -13,6 +13,8 @@ log = logging.getLogger(__name__)
 
 
 def handle_websocket(sock):
+    from janus.api.jwt_utils import JwtUtils
+
     data = sock.receive()
     try:
         js = json.loads(data)
@@ -25,6 +27,21 @@ def handle_websocket(sock):
     if typ is None or typ not in [*WSType]:
         sock.send(json.dumps({"error": f"Invalid websocket request type: {typ}"}))
         return
+
+    # All connection types except AGENT_REGISTER require a valid JWT.
+    # AGENT_REGISTER performs its own token verification after parsing the request body.
+    if typ != WSType.AGENT_REGISTER:
+        token = js.get("jwt")
+        if not token:
+            log.warning(f"Unauthenticated WebSocket attempt: type={typ}, peer={sock.sock.getpeername()}")
+            sock.send(json.dumps({"error": "Authentication required"}))
+            return
+        try:
+            JwtUtils.verify_token(token)
+        except Exception as e:
+            log.warning(f"Invalid JWT on WebSocket: type={typ}, peer={sock.sock.getpeername()}, error={e}")
+            sock.send(json.dumps({"error": f"Invalid token: {e}"}))
+            return
 
     if typ == WSType.AGENT_COMM:
         while True:
@@ -59,6 +76,7 @@ def handle_websocket(sock):
             log.info(f"Added edge {peer}: {req.name}")
         except Exception as e:
             import traceback
+
             traceback.print_exc()
             log.error(f"Severe error add edge from {peer}: {e}")
             sock.send(json.dumps({"error": f"Controller in trouble: {e}"}))
@@ -68,14 +86,16 @@ def handle_websocket(sock):
         while edge_handle.sock.connected and edge_handle.active:
             time.sleep(1)
 
-        log.warning(f"AGENT_REGISTER:inactive edge handle{peer}: {edge_handle.sock.connected}:{edge_handle.active}")
+        log.warning(
+            f"AGENT_REGISTER:inactive edge handle{peer}: {edge_handle.sock.connected}:{edge_handle.active}"
+        )
         return
 
     if typ == WSType.EVENTS:
         peer = sock.sock.getpeername()
         log.debug(f"Got event stream request from {peer}")
         sub = Subscriber(peer)
-        res = cfg.sm.pubsub.subscribe(sub, TOPIC.event_stream)
+        cfg.sm.pubsub.subscribe(sub, TOPIC.event_stream)
         while True:
             r = sub.read()
             if r.get("eof"):
@@ -85,8 +105,19 @@ def handle_websocket(sock):
     if typ == WSType.EXEC_STREAM:
         log.debug(f"Got exec stream request from {sock.sock.getpeername()}")
         req = WSExecStream(**js)
+        
+        # Lookup current node info to get correct ID
+        dbase = cfg.db
+        ntable = dbase.get_table("nodes")
+        node_doc = dbase.get(ntable, name=req.node)
+        if not node_doc:
+            sock.send(json.dumps({"error": f"Node {req.node} not found"}))
+            return
+            
         handler = cfg.sm.get_handler(nname=req.node)
-        session = handler.exec_stream(Node(id=req.node_id, name=req.node), req.container, req.exec_id)
+        session = handler.exec_stream(
+            Node(**node_doc), req.container, req.exec_id
+        )
         receive_queue = session.receive_queue
         send_queue = session.send_queue
 

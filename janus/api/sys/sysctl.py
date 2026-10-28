@@ -40,8 +40,7 @@ DEF_SYSCTL = {
 def get_tune():
     sysargs = ["/sbin/sysctl"]
     sysargs.extend(list(DEF_SYSCTL.keys()))
-    ret = subprocess.run(sysargs, stdout=subprocess.PIPE,
-                         stderr=subprocess.STDOUT)
+    ret = subprocess.run(sysargs, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     rstr = ret.stdout.decode("utf-8").strip()
     res = dict()
     for item in rstr.split("\n"):
@@ -54,21 +53,20 @@ def get_tune():
 def set_tune(args):
     if args:
         params = args
-        for k,v in params.items():
+        for k, v in params.items():
             if k not in DEF_SYSCTL:
                 raise Exception({"error": "Unsupported sysctl key {}".format(k)})
     else:
         params = DEF_SYSCTL
 
     sysargs = ["sudo", "sysctl"]
-    for k,v in params.items():
+    for k, v in params.items():
         if isinstance(v, list):
-            val = ' '.join(str(p) for p in v)
+            val = " ".join(str(p) for p in v)
         else:
             val = v
         sysargs.append(f"{k}={val}")
-    ret = subprocess.run(sysargs, stdout=subprocess.PIPE,
-                         stderr=subprocess.STDOUT)
+    ret = subprocess.run(sysargs, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if ret.returncode:
         raise Exception({"error": ret.stdout})
     if args:

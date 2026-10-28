@@ -1,1 +1,1 @@
-from .kube import KubernetesApi
+from .kube import KubernetesApi as KubernetesApi

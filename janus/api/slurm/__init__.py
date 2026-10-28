@@ -1,1 +1,1 @@
-from .slurm import JanusSlurmApi
+from .slurm import JanusSlurmApi as JanusSlurmApi

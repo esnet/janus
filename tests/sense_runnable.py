@@ -13,7 +13,9 @@ log = get_logger()
 
 
 class SenseRunnable:
-    def __init__(self, database, config_file, sense_api_handler=None, node_name_filter=None):
+    def __init__(
+        self, database, config_file, sense_api_handler=None, node_name_filter=None
+    ):
         db = DBLayer(path=database)
         pm = ProfileManager(db, None)
         sm = ServiceManager(db)
@@ -22,8 +24,12 @@ class SenseRunnable:
         parser = ConfigParser(allow_no_value=True)
         parser.read(config_file)
         sense_properties = SenseUtils.parse_from_config(cfg=cfg, parser=parser)
-        assert sense_properties, f"no sense properties ..... (Missing config file {config_file}?)"
-        self.mngr = SENSEMetaManager(cfg, sense_properties, sense_api_handler=sense_api_handler)
+        assert sense_properties, (
+            f"no sense properties ..... (Missing config file {config_file}?)"
+        )
+        self.mngr = SENSEMetaManager(
+            cfg, sense_properties, sense_api_handler=sense_api_handler
+        )
         assert cfg.sense_metadata
 
     def init(self):
@@ -36,7 +42,7 @@ class SenseRunnable:
         node_table = self.mngr.nodes_table
 
         if self.mngr.db.all(node_table):
-            log.info(f"Nodes already in db .... returning")
+            log.info("Nodes already in db .... returning")
             return
 
         kube_api = KubernetesApi()
@@ -46,17 +52,17 @@ class SenseRunnable:
             if self.node_name_filter:
                 filtered_nodes = list()
 
-                for node in cluster['cluster_nodes']:
-                    if node['name'] in self.node_name_filter:
+                for node in cluster["cluster_nodes"]:
+                    if node["name"] in self.node_name_filter:
                         filtered_nodes.append(node)
 
-                cluster['cluster_nodes'] = filtered_nodes
-                cluster['users'] = list()
+                cluster["cluster_nodes"] = filtered_nodes
+                cluster["users"] = list()
 
-            cluster['allocated_ports'] = list()
-            self.mngr.db.upsert(node_table, cluster, 'name', cluster['name'])
+            cluster["allocated_ports"] = list()
+            self.mngr.db.upsert(node_table, cluster, "name", cluster["name"])
 
-        cluster_names = [cluster['name'] for cluster in clusters]
+        cluster_names = [cluster["name"] for cluster in clusters]
         log.info(f"saved nodes to db from cluster={cluster_names}")
 
     def run(self):

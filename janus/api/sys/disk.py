@@ -1,6 +1,7 @@
 import virtfs
 
-IGNORE_BLOCK_STRS = ('loop', 'ram', 'zram')
+IGNORE_BLOCK_STRS = ("loop", "ram", "zram")
+
 
 def build_block():
     ret = dict()
@@ -11,11 +12,11 @@ def build_block():
         dev = getattr(blk, d)
         try:
             ret[d] = dict()
-            ret[d]['size'] = dev.size.contents.strip()
-            ret[d]['model'] = dev.device.model.contents.strip()
+            ret[d]["size"] = dev.size.contents.strip()
+            ret[d]["model"] = dev.device.model.contents.strip()
             numa_node = dev.device.numa_node.contents.strip()
-            ret[d]['numa_node'] = numa_node
-        except virtfs.exc.NotFound as e:
+            ret[d]["numa_node"] = numa_node
+        except virtfs.exc.NotFound:
             continue
 
     return ret

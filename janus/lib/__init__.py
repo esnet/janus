@@ -1,1 +1,1 @@
-from .agent_monitor import AgentMonitor
+from .agent_monitor import AgentMonitor as AgentMonitor
