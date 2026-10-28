@@ -47,4 +47,5 @@ COPY ./janus /janus
 COPY ./tests /tests
 
 # Install janus package without build isolation (deps already installed above)
-RUN pip install --no-cache-dir --no-build-isolation ".[swagger,scalar]"
+RUN pip install --no-cache-dir setuptools \
+    && pip install --no-cache-dir --no-build-isolation ".[swagger,scalar]"
