@@ -15,5 +15,6 @@ COPY ./pyproject.toml ./README.md ./MANIFEST.in /
 COPY ./janus /janus
 COPY ./tests /tests
 
-# Install the project in editable mode or normally
-RUN python3 -m pip install --break-system-packages --no-cache-dir ".[swagger,scalar]"
+# Install dependencies first, then install the package without build isolation
+RUN pip install --break-system-packages --no-cache-dir -r /requirements.txt \
+    && pip install --break-system-packages --no-cache-dir --no-build-isolation ".[swagger,scalar]"
