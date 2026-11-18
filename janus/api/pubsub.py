@@ -1,9 +1,10 @@
 import queue
-from abc import ABC, abstractmethod
+from abc import ABC
 
 
 class TOPIC:
     event_stream = "event_stream"
+
 
 class Publisher:
     def __init__(self):
@@ -19,11 +20,13 @@ class Publisher:
             for subscriber in self.subscribers[topic]:
                 subscriber.queue.put(message)
 
+
 class Subscriber(ABC):
     def __init__(self, name):
         self.name = name
         self.queue = queue.Queue()
 
-    def read(self, ):
+    def read(
+        self,
+    ):
         return self.queue.get()
-

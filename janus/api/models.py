@@ -1,4 +1,4 @@
-from pydantic import BaseModel, SerializeAsAny, root_validator, create_model, validator
+from pydantic import BaseModel, SerializeAsAny, root_validator
 from typing import List, Optional, Union, Tuple
 
 
@@ -12,9 +12,14 @@ class QoSProfileSettings(BaseModel):
     dport: Optional[str] = None
     ip: Optional[str] = None
 
+
 class QoS_Controller(BaseModel):
     name: str
     settings: QoSProfileSettings
+    on_disk: bool = False
+    is_system: bool = False
+    is_modified: bool = False
+
 
 class QoS_Agent(BaseModel):
     interface: Optional[str] = None
@@ -73,6 +78,9 @@ class ContainerProfile(BaseModel):
     settings: ContainerProfileSettings
     users: Optional[List[str]] = []
     groups: Optional[List[str]] = []
+    on_disk: bool = False
+    is_system: bool = False
+    is_modified: bool = False
 
 
 class NetworkProfileSettings(BaseModel):
@@ -86,6 +94,9 @@ class NetworkProfileSettings(BaseModel):
 class NetworkProfile(BaseModel):
     name: str
     settings: SerializeAsAny[NetworkProfileSettings]
+    on_disk: bool = False
+    is_system: bool = False
+    is_modified: bool = False
 
 
 class VolumeProfileSettings(BaseModel):
@@ -96,7 +107,9 @@ class VolumeProfileSettings(BaseModel):
 
     @root_validator(pre=True)
     def validate_type(cls, values):
-        if (values.get('type') == "bind") and (not values.get('source') or not values.get('target')):
+        if (values.get("type") == "bind") and (
+            not values.get("source") or not values.get("target")
+        ):
             raise ValueError("Source and Target are required for bind mounts")
         return values
 
@@ -104,11 +117,16 @@ class VolumeProfileSettings(BaseModel):
 class VolumeProfile(BaseModel):
     name: str
     settings: VolumeProfileSettings
+    on_disk: bool = False
+    is_system: bool = False
+    is_modified: bool = False
+
 
 class Node(BaseModel):
     id: Union[int, str]
     name: str
     images: Optional[list] = None
+
 
 class Network(object):
     def __init__(self, net, node=None):
@@ -124,17 +142,19 @@ class Network(object):
             self.ipv6 = net.get("ipv6_addr", None)
         elif isinstance(net, str):
             self.name = net
+
     @property
     def key(self):
         return f"{self.node}-{self.name}" if self.node else self.name
 
     def is_host(self):
-        return self.name and 'host' in self.name
+        return self.name and "host" in self.name
 
 
 class ServiceRecord(object):
     def __init__(self, srec_dict):
         pass
+
 
 ### API Request objects
 class SessionConstraints(BaseModel):
@@ -148,7 +168,9 @@ class SessionConstraints(BaseModel):
     account: Optional[str] = None
     time: Optional[int] = None
 
+
 class SessionRequest(BaseModel):
+    name: Optional[str] = None
     node: dict
     image: str
     profile: ContainerProfile
@@ -159,6 +181,7 @@ class SessionRequest(BaseModel):
     overrides: Optional[dict]
     entrypoint: Optional[str] = None
     dns: Optional[List[str]] = None
+
 
 class AddEndpointRequest(BaseModel):
     type: int

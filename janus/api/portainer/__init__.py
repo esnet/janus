@@ -1,2 +1,1 @@
-from .portainer_docker import PortainerDockerApi
-
+from .portainer_docker import PortainerDockerApi as PortainerDockerApi
