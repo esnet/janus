@@ -1,7 +1,7 @@
 import os
 import yaml
 import logging
-from .utils import Constants
+from .constants import Constants
 from janus import settings
 from janus.settings import cfg
 from janus.api.db import QueryUser
@@ -10,18 +10,19 @@ from janus.api.models import (
     ContainerProfile,
     NetworkProfile,
     NetworkProfileSettings,
-    VolumeProfile
+    VolumeProfile,
 )
 
 
 log = logging.getLogger(__name__)
+
 
 class ProfileManager(QueryUser):
     CLSMAP = {
         Constants.HOST: ContainerProfile,
         Constants.NET: NetworkProfile,
         Constants.VOL: VolumeProfile,
-        Constants.QOS: QoS_Controller
+        Constants.QOS: QoS_Controller,
     }
 
     def _create_defaults(self):
@@ -31,11 +32,14 @@ class ProfileManager(QueryUser):
                 continue
             log.debug(f"Adding default network profile {nname}")
             driver = "null" if nname == "none" else nname
-            nprof = NetworkProfile(name=nname,
-                                   settings=NetworkProfileSettings(driver=driver))
-            self._db.upsert(net_tbl, nprof.model_dump(), 'name', nname)
+            nprof = NetworkProfile(
+                name=nname,
+                settings=NetworkProfileSettings(driver=driver),
+                is_system=True,
+            )
+            self._db.upsert(net_tbl, nprof.model_dump(), "name", nname)
 
-    def __init__(self, db, profile_path = None):
+    def __init__(self, db, profile_path=None):
         self._db = db
         self._create_defaults()
         self._profile_path = profile_path
@@ -56,16 +60,19 @@ class ProfileManager(QueryUser):
         return self.CLSMAP[ptype](**ret) if ret else None
 
     def get_profiles(self, ptype, user=None, group=None, inline=False):
-        profiles = [ self.CLSMAP[ptype](**p) for p in self.get_profile_from_db(ptype, user=user, group=group) ]
+        profiles = [
+            self.CLSMAP[ptype](**p)
+            for p in self.get_profile_from_db(ptype, user=user, group=group)
+        ]
         nprofs = len(profiles) if profiles else 0
         log.info(f"total profiles: {nprofs}")
         return profiles
 
     def read_profiles(self, path=None, reset=False, refresh=False):
-        image_tbl = self._db.get_table('images')
+        image_tbl = self._db.get_table("images")
         for img in settings.SUPPORTED_IMAGES:
             ni = {"name": img}
-            self._db.upsert(image_tbl, ni, 'name', img)
+            self._db.upsert(image_tbl, ni, "name", img)
         if not refresh:
             return
         host_tbl = self._db.get_table(Constants.HOST)
@@ -89,56 +96,89 @@ class ProfileManager(QueryUser):
                         data = yaml.safe_load(yfile)
                         for k, v in data.items():
                             if isinstance(v, dict):
-                                if (k == "networks"):
+                                if k == "networks":
                                     for key, value in v.items():
                                         try:
-                                            prof = {"name": key, "settings": value}
+                                            prof = {
+                                                "name": key,
+                                                "settings": value,
+                                                "on_disk": True,
+                                                "is_system": key == "default"
+                                                or key in settings.DEFAULT_NET_PROFILES,
+                                                "is_modified": False,
+                                            }
                                             NetworkProfile(**prof)
                                             cfg._networks[key] = value
-                                            self._db.upsert(net_tbl, prof, 'name', key)
+                                            self._db.upsert(net_tbl, prof, "name", key)
                                         except Exception as e:
-                                            log.error("Error reading networks: {}".format(e))
+                                            log.error(
+                                                "Error reading networks: {}".format(e)
+                                            )
 
-                                if (k == "volumes"):
+                                if k == "volumes":
                                     for key, value in v.items():
                                         try:
-                                            prof = {"name": key, "settings": value}
+                                            prof = {
+                                                "name": key,
+                                                "settings": value,
+                                                "on_disk": True,
+                                                "is_system": key == "default",
+                                                "is_modified": False,
+                                            }
                                             VolumeProfile(**prof)
                                             cfg._volumes[key] = value
-                                            self._db.upsert(vol_tbl, prof, 'name', key)
+                                            self._db.upsert(vol_tbl, prof, "name", key)
                                         except Exception as e:
-                                            log.error("Error reading volumes: {}".format(e))
+                                            log.error(
+                                                "Error reading volumes: {}".format(e)
+                                            )
 
-                                if (k == "qos"):
+                                if k == "qos":
                                     for key, value in v.items():
                                         try:
-                                            prof = {"name": key, "settings": value}
+                                            prof = {
+                                                "name": key,
+                                                "settings": value,
+                                                "on_disk": True,
+                                                "is_system": key == "default",
+                                                "is_modified": False,
+                                            }
                                             QoS_Controller(**prof)
                                             cfg._qos[key] = value
-                                            self._db.upsert(qos_tbl, prof, 'name', key)
+                                            self._db.upsert(qos_tbl, prof, "name", key)
                                         except Exception as e:
                                             log.error("Error reading qos: {}".format(e))
 
-                                if (k == "profiles"):
+                                if k == "profiles":
                                     for key, value in v.items():
                                         try:
                                             temp = cfg._base_profile.copy()
                                             temp.update(value)
-                                            prof = {"name": key, "settings": temp}
+                                            prof = {
+                                                "name": key,
+                                                "settings": temp,
+                                                "on_disk": True,
+                                                "is_system": key == "default",
+                                                "is_modified": False,
+                                            }
                                             ContainerProfile(**prof)
                                             cfg._profiles[key] = temp
-                                            self._db.upsert(host_tbl, prof, 'name', key)
+                                            self._db.upsert(host_tbl, prof, "name", key)
                                         except Exception as e:
-                                            log.error("Error reading profiles: {}".format(e))
+                                            log.error(
+                                                "Error reading profiles: {}".format(e)
+                                            )
 
-                                if (k == "features"):
+                                if k == "features":
                                     cfg._features.update(v)
 
-                                if (k == "post_starts"):
+                                if k == "post_starts":
                                     cfg._post_starts.update(v)
 
                     except Exception as e:
-                        raise Exception(f"Could not load configuration file: {entry}: {e}")
+                        raise Exception(
+                            f"Could not load configuration file: {entry}: {e}"
+                        )
                     yfile.close()
 
         log.info("qos: {}".format(cfg._qos.keys()))
@@ -146,4 +186,3 @@ class ProfileManager(QueryUser):
         log.info("features: {}".format(cfg._features.keys()))
         log.info("profiles: {}".format(cfg._profiles.keys()))
         log.info("networks: {}".format(cfg._networks.keys()))
-

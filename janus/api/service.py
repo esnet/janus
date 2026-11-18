@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from janus.api.models import Node, SessionRequest
-from janus.settings import cfg
 
 
 class Service(ABC):
@@ -16,7 +15,9 @@ class Service(ABC):
         pass
 
     @abstractmethod
-    def create_service_record(self, sid, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports):
+    def create_service_record(
+        self, sid, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports
+    ):
         pass
 
     @abstractmethod
@@ -36,7 +37,9 @@ class Service(ABC):
         pass
 
     @abstractmethod
-    def get_logs(self, node: Node, container, since=0, stderr=1, stdout=1, tail=100, timestamps=0):
+    def get_logs(
+        self, node: Node, container, since=0, stderr=1, stdout=1, tail=100, timestamps=0
+    ):
         pass
 
     @abstractmethod

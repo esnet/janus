@@ -23,7 +23,9 @@ class SENSEApiHandler:
 
         for attempt in range(self.retries):
             try:
-                tasks = self.task_client.get_tasks_agent_status(assigned=assigned, status=status)
+                tasks = self.task_client.get_tasks_agent_status(
+                    assigned=assigned, status=status
+                )
 
                 if isinstance(tasks, list):
                     return tasks
@@ -33,9 +35,12 @@ class SENSEApiHandler:
                 err = str(e)
 
             import time
+
             time.sleep(1)
 
-        log.error(f'Giving up on retrieving tasks after {self.retries} attempts....{err}')
+        log.error(
+            f"Giving up on retrieving tasks after {self.retries} attempts....{err}"
+        )
         return None
 
     def _update_task(self, data, **kwargs):
@@ -53,30 +58,33 @@ class SENSEApiHandler:
                 err = str(e)
 
             import time
+
             time.sleep(1)
 
-        log.error(f'Giving up on updating task after {self.retries} attempts:{kwargs}: error={err}')
+        log.error(
+            f"Giving up on updating task after {self.retries} attempts:{kwargs}: error={err}"
+        )
         return False
 
     def accept_task(self, uuid, targets, message):
-        data = dict(url=self.url, targets=targets,  message=message)
-        return self._update_task(data, uuid=uuid, state='ACCEPTED')
+        data = dict(url=self.url, targets=targets, message=message)
+        return self._update_task(data, uuid=uuid, state="ACCEPTED")
 
     def reject_task(self, uuid, targets, message):
         data = dict(url=self.url, targets=targets, message=message)
-        return self._update_task(data, uuid=uuid, state='REJECTED')
+        return self._update_task(data, uuid=uuid, state="REJECTED")
 
     def fail_task(self, uuid, targets, message):
         data = dict(url=self.url, targets=targets, message=message)
-        return self._update_task(data, uuid=uuid, state='FAILED')
+        return self._update_task(data, uuid=uuid, state="FAILED")
 
     def wait_task(self, uuid, targets, message):
         data = dict(url=self.url, targets=targets, message=message)
-        return self._update_task(data, uuid=uuid, state='WAITING')
+        return self._update_task(data, uuid=uuid, state="WAITING")
 
     def finish_task(self, uuid, targets, message):
         data = dict(url=self.url, targets=targets, message=message)
-        return self._update_task(data, uuid=uuid, state='FINISHED')
+        return self._update_task(data, uuid=uuid, state="FINISHED")
 
     def get_metadata(self, domain, name):
         return self.metadata_client.get_metadata(domain=domain, name=name)
@@ -86,7 +94,9 @@ class SENSEApiHandler:
 
         for attempt in range(self.retries):
             try:
-                ret = self.metadata_client.post_metadata(data=json.dumps(metadata), domain=domain, name=name)
+                ret = self.metadata_client.post_metadata(
+                    data=json.dumps(metadata), domain=domain, name=name
+                )
 
                 if isinstance(ret, dict):
                     return True
@@ -96,7 +106,10 @@ class SENSEApiHandler:
                 err = str(e)
 
             import time
+
             time.sleep(1)
 
-        log.error(f'Giving up on updating metadata after {self.retries} attempts: {err}')
+        log.error(
+            f"Giving up on updating metadata after {self.retries} attempts: {err}"
+        )
         return None

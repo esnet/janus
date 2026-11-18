@@ -1,4 +1,8 @@
-from tests.sense_test_utils import get_logger, get_db_file_path, get_janus_conf_file_path
+from tests.sense_test_utils import (
+    get_logger,
+    get_db_file_path,
+    get_janus_conf_file_path,
+)
 
 log = get_logger()
 
@@ -14,7 +18,7 @@ def run_sense_task_workflow(script):
         database=get_db_file_path(),
         config_file=get_janus_conf_file_path(),
         sense_api_handler=sense_api_handler,
-        node_name_filter=None
+        node_name_filter=None,
     )
 
     tsw.init()
@@ -30,7 +34,9 @@ def run_sense_task_workflow(script):
 
     import json
 
-    log.info(f'{script.prefix}: {json.dumps(sense_api_handler.task_state_map, indent=2)}')
+    log.info(
+        f"{script.prefix}: {json.dumps(sense_api_handler.task_state_map, indent=2)}"
+    )
 
 
 def test_simple_task_script():
@@ -51,7 +57,7 @@ def test_using_complex_script():
     run_sense_task_workflow(ComplexScript("complex"))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_simple_task_script()
     test_using_basic_script()
     test_using_complex_script()

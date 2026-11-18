@@ -1,15 +1,14 @@
-import os
 import json
 import logging
+from .constants import Constants as Constants
 from ipaddress import IPv4Network, IPv4Address
 from ipaddress import IPv6Network, IPv6Address
 
 from janus import settings
-from janus.api.constants import Constants
-from janus.api.models import Network,Node
+from janus.api.models import Network, Node
 from janus.settings import cfg
 import requests
-import shlex
+import ssl
 import queue
 import websocket
 from threading import Thread
@@ -20,22 +19,35 @@ from threading import Lock
 
 log = logging.getLogger(__name__)
 
-def keys_lower(in_dict):
-    return {k.lower(): keys_lower(v) if isinstance(v, dict) else v for k, v in in_dict.items()}
 
-def cname_from_id(sid, idx=1, prefix='janus'):
+def keys_lower(in_dict):
+    return {
+        k.lower(): keys_lower(v) if isinstance(v, dict) else v
+        for k, v in in_dict.items()
+    }
+
+
+def cname_from_id(sid, idx=1, prefix="janus"):
     return f"{prefix}-{sid}-{idx}"
+
 
 def is_subset(subset, superset):
     if isinstance(subset, dict):
-        return all(key in superset and is_subset(val, superset[key]) for key, val in subset.items())
+        return all(
+            key in superset and is_subset(val, superset[key])
+            for key, val in subset.items()
+        )
     if isinstance(subset, list) or isinstance(subset, set):
-        return all(any(is_subset(subitem, superitem) for superitem in superset) for subitem in subset)
+        return all(
+            any(is_subset(subitem, superitem) for superitem in superset)
+            for subitem in subset
+        )
     return subset == superset
+
 
 def precommit_db(Id=None, delete=False):
     dbase = cfg.db
-    table = dbase.get_table('active')
+    table = dbase.get_table("active")
     if Id and delete:
         dbase.remove(table, ids=Id)
     else:
@@ -51,58 +63,66 @@ def commit_db_realized(record, node_table, net_table, delete=False):
 
     for k, v in services.items():
         for s in v:
-            if s.get('data_net'):
-                host_profile = s['profile']
+            if s.get("data_net"):
+                host_profile = s["profile"]
                 if host_profile not in datanet_ipv4:
                     datanet_ipv4[host_profile] = set()
                     datanet_ipv6[host_profile] = set()
 
-                if s.get('data_ipv4'):
-                    datanet_ipv4[host_profile].add(s['data_ipv4'])
+                if s.get("data_ipv4"):
+                    datanet_ipv4[host_profile].add(s["data_ipv4"])
 
-                if s.get('data_ipv6'):
-                    datanet_ipv6[host_profile].add(s['data_ipv6'])
+                if s.get("data_ipv6"):
+                    datanet_ipv6[host_profile].add(s["data_ipv6"])
 
-    for k,v in services.items():
+    for k, v in services.items():
         for s in v:
             node = dbase.get(node_table, name=k)
             if delete:
                 try:
-                    if s.get('ctrl_port'):
-                        node['allocated_ports'].remove(int(s['ctrl_port']))
-                    if s.get('data_vfid'):
-                        node['allocated_vfs'].remove(s['data_vfid'])
-                except Exception as e:
+                    if s.get("ctrl_port"):
+                        node["allocated_ports"].remove(int(s["ctrl_port"]))
+                    if s.get("data_vfid"):
+                        node["allocated_vfs"].remove(s["data_vfid"])
+                except Exception:
                     pass
             else:
-                if s.get('ctrl_port'):
-                    node['allocated_ports'].append(int(s['ctrl_port']))
-                if s.get('data_vfid'):
-                    node['allocated_vfs'].append(s['data_vfid'])
+                if s.get("ctrl_port"):
+                    node["allocated_ports"].append(int(s["ctrl_port"]))
+                if s.get("data_vfid"):
+                    node["allocated_vfs"].append(s["data_vfid"])
             dbase.update(node_table, node, name=k)
 
-            if s.get('data_net'):
-                nobj = Network(s['data_net_name'], k)
+            if s.get("data_net"):
+                nobj = Network(s["data_net_name"], k)
                 net = dbase.get(net_table, key=nobj.key)
-                host_profile = s['profile']
+                host_profile = s["profile"]
 
                 if delete:
-                    net['allocated_v4'] = [a for a in net['allocated_v4'] if a not in datanet_ipv4[host_profile]]
-                    net['allocated_v6'] = [a for a in net['allocated_v6'] if a not in datanet_ipv6[host_profile]]
+                    net["allocated_v4"] = [
+                        a
+                        for a in net["allocated_v4"]
+                        if a not in datanet_ipv4[host_profile]
+                    ]
+                    net["allocated_v6"] = [
+                        a
+                        for a in net["allocated_v6"]
+                        if a not in datanet_ipv6[host_profile]
+                    ]
                 else:
-                    net['allocated_v4'].extend(datanet_ipv4[host_profile])
-                    net['allocated_v6'].extend(datanet_ipv6[host_profile])
+                    net["allocated_v4"].extend(datanet_ipv4[host_profile])
+                    net["allocated_v6"].extend(datanet_ipv6[host_profile])
 
-                net['allocated_v4'] = sorted(list(set(net['allocated_v4'])))
-                net['allocated_v6'] = sorted(list(set(net['allocated_v6'])))
+                net["allocated_v4"] = sorted(list(set(net["allocated_v4"])))
+                net["allocated_v6"] = sorted(list(set(net["allocated_v6"])))
                 dbase.update(net_table, net, key=nobj.key)
 
 
 def commit_db(record, rid=None, delete=False, realized=False):
     dbase = cfg.db
-    node_table = dbase.get_table('nodes')
-    net_table = dbase.get_table('networks')
-    table = dbase.get_table('active')
+    node_table = dbase.get_table("nodes")
+    net_table = dbase.get_table("networks")
+    table = dbase.get_table("active")
 
     if realized:
         commit_db_realized(record, node_table, net_table, delete)
@@ -119,27 +139,29 @@ def commit_db(record, rid=None, delete=False, realized=False):
         Id = dbase.insert(table, record)
         return {Id: record}
 
+
 def get_next_vf(node, dnet):
     try:
         docknet = node["networks"][dnet]
         sriov = node["host"]["sriov"]
         nsr = sriov.get(docknet["netdevice"], None)
-        avail = set([ (vf["id"], vf['mac']) for vf in nsr["vfs"] ])
+        avail = set([(vf["id"], vf["mac"]) for vf in nsr["vfs"]])
         alloced = set(node["allocated_vfs"])
         avail = avail - alloced
-    except:
+    except Exception:
         raise Exception("Could not determine SRIOV VF for data net {}".format(dnet))
     try:
         vf = next(iter(avail))
-    except:
+    except Exception:
         raise Exception("No more SRIOV VFs available for data net {}".format(dnet))
     return vf
+
 
 def get_next_cport(node, prof, curr=set()):
     ctrl_ports = prof.settings.ctrl_ports
     if not ctrl_ports:
         return None
-    alloced = set(node['allocated_ports'])
+    alloced = set(node["allocated_ports"])
     avail = set()
     for item in ctrl_ports:
         if isinstance(item, int):
@@ -156,11 +178,12 @@ def get_next_cport(node, prof, curr=set()):
         return str(port)
     raise Exception("No more ctrl ports available")
 
+
 def get_next_sport(node, prof, curr=set()):
     serv_ports = prof.settings.serv_ports
     if not serv_ports:
         return None
-    alloced = set(node['allocated_ports'])
+    alloced = set(node["allocated_ports"])
     avail = set()
     for item in serv_ports:
         if isinstance(item, int):
@@ -177,6 +200,7 @@ def get_next_sport(node, prof, curr=set()):
         return str(port)
     raise Exception("No more serv ports available")
 
+
 def get_exp_ports(exposed_ports):
     ports = []
     for item in exposed_ports:
@@ -188,6 +212,7 @@ def get_exp_ports(exposed_ports):
             raise ValueError(f"Invalid exposed_ports entry: {item}")
     return ports
 
+
 def format_data_ports(data_ports):
     ports = []
     for item in data_ports:
@@ -197,8 +222,9 @@ def format_data_ports(data_ports):
             ports.append(f"{item[0]},{item[1]}")
         else:
             raise ValueError(f"Invalid data_ports entry: {item}")
-    dprs =  ",".join(ports)
+    dprs = ",".join(ports)
     return dprs
+
 
 def get_data_ports(data_ports):
     ports = []
@@ -211,9 +237,10 @@ def get_data_ports(data_ports):
             raise ValueError(f"Invalid data_ports entry: {item}")
     return ports
 
+
 def get_next_ipv4(net, curr, cidr=False, key=None, name=None):
     dbase = cfg.db
-    nets = dbase.get_table('networks')
+    nets = dbase.get_table("networks")
     key = key or net.key
     network = dbase.get(nets, key=key)
     name = name or net.name
@@ -226,16 +253,16 @@ def get_next_ipv4(net, curr, cidr=False, key=None, name=None):
 
     alloced = list()
     for n in named_nets:
-        alloced.extend(n['allocated_v4'])
+        alloced.extend(n["allocated_v4"])
     ipnet = None
-    for sub in network['subnet']:
+    for sub in network["subnet"]:
         try:
-            ipnet = IPv4Network(sub['subnet'])
-            gw = IPv4Address(sub.get('gateway'))
+            ipnet = IPv4Network(sub["subnet"])
+            gw = IPv4Address(sub.get("gateway"))
             if gw:
                 alloced.append(str(gw))
             break
-        except:
+        except Exception:
             pass
 
     if net.ipv4 and not ipnet:
@@ -260,7 +287,7 @@ def get_next_ipv4(net, curr, cidr=False, key=None, name=None):
             test = next(aiter)
             if test not in unavail:
                 ipv4 = test
-        except:
+        except Exception:
             raise Exception(f"No more ipv4 addresses available for network {name}")
     curr.add(ipv4)
     if cidr:
@@ -271,7 +298,7 @@ def get_next_ipv4(net, curr, cidr=False, key=None, name=None):
 
 def get_next_ipv6(net, curr, cidr=False, key=None, name=None):
     dbase = cfg.db
-    nets = dbase.get_table('networks')
+    nets = dbase.get_table("networks")
     key = key or net.key
     network = dbase.get(nets, key=key)
     name = name or net.name
@@ -282,16 +309,16 @@ def get_next_ipv6(net, curr, cidr=False, key=None, name=None):
     named_nets = dbase.search(nets, name=name)
     alloced = list()
     for n in named_nets:
-        alloced.extend(n['allocated_v6'])
+        alloced.extend(n["allocated_v6"])
     ipnet = None
-    for sub in network['subnet']:
+    for sub in network["subnet"]:
         try:
-            ipnet = IPv6Network(sub['subnet'])
-            gw = IPv6Address(sub.get('gateway'))
+            ipnet = IPv6Network(sub["subnet"])
+            gw = IPv6Address(sub.get("gateway"))
             if gw:
                 alloced.append(str(gw))
             break
-        except:
+        except Exception:
             pass
 
     if net.ipv6 and not ipnet:
@@ -316,75 +343,79 @@ def get_next_ipv6(net, curr, cidr=False, key=None, name=None):
             test = next(aiter)
             if test not in unavail:
                 ipv6 = test
-        except:
+        except Exception:
             raise Exception(f"No more ipv6 addresses available for network {name}")
     curr.add(ipv6)
     if cidr:
         return f"{ipv6}/{ipnet.prefixlen}"
     return str(ipv6)
 
+
 def get_cpuset(node, net, prof):
-    if net in node['networks']:
-        netdev = node['networks'][net].get('netdevice', None)
+    if net in node["networks"]:
+        netdev = node["networks"][net].get("netdevice", None)
         if netdev:
-            cpuset = node['host']['sriov'][netdev]['local_cpulist']
+            cpuset = node["host"]["sriov"][netdev]["local_cpulist"]
             return cpuset
     return None
+
 
 def get_cpu(node, prof):
     return prof.settings.cpu
 
+
 def get_numa(node, net, prof):
     return None
+
 
 def get_mem(node, prof):
     return prof.settings.memory
 
+
 def error_svc(s, e):
     try:
         restxt = json.loads(e.body)
-    except:
-        restxt = ''
+    except Exception:
+        restxt = ""
     try:
         reason = e.reason
-    except:
+    except Exception:
         reason = str(e)
-    s['errors'].append({'reason': reason,
-                        'response': restxt})
+    s["errors"].append({"reason": reason, "response": restxt})
     return True
+
 
 def handle_image(n: Node, img, handler, pull=False):
     if img not in n.images or pull:
-        parts = img.split(':')
+        parts = img.split(":")
         if len(parts) == 1:
             if f"{img}:latest" not in n.images or pull:
                 log.info(f"Pulling image {img} for node {n.name}")
-                handler.pull_image(n, parts[0], 'latest')
+                handler.pull_image(n, parts[0], "latest")
         elif len(parts) > 1:
             log.info(f"Pulling image {img} for node {n.name}")
             handler.pull_image(n, parts[0], parts[1])
 
+
 def set_qos(url, qos):
-        try:
-            api_url = "{}://{}:{}/api/janus/agent/tc/netem".format(
-                settings.AGENT_PROTO,
-                url,
-                settings.AGENT_PORT
-            )
+    try:
+        api_url = "{}://{}:{}/api/janus/agent/tc/netem".format(
+            settings.AGENT_PROTO, url, settings.AGENT_PORT
+        )
 
-            # basic authentication for now
-            res = requests.post(
-                url=api_url,
-                json=qos,
-                auth=("admin", "admin"),
-                verify=settings.AGENT_SSL_VERIFY,
-                timeout=2
-            )
+        # basic authentication for now
+        res = requests.post(
+            url=api_url,
+            json=qos,
+            auth=("admin", "admin"),
+            verify=settings.AGENT_SSL_VERIFY,
+            timeout=2,
+        )
 
-            log.info(res.json())
-        except Exception as e:
-            log.error(e)
-            # return node, None
+        log.info(res.json())
+    except Exception as e:
+        log.error(e)
+        # return node, None
 
 
 class ExecSession:
@@ -392,11 +423,13 @@ class ExecSession:
         # self.client = client
         # token = self.client.jwt
         # ws_url = f"{cfg.PORTAINER_WS}/exec?token={token}&id={exec_id}&endpointId={node_id}"
-        self.ws = websocket.create_connection(ws_url)
+        self.ws = websocket.create_connection(ws_url, sslopt={"cert_reqs": ssl.CERT_NONE})
         self.send_queue = queue.Queue()
         self.receive_queue = queue.Queue()
 
-        self._sender = Thread(target=self._send_loop, daemon=True) #marking them daemon so they don’t block process exit
+        self._sender = Thread(
+            target=self._send_loop, daemon=True
+        )  # marking them daemon so they don’t block process exit
         self._receiver = Thread(target=self._recv_loop, daemon=True)
         self._sender.start()
         self._receiver.start()
@@ -432,7 +465,7 @@ class ExecSession:
         self._sender.join(timeout)
         try:
             self.ws.close()
-        except:
+        except Exception:
             pass
         self._receiver.join(timeout)
 
@@ -507,7 +540,7 @@ class ExecWebsocketServerSession:
                 while self.ws_server.connected:
                     r = self.ws_server.receive()
                     r = json.loads(r)
-                    ret = r['value']
+                    ret = r["value"]
                     self.receive_queue.put(ret)
 
                     if ret is None:

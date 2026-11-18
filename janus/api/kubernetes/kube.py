@@ -11,11 +11,7 @@ from kubernetes.stream import stream
 
 from janus.api.constants import Constants
 from janus.api.constants import EPType
-from janus.api.models import (
-    Node,
-    Network,
-    SessionRequest
-)
+from janus.api.models import Node, Network, SessionRequest
 from janus.api.service import Service
 from janus.api.utils import (
     get_next_cport,
@@ -24,7 +20,7 @@ from janus.api.utils import (
     get_next_ipv6,
     get_cpu,
     get_mem,
-    is_subset
+    is_subset,
 )
 from janus.settings import cfg
 
@@ -41,10 +37,10 @@ class KubernetesApi(Service):
 
     def __init__(self):
         super().__init__()
-        self.api_key = os.getenv('KUBE_API_KEY', None)
-        self.api_cluster_url = os.getenv('KUBE_CLUSTER_URL', None)
-        self.api_cluster_name = os.getenv('KUBE_CLUSTER_NAME', None)
-        self.api_namespace = os.getenv('KUBE_NAMESPACE')
+        self.api_key = os.getenv("KUBE_API_KEY", None)
+        self.api_cluster_url = os.getenv("KUBE_CLUSTER_URL", None)
+        self.api_cluster_name = os.getenv("KUBE_CLUSTER_NAME", None)
+        self.api_namespace = os.getenv("KUBE_NAMESPACE")
         self.config = None
         self._exec_map = dict()
 
@@ -55,8 +51,8 @@ class KubernetesApi(Service):
     def _get_namespace(self, ctx_name):
         try:
             contexts, _ = self._get_contexts()
-            ctx = [x for x in contexts if x.get('name') == ctx_name][0]
-            return ctx.get('context').get('namespace', self.NS)
+            ctx = [x for x in contexts if x.get("name") == ctx_name][0]
+            return ctx.get("context").get("namespace", self.NS)
         except Exception as e:
             log.error(f"Could not get namespace for ctx={ctx_name}: {e}")
             # return self.NS  AES RETURNING THE DEFAULT MASKS THE ERROR
@@ -75,14 +71,18 @@ class KubernetesApi(Service):
         if self.api_key and self.api_cluster_name and self.api_cluster_url:
             self.config = client.Configuration()
             self.config.host = self.api_cluster_url
-            self.config.api_key['authorization'] = self.api_key
-            self.config.api_key_prefix['authorization'] = 'Bearer'
+            self.config.api_key["authorization"] = self.api_key
+            self.config.api_key_prefix["authorization"] = "Bearer"
             self.config.verify_ssl = False
-            return [{'name': self.api_cluster_name,
-                     'context': {
-                         'host': self.api_cluster_url,
-                         'namespace': self.api_namespace}
-                     }], None
+            return [
+                {
+                    "name": self.api_cluster_name,
+                    "context": {
+                        "host": self.api_cluster_url,
+                        "namespace": self.api_namespace,
+                    },
+                }
+            ], None
         else:
             # noinspection PyBroadException
             try:
@@ -101,7 +101,7 @@ class KubernetesApi(Service):
 
         node_count = 0
         for ctx in contexts:
-            ctx_name = ctx.get('name')
+            ctx_name = ctx.get("name")
             if nname and nname != ctx_name:
                 continue
             host_info = {
@@ -109,9 +109,7 @@ class KubernetesApi(Service):
                     "brand_raw": str(),
                     "count": 0,
                 },
-                "mem": {
-                    "total": 0
-                }
+                "mem": {"total": 0},
             }
             cnodes = list()
             archs = set()
@@ -129,46 +127,58 @@ class KubernetesApi(Service):
 
                 cnode = {
                     "name": i.metadata.name,
-                    "addresses": [a.address if a.type == "InternalIP" else "" for a in i.status.addresses],
-                    "internal_addresses": [a.address for a in addresses if a.type == 'InternalIP'],
-                    "external_addresses": [a.address for a in addresses if a.type == 'ExternalIP'],
-                    "host_addresses": [a.address for a in addresses if a.type == "Hostname"],
-                    "phase": i.status.phase
+                    "addresses": [
+                        a.address if a.type == "InternalIP" else ""
+                        for a in i.status.addresses
+                    ],
+                    "internal_addresses": [
+                        a.address for a in addresses if a.type == "InternalIP"
+                    ],
+                    "external_addresses": [
+                        a.address for a in addresses if a.type == "ExternalIP"
+                    ],
+                    "host_addresses": [
+                        a.address for a in addresses if a.type == "Hostname"
+                    ],
+                    "phase": i.status.phase,
                 }
-                host_info['cpu']['count'] += int(i.status.capacity.get('cpu'))
+                host_info["cpu"]["count"] += int(i.status.capacity.get("cpu"))
                 archs.add(i.status.node_info.architecture)
                 cnodes.append(cnode)
                 node_count += 1
-            namespace = ctx.get('context').get('namespace', self.NS)
-            host_info['cpu']['brand_raw'] = " ".join(archs)
+            namespace = ctx.get("context").get("namespace", self.NS)
+            host_info["cpu"]["brand_raw"] = " ".join(archs)
             cnets = dict()
             try:
                 capi = client.CustomObjectsApi(api_client)
-                res = capi.list_namespaced_custom_object("k8s.cni.cncf.io",
-                                                         "v1",
-                                                         namespace,
-                                                         "network-attachment-definitions")
-                for i in res.get('items'):
-                    meta = i.get('metadata')
-                    name = meta.get('name')
+                res = capi.list_namespaced_custom_object(
+                    "k8s.cni.cncf.io", "v1", namespace, "network-attachment-definitions"
+                )
+                for i in res.get("items"):
+                    meta = i.get("metadata")
+                    name = meta.get("name")
                     cnets[name] = self.to_cnet(i)
 
             except ApiException as e:
-                log.warning(f"Could not find network attachement definitions on cluster {ctx_name}: {e}")
+                log.warning(
+                    f"Could not find network attachement definitions on cluster {ctx_name}: {e}"
+                )
 
-            ret.append({
-                "name": ctx_name,
-                "id": ctx_name,
-                "namespace": namespace,
-                "endpoint_type": EPType.KUBERNETES,
-                "endpoint_status": 1,
-                "cluster_node_count": node_count,
-                "cluster_nodes": cnodes,
-                "networks": cnets,
-                "host": host_info,
-                "url": api_client.configuration.host,
-                "public_url": KUBE_CONFIG_DEFAULT_LOCATION
-            })
+            ret.append(
+                {
+                    "name": ctx_name,
+                    "id": ctx_name,
+                    "namespace": namespace,
+                    "endpoint_type": EPType.KUBERNETES,
+                    "endpoint_status": 1,
+                    "cluster_node_count": node_count,
+                    "cluster_nodes": cnodes,
+                    "networks": cnets,
+                    "host": host_info,
+                    "url": api_client.configuration.host,
+                    "public_url": KUBE_CONFIG_DEFAULT_LOCATION,
+                }
+            )
         return ret
 
     def get_images(self, node: Node):
@@ -180,12 +190,11 @@ class KubernetesApi(Service):
         namespace = self._get_namespace(node.name)
 
         api = client.CustomObjectsApi(api_client)
-        res = api.list_namespaced_custom_object("k8s.cni.cncf.io",
-                                                "v1",
-                                                namespace,
-                                                "network-attachment-definitions")
+        res = api.list_namespaced_custom_object(
+            "k8s.cni.cncf.io", "v1", namespace, "network-attachment-definitions"
+        )
 
-        for i in res.get('items'):
+        for i in res.get("items"):
             cnets.append(self.to_cnet(i))
 
         return cnets
@@ -193,14 +202,16 @@ class KubernetesApi(Service):
     def get_containers(self, node: Node):
         pass
 
-    def get_logs(self, node: Node, container, since=0, stderr=1, stdout=1, tail=100, timestamps=0):
+    def get_logs(
+        self, node: Node, container, since=0, stderr=1, stdout=1, tail=100, timestamps=0
+    ):
         api_client = self._get_client(node.name)
         api = client.CoreV1Api(api_client)
         ret = api.read_namespaced_pod_log(
             name=container,
             namespace=self._get_namespace(node.name),
             tail_lines=tail,
-            pretty='true',
+            pretty="true",
         )
         return {"response": ret}
 
@@ -241,7 +252,7 @@ class KubernetesApi(Service):
                 "container_images": [s.image for s in container_statuses],
                 "phase": status.phase,
                 "node_name": spec.node_name,
-                "annotations": metadata.annotations
+                "annotations": metadata.annotations,
             }
 
             cpods.append(cpod)
@@ -251,32 +262,39 @@ class KubernetesApi(Service):
     def start_container(self, node: Node, container: str, service=None, **kwargs):
         api_client = self._get_client(node.name)
         v1 = client.CoreV1Api(api_client)
-        v1.create_namespaced_pod(body=service['kwargs'],
-                                 namespace=self._get_namespace(node.name))
-        pod = v1.read_namespaced_pod(name=container,
-                                     namespace=self._get_namespace(node.name))
+        v1.create_namespaced_pod(
+            body=service["kwargs"], namespace=self._get_namespace(node.name)
+        )
+        pod = v1.read_namespaced_pod(
+            name=container, namespace=self._get_namespace(node.name)
+        )
         attempt = 0
         retries = self.RETRIES
 
-        while pod.status.phase == 'Pending' and attempt < retries:
+        while pod.status.phase == "Pending" and attempt < retries:
             attempt += 1
-            log.debug(f"Starting container={pod.metadata.name}:phase={pod.status.phase}:attempt={attempt}/{retries}")
-            pod = v1.read_namespaced_pod(name=container, namespace=self._get_namespace(node.name))
+            log.debug(
+                f"Starting container={pod.metadata.name}:phase={pod.status.phase}:attempt={attempt}/{retries}"
+            )
+            pod = v1.read_namespaced_pod(
+                name=container, namespace=self._get_namespace(node.name)
+            )
 
-            if pod.status.phase == 'Running':
+            if pod.status.phase == "Running":
                 break
 
             time.sleep(self.SLEEP_TIME)
 
-        if pod.status.phase != 'Running':
+        if pod.status.phase != "Running":
             wait_time = attempt * self.SLEEP_TIME
-            log.error(f'Starting container={pod.metadata.name}:phase={pod.status.phase}:wait_time={wait_time}s')
-            raise Exception(f'Starting container={pod.metadata.name}:phase={pod.status.phase}:wait_time={wait_time}s')
+            log.error(
+                f"Starting container={pod.metadata.name}:phase={pod.status.phase}:wait_time={wait_time}s"
+            )
+            raise Exception(
+                f"Starting container={pod.metadata.name}:phase={pod.status.phase}:wait_time={wait_time}s"
+            )
 
-        cpod = {
-            "name": pod.metadata.name,
-            "phase": pod.status.phase
-        }
+        cpod = {"name": pod.metadata.name, "phase": pod.status.phase}
 
         log.info(f"Started container: {cpod}:wait_time={attempt * self.SLEEP_TIME}s")
         return cpod
@@ -291,26 +309,31 @@ class KubernetesApi(Service):
 
         while attempt < retries:
             try:
-                pod = api.read_namespaced_pod(name=container, namespace=self._get_namespace(node.name))
+                pod = api.read_namespaced_pod(
+                    name=container, namespace=self._get_namespace(node.name)
+                )
             except ApiException as ae:
                 deleted = str(ae.status) == "404"
 
                 if deleted:
                     break
 
-                log.warning(f'Stopping container={pod.metadata.name}:{ae}:attempt={attempt}/{retries}')
+                log.warning(
+                    f"Stopping container={pod.metadata.name}:{ae}:attempt={attempt}/{retries}"
+                )
 
             attempt += 1
             time.sleep(self.SLEEP_TIME)
 
         if not deleted:
-            log.error(f'Stopping container={pod.metadata.name}:wait_time={attempt * self.SLEEP_TIME}s')
-            raise Exception(f'Stopping container={pod.metadata.name}:wait_time={attempt * self.SLEEP_TIME}s')
+            log.error(
+                f"Stopping container={pod.metadata.name}:wait_time={attempt * self.SLEEP_TIME}s"
+            )
+            raise Exception(
+                f"Stopping container={pod.metadata.name}:wait_time={attempt * self.SLEEP_TIME}s"
+            )
 
-        cpod = {
-            "name": pod.metadata.name,
-            "phase": pod.status.phase
-        }
+        cpod = {"name": pod.metadata.name, "phase": pod.status.phase}
 
         log.info(f"Stopped container: {cpod}:wait_time={attempt * self.SLEEP_TIME}s")
         return cpod
@@ -330,17 +353,18 @@ class KubernetesApi(Service):
 
         api_client = self._get_client(node.name)
         api = client.CoreV1Api(api_client)
-        ws_client: WSClient = stream(api.connect_get_namespaced_pod_exec,
-                                     name=container,
-                                     namespace=self._get_namespace(node.name),
-                                     command=kwargs.get("Cmd"),
-                                     container=container,
-                                     stderr=kwargs.get("AttachStderr", True),
-                                     stdin=kwargs.get("AttachStdin", True),
-                                     stdout=kwargs.get("AttachStdout", True),
-                                     tty=kwargs.get("Tty", False),
-                                     _preload_content=False
-                                     )
+        ws_client: WSClient = stream(
+            api.connect_get_namespaced_pod_exec,
+            name=container,
+            namespace=self._get_namespace(node.name),
+            command=kwargs.get("Cmd"),
+            container=container,
+            stderr=kwargs.get("AttachStderr", True),
+            stdin=kwargs.get("AttachStdin", True),
+            stdout=kwargs.get("AttachStdout", True),
+            tty=kwargs.get("Tty", False),
+            _preload_content=False,
+        )
 
         if not self._exec_map.get(node.name):
             self._exec_map[node.name] = dict()
@@ -358,31 +382,30 @@ class KubernetesApi(Service):
 
     @staticmethod
     def to_cnet(net):
-        meta = net.get('metadata')
-        name = meta.get('name')
-        spec = json.loads(net.get('spec').get('config'))
-        plugins = spec.get('plugins', dict())
+        meta = net.get("metadata")
+        name = meta.get("name")
+        spec = json.loads(net.get("spec").get("config"))
+        plugins = spec.get("plugins", dict())
         snets = list()
         if plugins and isinstance(list, plugins):
             plugins = plugins[0]
-            if plugins.get('ipam') and plugins.get('ipam').get('addresses'):
-                for a in plugins.get('ipam').get('addresses'):
-                    snets.append({
-                        'Subnet': a.get('address'),
-                        'Gateway': a.get('gateway')
-                    })
+            if plugins.get("ipam") and plugins.get("ipam").get("addresses"):
+                for a in plugins.get("ipam").get("addresses"):
+                    snets.append(
+                        {"Subnet": a.get("address"), "Gateway": a.get("gateway")}
+                    )
 
         cnet = {
-            'name': name,
-            'id': meta.get('uid'),
-            'namespace': meta.get('namespace'),
-            'driver': plugins.get('type'),
-            'parent': plugins.get('master'),
-            'mode': plugins.get('mode'),
-            'vlan': plugins.get('vlanId'),
-            'mtu': plugins.get('mtu'),
-            'subnet': snets,
-            '_data': net
+            "name": name,
+            "id": meta.get("uid"),
+            "namespace": meta.get("namespace"),
+            "driver": plugins.get("type"),
+            "parent": plugins.get("master"),
+            "mode": plugins.get("mode"),
+            "vlan": plugins.get("vlanId"),
+            "mtu": plugins.get("mtu"),
+            "subnet": snets,
+            "_data": net,
         }
 
         return cnet
@@ -395,7 +418,7 @@ class KubernetesApi(Service):
             version="v1",
             plural="network-attachment-definitions",
             namespace=self._get_namespace(node.name),
-            body=kwargs
+            body=kwargs,
         )
         log.info(f"Created network {net_name} on {node}:{net}")
         return self.to_cnet(net)
@@ -408,7 +431,7 @@ class KubernetesApi(Service):
             version="v1",
             name=network,
             plural="network-attachment-definitions",
-            namespace=self._get_namespace(node.name)
+            namespace=self._get_namespace(node.name),
         )
 
         return self.to_cnet(net)
@@ -421,7 +444,7 @@ class KubernetesApi(Service):
             version="v1",
             name=network,
             plural="network-attachment-definitions",
-            namespace=self._get_namespace(node.name)
+            namespace=self._get_namespace(node.name),
         )
         log.info(f"Removed network {network} on {node.name}")
 
@@ -439,39 +462,41 @@ class KubernetesApi(Service):
                 "plugins": [
                     {
                         "type": p.settings.driver,
-                        "vlanId": int(p.settings.options.get('vlan')) if p.settings.options.get('vlan') else 1,
-                        "master": p.settings.options.get('parent'),
-                        "mtu": int(p.settings.options.get('mtu')) if p.settings.options.get('mtu') else 1500,
-                        "ipam": {
-                            "type": "static"
-                        }
+                        "vlanId": int(p.settings.options.get("vlan"))
+                        if p.settings.options.get("vlan")
+                        else 1,
+                        "master": p.settings.options.get("parent"),
+                        "mtu": int(p.settings.options.get("mtu"))
+                        if p.settings.options.get("mtu")
+                        else 1500,
+                        "ipam": {"type": "static"},
                     }
-                ]
+                ],
             }
 
             ret = {
                 "apiVersion": "k8s.cni.cncf.io/v1",
                 "kind": "NetworkAttachmentDefinition",
-                "metadata": {
-                    "name": p.settings.options.get('name', p.name)
-                },
-                "spec": {
-                    "config": json.dumps(net_cfg)
-                }
+                "metadata": {"name": p.settings.options.get("name", p.name)},
+                "spec": {"config": json.dumps(net_cfg)},
             }
             return ret
 
         created = False
 
         for net in [Network(prof.settings.mgmt_net), Network(prof.settings.data_net)]:
-            if not net.name or net.name in [Constants.NET_NONE, Constants.NET_HOST, Constants.NET_BRIDGE]\
-                    or net.is_host():
+            if (
+                not net.name
+                or net.name
+                in [Constants.NET_NONE, Constants.NET_HOST, Constants.NET_BRIDGE]
+                or net.is_host()
+            ):
                 continue
 
-            nname = node.get('name')
+            nname = node.get("name")
 
-            if kwargs.get('nprof'):
-                nprof = NetworkProfile(**kwargs['nprof'])
+            if kwargs.get("nprof"):
+                nprof = NetworkProfile(**kwargs["nprof"])
             else:
                 nprof = cfg.pm.get_profile(Constants.NET, net.name)
 
@@ -479,15 +504,15 @@ class KubernetesApi(Service):
                 raise Exception(f"Network profile {net.name} not found")
 
             net_attach_def = _build_net(nprof, kwargs)
-            net_name = kwargs.get('name', net.name)
+            net_name = kwargs.get("name", net.name)
             ninfo = None
 
             try:
                 ninfo = self.get_network(Node(**node), net_name)
 
-                if is_subset(net_attach_def, ninfo.get('_data')):
+                if is_subset(net_attach_def, ninfo.get("_data")):
                     log.info(f"Found matching network {net_name} found on {nname}")
-                    node['networks'][net_name] = ninfo
+                    node["networks"][net_name] = ninfo
                     continue
             except ApiException as ae:
                 if str(ae.status) != "404":
@@ -497,24 +522,26 @@ class KubernetesApi(Service):
                 log.warning(f"Removing non matching network {net_name} on {nname}")
                 self.remove_network(Node(**node), net_name)
 
-                if net_name in node['networks']:
-                    del node['networks'][net_name]
+                if net_name in node["networks"]:
+                    del node["networks"][net_name]
 
             log.info(f"Creating: No matching network {net_name} found on {nname}")
             ninfo = self.create_network(Node(**node), net_name, **net_attach_def)
-            node['networks'][net_name] = ninfo
+            node["networks"][net_name] = ninfo
             created = True
 
         return created
 
     # noinspection PyTypeChecker
-    def create_service_record(self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports, **kwargs):
+    def create_service_record(
+        self, sname, sreq: SessionRequest, addrs_v4, addrs_v6, cports, sports, **kwargs
+    ):
         data_net_overrides = kwargs
         srec = dict()
         node = sreq.node
         prof = sreq.profile
         constraints = sreq.constraints
-        nname = node.get('name')
+        nname = node.get("name")
         cname = sname
         dnet = Network(prof.settings.data_net, nname)
         mnet = Network(prof.settings.mgmt_net, nname)
@@ -546,38 +573,42 @@ class KubernetesApi(Service):
                         "name": cname,
                         "image": sreq.image,
                         "resources": {"limits": limits},
-                        "tty": True
+                        "tty": True,
                     }
                 ]
-            }
+            },
         }
 
         if constraints.nodeName:
-            kwargs['spec'].update({"nodeName": constraints.nodeName})
+            kwargs["spec"].update({"nodeName": constraints.nodeName})
 
         if mnet.is_host():
-            kwargs['spec'].update({"hostNetwork": True})
+            kwargs["spec"].update({"hostNetwork": True})
 
-        srec['data_net'] = None
-        srec['data_net_name'] = None
+        srec["data_net"] = None
+        srec["data_net_name"] = None
 
         if dnet.name:
             ips = []
 
             if data_net_overrides:
-                if 'data_ipv4' in data_net_overrides:  # Used by edge
-                    data_ipv4 = data_net_overrides['data_ipv4']
+                if "data_ipv4" in data_net_overrides:  # Used by edge
+                    data_ipv4 = data_net_overrides["data_ipv4"]
                 else:
-                    dnet_name = data_net_overrides['name']
+                    dnet_name = data_net_overrides["name"]
                     key = f"{nname}-{dnet_name}"
-                    data_ipv4 = get_next_ipv4(dnet, addrs_v4, cidr=True, key=key, name=dnet_name)
+                    data_ipv4 = get_next_ipv4(
+                        dnet, addrs_v4, cidr=True, key=key, name=dnet_name
+                    )
 
-                if 'data_ipv6' in data_net_overrides:
-                    data_ipv6 = data_net_overrides['data_ipv6']
+                if "data_ipv6" in data_net_overrides:
+                    data_ipv6 = data_net_overrides["data_ipv6"]
                 else:
-                    dnet_name = data_net_overrides['name']
+                    dnet_name = data_net_overrides["name"]
                     key = f"{nname}-{dnet_name}"
-                    data_ipv6 = get_next_ipv6(dnet, addrs_v6, cidr=True, key=key, name=dnet_name)
+                    data_ipv6 = get_next_ipv6(
+                        dnet, addrs_v6, cidr=True, key=key, name=dnet_name
+                    )
             else:
                 data_ipv4 = get_next_ipv4(dnet, addrs_v4, cidr=True)
                 data_ipv6 = get_next_ipv6(dnet, addrs_v6, cidr=True)
@@ -588,38 +619,37 @@ class KubernetesApi(Service):
                 ips.append(data_ipv6)
 
             dnet_conf = [
-                {
-                    "name": data_net_overrides.get('name', dnet.name),
-                    "ips": ips
-                }
+                {"name": data_net_overrides.get("name", dnet.name), "ips": ips}
             ]
             anno = {
-                "annotations": {
-                    "k8s.v1.cni.cncf.io/networks": json.dumps(dnet_conf)
-                }
+                "annotations": {"k8s.v1.cni.cncf.io/networks": json.dumps(dnet_conf)}
             }
-            kwargs['metadata'].update(anno)
+            kwargs["metadata"].update(anno)
 
-            srec['data_net'] = node['networks'][data_net_overrides.get('name', dnet.name)]
-            srec['data_net_name'] = data_net_overrides.get('name', dnet.name)
+            srec["data_net"] = node["networks"][
+                data_net_overrides.get("name", dnet.name)
+            ]
+            srec["data_net_name"] = data_net_overrides.get("name", dnet.name)
 
-        srec['mgmt_net'] = node['networks'].get(mnet.name, None)
-        srec['mgmt_ipv4'] = mgmt_ipv4
-        srec['mgmt_ipv6'] = mgmt_ipv6
-        srec['data_ipv4'] = data_ipv4.split("/")[0] if data_ipv4 else None
-        srec['data_ipv6'] = data_ipv6.split("/")[0] if data_ipv6 else None
-        srec['container_user'] = kwargs.get("USER_NAME", None)
+        srec["mgmt_net"] = node["networks"].get(mnet.name, None)
+        srec["mgmt_ipv4"] = mgmt_ipv4
+        srec["mgmt_ipv6"] = mgmt_ipv6
+        srec["data_ipv4"] = data_ipv4.split("/")[0] if data_ipv4 else None
+        srec["data_ipv6"] = data_ipv6.split("/")[0] if data_ipv6 else None
+        srec["container_user"] = kwargs.get("USER_NAME", None)
 
-        srec['kwargs'] = kwargs
-        srec['sname'] = sname
-        srec['node'] = node
-        srec['node_id'] = node['id']
-        srec['serv_port'] = sport
-        srec['ctrl_port'] = cport
-        srec['ctrl_host'] = constraints.nodeName if constraints.nodeName else node['public_url']
-        srec['image'] = sreq.image
-        srec['profile'] = prof.name
-        srec['pull_image'] = prof.settings.pull_image
+        srec["kwargs"] = kwargs
+        srec["sname"] = sname
+        srec["node"] = node
+        srec["node_id"] = node["id"]
+        srec["serv_port"] = sport
+        srec["ctrl_port"] = cport
+        srec["ctrl_host"] = (
+            constraints.nodeName if constraints.nodeName else node["public_url"]
+        )
+        srec["image"] = sreq.image
+        srec["profile"] = prof.name
+        srec["pull_image"] = prof.settings.pull_image
         # srec['qos'] = qos
-        srec['errors'] = list()
+        srec["errors"] = list()
         return srec

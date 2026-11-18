@@ -1,10 +1,9 @@
 import logging
-from urllib import response
-from pydantic import ValidationError
+from janus import settings
 from janus.settings import cfg
 
-from flask import request, jsonify
-from flask_restx import Namespace, Resource
+from flask import jsonify
+from flask_openapi3 import APIBlueprint, Tag
 from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import check_password_hash
 from janus.api.models import QoS_Agent
@@ -13,8 +12,9 @@ from .sys.mem import build_mem
 from .sys.net import build_sriov
 from .sys.numa import build_numa
 from .sys.disk import build_block
-from .sys.sysctl import DEF_SYSCTL, get_tune, set_tune
-from .sys.tc import get_eth_iface_rules, Delay, Latency, Filter, Pacing, Netem
+from .sys.sysctl import get_tune, set_tune
+from .sys.tc import get_eth_iface_rules, Netem, Delay, Latency, Filter, Pacing
+from .models_api import InterfaceQuery, TuneRequest
 
 
 # Basic auth
@@ -22,7 +22,12 @@ httpauth = HTTPBasicAuth()
 
 log = logging.getLogger(__name__)
 
-ns = Namespace('janus/agent', description='Operations for node tuning')
+tag = Tag(name="janus/agent", description="Operations for node tuning")
+api_prefix = getattr(settings, "API_PREFIX", "") or ""
+api = APIBlueprint(
+    "agent", __name__, url_prefix=api_prefix + "/janus/agent", abp_tags=[tag]
+)
+
 
 @httpauth.error_handler
 def auth_error(status):
@@ -32,341 +37,272 @@ def auth_error(status):
 @httpauth.verify_password
 def verify_password(username, password):
     users = cfg.get_users()
-    if username in users and \
-            check_password_hash(users.get(username), password):
+    if username in users and check_password_hash(users.get(username), password):
         return username
 
 
-@ns.route('/node')
-class NodeCollection(Resource):
+@api.get("/node", summary="Returns static node resources")
+def get_node():
+    """
+    Returns static node resources
+    """
+    ret = dict()
+    try:
+        ret["cpu"] = build_cpu()
+    except Exception as e:
+        log.warning(f"Could not build CPU info: {e}")
+        ret["cpu"] = {}
 
-    def get(self):
-        """
-        Returns static node resources
-        """
-        ret = dict()
-        ret['cpu'] = build_cpu()
-        ret['mem'] = build_mem()
-        ret['numa'] = build_numa()
-        ret['sriov'] = build_sriov()
-        ret['block'] = build_block()
+    try:
+        ret["mem"] = build_mem()
+    except Exception as e:
+        log.warning(f"Could not build MEM info: {e}")
+        ret["mem"] = {}
 
-        return ret, 200
+    try:
+        ret["numa"] = build_numa()
+    except Exception as e:
+        log.warning(f"Could not build NUMA info: {e}")
+        ret["numa"] = {}
+
+    try:
+        ret["sriov"] = build_sriov()
+    except Exception as e:
+        log.warning(f"Could not build SRIOV info: {e}")
+        ret["sriov"] = {}
+
+    try:
+        ret["block"] = build_block()
+    except Exception as e:
+        log.warning(f"Could not build BLOCK info: {e}")
+        ret["block"] = {}
+
+    return jsonify(ret), 200
 
 
-@ns.route('/tune')
-@ns.response(400, 'Bad Request')
-@ns.response(500, 'Internal Server Error')
-class TuneCollection(Resource):
+@api.get("/tune", summary="Get node tuning settings")
+def get_tune_endpoint():
+    return jsonify(get_tune())
 
-    def get(self):
-        return get_tune()
 
-    @httpauth.login_required
-    def post(self):
-        req = None
-        try:
-            req = request.get_json()
-            if req and type(req) is not dict:
-                res = jsonify(error="Body is not a json dictionary")
-                res.status_code = 400
-                return res
-            log.debug(req)
-        except:
-            pass
+@api.post("/tune", summary="Set node tuning settings")
+@httpauth.login_required
+def post_tune_endpoint(body: TuneRequest):
+    try:
+        ret = set_tune(body.config)
+    except Exception as e:
+        return str(e), 500
+    return jsonify(ret), 200
 
-        try:
-            ret = set_tune(req)
-        except Exception as e:
-            return str(e), 500
-        return ret, 200
 
-@ns.route('/tc/netem')
-@ns.response(400, 'Bad Request')
-@ns.response(500, 'Internal Server Error')
-class TrafficControlNetem(Resource):
-    def get(self):
-        iface = request.args.get('interface', None)
-        container = request.args.get('container', None)
+@api.get("/tc/netem", summary="Get netem rules")
+def get_tc_netem(query: InterfaceQuery):
+    iface = query.interface
+    container = query.container
+
+    if iface is None and container is None:
+        return "No interface or container id specified", 400
+
+    response = get_eth_iface_rules(iface, docker=container)
+
+    if "error" in response:
+        return jsonify(response), 400
+
+    return jsonify(response), 200
+
+
+@api.post("/tc/netem", summary="Set netem rules")
+@httpauth.login_required
+def post_tc_netem(body: QoS_Agent):
+    default = {
+        "interface": None,
+        "delay": None,
+        "loss": None,
+        "rate": None,
+        "corrupt": None,
+        "reordering": None,
+        "limit": None,
+        "dport": None,
+        "ip": None,
+        "container": None,
+    }
+
+    try:
+        req = body.model_dump()
+        log.info(req)
+
+        iface = req.get("interface", None)
+        container = req.get("container", None)
 
         if iface is None and container is None:
             return "No interface or container id specified", 400
 
-        response = get_eth_iface_rules(iface, docker=container)
+        default.update(req)
+        req = default
 
-        if "error" in response:
-            return response, 400
+    except Exception as e:
+        return str(e), 500
 
-        return response, 200
-
-    @httpauth.login_required
-    def post(self):
-        default = {
-            "interface": None,
-            "delay": None,
-            "loss": None,
-            "rate": None,
-            "corrupt": None,
-            "reordering": None,
-            "limit": None,
-            "dport": None,
-            "ip": None,
-            "container": None
-        }
-
-        try:
-            req = request.get_json()
-            QoS_Agent(**req)
-            log.info(req)
-
-            if (req is None) or (req and type(req) is not dict):
-                res = jsonify(error="Body is not json dictionary")
-                res.status_code = 400
-                return res
-
-            iface = req.get('interface', None)
-            container = req.get('container', None)
-
-            if iface is None and container is None:
-                return "No interface or container id specified", 400
-
-            default.update(req)
-            req = default
-
-        except ValidationError as e:
-            return str(e), 400
-
-        except Exception as e:
-            return str(e), 500
-
-        try:
-            ret = Netem(req, verbose=True)
-        except Exception as e:
-            return str(e), 500
-        return ret, 200
-
-    @httpauth.login_required
-    def delete(self):
-        try:
-            req = request.get_json()
-            log.info(req)
-
-            if (req is None) or (req and type(req) is not dict):
-                res = jsonify(error="Body is not json dictionary")
-                res.status_code = 400
-                return res
-
-            iface = req.get('interface', None)
-            container = req.get('container', None)
-
-            if iface is None and container is None:
-                return "No interface or container id specified", 400
-
-        except Exception as e:
-            return {"error": str(e)}, 400
-
-        try:
-            ret = Netem(req, verbose=True, delete=True)
-        except Exception as e:
-            return {"error": str(e)}, 400
-        return ret, 200
+    try:
+        ret = Netem(req, verbose=True)
+    except Exception as e:
+        return str(e), 500
+    return jsonify(ret), 200
 
 
-@ns.route('/tc/delay')
-@ns.response(400, 'Bad Request')
-@ns.response(500, 'Internal Server Error')
-class TrafficControlDelay(Resource):
-    def get(self):
-        iface = request.args.get('interface', None)
+@api.delete("/tc/netem", summary="Delete netem rules")
+@httpauth.login_required
+def delete_tc_netem(body: TuneRequest):
+    try:
+        req = body.config
+        log.info(req)
 
-        if iface is None:
-            return "No interface specified", 400
+        iface = req.get("interface", None)
+        container = req.get("container", None)
 
-        return get_eth_iface_rules(iface)
-        # return {"response":"get_eth_iface_rules() --> Backend not implemented!"}
+        if iface is None and container is None:
+            return "No interface or container id specified", 400
 
-    @httpauth.login_required
-    def post(self):
-	    # Making every value as None, if user missed entering any key than
-	    # a default value is assigned by tc.py
-        default = { "interface"  : None,
-                "latency"    : None,
-                "loss"       : None,
-                "dport"      : None,
-                "dmask"      : None,
-                "id"         : None,
-                "maxrate"    : None,
-                "ip"         : None,
-                "type"       : None,
-                }
-        try:
-            req = request.get_json()
-            log.info(req)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
-            if (req is None) or (req and type(req) is not dict):
-                res = jsonify(error="Body is not json dictionary")
-                res.status_code = 400
-                return res
-
-            default.update(req)
-            req = default
-            # if req is None:
-            #     return "Interface and latency must be specified", 400
-                # req = {"interface"  : "eth100",
-                #        "latency"    : "20ms",
-                #          }
-            log.info(req)
-        except Exception as e:
-            return str(e), 500
-
-        try:
-            ret = Delay(req)
-        except Exception as e:
-            return str(e), 500
-
-        return ret, 200
+    try:
+        ret = Netem(req, verbose=True, delete=True)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(ret), 200
 
 
-@ns.route('/tc/latency')
-@ns.response(400, 'Bad Request')
-@ns.response(500, 'Internal Server Error')
-class TrafficControlLatency(Resource):
-    def get(self):
-        iface = request.args.get('interface', None)
-
-        if iface is None:
-            return "No interface specified", 400
-
-        return get_eth_iface_rules(iface)
-        # return {"response":"get_eth_iface_rules() --> Backend not implemented!"}
-
-    @httpauth.login_required
-    def post(self):
-        default = { "interface"  : None,
-                "latency"    : None,
-                "loss"       : None,
-                "dport"      : None,
-                "dmask"      : None,
-                "id"         : None,
-                "maxrate"    : None,
-                "ip"         : None,
-                "type"       : None,
-                }
-        try:
-            req = request.get_json()
-            log.info(req)
-
-            if (req is None) or (req and type(req) is not dict):
-                res = jsonify(error="Body is not json dictionary")
-                res.status_code = 400
-                return res
-
-            default.update(req)
-            req = default
-            # if req is None:
-            #     return "Interface and latency must be specified", 400
-                # req = {"interface"  : "eth100",
-                #        "latency"    : "20ms",
-                #        "loss"       : "0.2%"
-                #          }
-            log.info(req)
-        except Exception as e:
-            return str(e), 500
-
-        try:
-            ret = Latency(req)
-        except Exception as e:
-            return str(e), 500
-
-        return ret, 200
+@api.get("/tc/delay", summary="Get delay rules")
+def get_tc_delay(query: InterfaceQuery):
+    iface = query.interface
+    if iface is None:
+        return "No interface specified", 400
+    return jsonify(get_eth_iface_rules(iface))
 
 
-@ns.route('/tc/filter')
-@ns.response(400, 'Bad Request')
-@ns.response(500, 'Internal Server Error')
-class TrafficControlFilter(Resource):
-    def get(self):
-        iface = request.args.get('interface', None)
+@api.post("/tc/delay", summary="Set delay rules")
+@httpauth.login_required
+def post_tc_delay(body: TuneRequest):
+    default = {
+        "interface": None,
+        "latency": None,
+        "loss": None,
+        "dport": None,
+        "dmask": None,
+        "id": None,
+        "maxrate": None,
+        "ip": None,
+        "type": None,
+    }
+    try:
+        req = body.config
+        log.info(req)
+        default.update(req)
+        req = default
+        log.info(req)
+    except Exception as e:
+        return str(e), 500
 
-        if iface is None:
-            return "No interface specified", 400
+    try:
+        ret = Delay(req)
+    except Exception as e:
+        return str(e), 500
 
-        return get_eth_iface_rules(iface)
-        # return {"response":"get_eth_iface_rules() --> Backend not implemented!"}
+    return jsonify(ret), 200
 
-    @httpauth.login_required
-    def post(self):
-        req = { "interface"  : None,
-                "latency"    : None,
-                "loss"       : None,
-                "dport"      : None,
-                "dmask"      : None,
-                "id"         : None,
-                "maxrate"    : None,
-                "ip"         : None,
-                "type"       : None,
-                }
-        try:
-            req = request.get_json()
-            if req and type(req) is not dict:
-                res = jsonify(error="Body is not json dictionary")
-                res.status_code = 400
-                return res
-            else:
-                req = { "interface" : "eth100",
-                        "latency"   : "20ms",
-                        "loss"      : "0.1%",
-                        "dport"     : "2048",
-                        "dmask"     : "0xff00",
-                        "id"        : "2",
-                        }
-            log.debug(req)
-        except:
-            pass
 
-        try:
-            ret = Filter(req)
-        except Exception as e:
-            return str(e), 500
-        return ret, 200
+@api.get("/tc/latency", summary="Get latency rules")
+def get_tc_latency(query: InterfaceQuery):
+    iface = query.interface
+    if iface is None:
+        return "No interface specified", 400
+    return jsonify(get_eth_iface_rules(iface))
 
-@ns.route('/tc/pacing')
-@ns.response(400, 'Bad Request')
-@ns.response(500, 'Internal Server Error')
-class TrafficControlPacing(Resource):
-    def get(self):
-        iface = request.args.get('interface', None)
 
-        if iface is None:
-            return "No interface specified", 400
+@api.post("/tc/latency", summary="Set latency rules")
+@httpauth.login_required
+def post_tc_latency(body: TuneRequest):
+    default = {
+        "interface": None,
+        "latency": None,
+        "loss": None,
+        "dport": None,
+        "dmask": None,
+        "id": None,
+        "maxrate": None,
+        "ip": None,
+        "type": None,
+    }
+    try:
+        req = body.config
+        log.info(req)
+        default.update(req)
+        req = default
+        log.info(req)
+    except Exception as e:
+        return str(e), 500
 
-        return get_eth_iface_rules(iface)
+    try:
+        ret = Latency(req)
+    except Exception as e:
+        return str(e), 500
 
-    @httpauth.login_required
-    def post(self):
-        try:
-            req = request.get_json()
-            if req and type(req) is not dict:
-                res = jsonify(error="Body is not json dictionary")
-                res.status_code = 400
-                return res
-            log.debug(req)
-            ret = Pacing(req)
-        except Exception as e:
-            return str(e), 500
-        else:
-            return "OK", 200
+    return jsonify(ret), 200
 
-    @httpauth.login_required
-    def delete(self):
-        try:
-            req = request.get_json()
-            if req and type(req) is not dict:
-                res = jsonify(error="Body is not json dictionary")
-                res.status_code = 400
-                return res
-            log.debug(req)
-            ret = Pacing(req, delete=True)
-        except Exception as e:
-            return str(e), 500
+
+@api.get("/tc/filter", summary="Get filter rules")
+def get_tc_filter(query: InterfaceQuery):
+    iface = query.interface
+    if iface is None:
+        return "No interface specified", 400
+    return jsonify(get_eth_iface_rules(iface))
+
+
+@api.post("/tc/filter", summary="Set filter rules")
+@httpauth.login_required
+def post_tc_filter(body: TuneRequest):
+    try:
+        req = body.config
+        log.debug(req)
+    except Exception as e:
+        return str(e), 500
+
+    try:
+        ret = Filter(req)
+    except Exception as e:
+        return str(e), 500
+    return jsonify(ret), 200
+
+
+@api.get("/tc/pacing", summary="Get pacing rules")
+def get_tc_pacing(query: InterfaceQuery):
+    iface = query.interface
+    if iface is None:
+        return "No interface specified", 400
+    return jsonify(get_eth_iface_rules(iface))
+
+
+@api.post("/tc/pacing", summary="Set pacing rules")
+@httpauth.login_required
+def post_tc_pacing(body: TuneRequest):
+    try:
+        req = body.config
+        log.debug(req)
+        Pacing(req)
+    except Exception as e:
+        return str(e), 500
+    else:
         return "OK", 200
+
+
+@api.delete("/tc/pacing", summary="Delete pacing rules")
+@httpauth.login_required
+def delete_tc_pacing(body: TuneRequest):
+    try:
+        req = body.config
+        log.debug(req)
+        Pacing(req, delete=True)
+    except Exception as e:
+        return str(e), 500
+    return "OK", 200

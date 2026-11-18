@@ -1,1 +1,1 @@
-IGNORE_NETDEVS = ['lo']
+IGNORE_NETDEVS = ["lo"]
